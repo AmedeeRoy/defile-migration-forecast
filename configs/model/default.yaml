@@ -1,5 +1,5 @@
 _target_: src.models.defile_module.DefileLitModule
-_convert_ : object
+_convert_: object
 
 optimizer:
   _target_: torch.optim.Adam
@@ -19,10 +19,10 @@ net:
   nb_features: 7
   nb_layer: 4
 
-criterion : 
+criterion:
   - _target_: src.models.criterion.RMSE
     alpha: 0.9
-    weights : True
+    weights: True
   - _target_: src.models.criterion.DiffL2
     alpha: 0.1
 

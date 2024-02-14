@@ -1,5 +1,5 @@
 _target_: src.export.defile_export.DefileExport
 
-filepath : ${paths.output_dir}/test_pred.nc
-plot : true
-plotdir : ${paths.output_dir}/figures
+filepath: ${paths.output_dir}/test_pred.nc
+plot: true
+plotdir: ${paths.output_dir}/figures

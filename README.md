@@ -82,6 +82,7 @@ python src/train.py
 # eval with default config
 python src/eval.py
 ```
+
 </details>
 
 <details>
@@ -94,8 +95,8 @@ python src/train.py model.net.nb_layer=5 trainer.max_epochs=10
 # add new parameters with '+' sign
 python train.py +model.new_param="owo"
 ```
-</details>
 
+</details>
 
 <details>
 <summary><b>Train on CPU, GPU, multi-GPU and TPU</b></summary>
@@ -252,6 +253,5 @@ python train.py -m seed=1,2,3,4,5 trainer.deterministic=True logger=csv tags=["b
 > **Note**: `trainer.deterministic=True` makes pytorch more deterministic but impacts the performance.
 
 </details>
-
 
 <br>

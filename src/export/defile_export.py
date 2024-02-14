@@ -1,16 +1,17 @@
-from typing import Any, Dict, Tuple
-
 import os
 from dataclasses import dataclass
-import xarray as xr
+from typing import Any, Dict, Tuple
+
 import numpy as np
+import xarray as xr
 from matplotlib import pyplot as plt
+
 
 @dataclass
 class DefileExport:
-    filepath : str
-    plot : bool
-    plotdir : str
+    filepath: str
+    plot: bool
+    plotdir: str
 
     def save(self, test_dataset, test_pred):
         test_dataset.set_transform(False)
@@ -18,13 +19,13 @@ class DefileExport:
         for i in range(len(test_dataset)):
             count, year, doy, era5_hourly, era5_daily, mask = test_dataset[i]
             pred = era5_hourly.copy()
-            pred = pred.assign(count_pred = ("time", test_pred['pred'][i,0,:]))
-            pred = pred.assign(count = ("time", test_pred['obs'][i].repeat(24)))
-            pred = pred.assign(mask = ("time", test_pred['mask'][i,:]))
+            pred = pred.assign(count_pred=("time", test_pred["pred"][i, 0, :]))
+            pred = pred.assign(count=("time", test_pred["obs"][i].repeat(24)))
+            pred = pred.assign(mask=("time", test_pred["mask"][i, :]))
             predictions.append(pred)
 
-        predictions = xr.concat(predictions, dim = "date")
-        predictions['time'] = predictions.time.astype(str)
+        predictions = xr.concat(predictions, dim="date")
+        predictions["time"] = predictions.time.astype(str)
         predictions.to_netcdf(self.filepath)
         print(predictions)
 
@@ -47,7 +48,6 @@ class DefileExport:
     #         ax[i].set_xlabel("hours")
     #         ax[i].set_ylabel("Bird counts (log10)")
     #     plt.savefig(path)
-
 
     # def plt_scatter(self, predictions):
     #     y_pred = y_pred.detach().cpu().numpy()

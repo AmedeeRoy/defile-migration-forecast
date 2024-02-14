@@ -79,7 +79,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.info("Export predictions!")
     export.save(test_dataset=datamodule.data_test, test_pred=model.test_pred)
-    
+
     metric_dict = trainer.callback_metrics
 
     return metric_dict, object_dict

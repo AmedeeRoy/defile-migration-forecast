@@ -1,11 +1,11 @@
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+import pandas as pd
 import torch
 from lightning import LightningDataModule
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 from torchvision import transforms
-import numpy as np
-import pandas as pd 
 
 from src.utils import (
     RankedLogger,
@@ -19,87 +19,104 @@ from src.utils import (
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
+
 class DefileDataset(Dataset):
-    def __init__(self, data_dir, species = "Buse variable", years = range(1966, 2023), lag_day = 7, transform=False):
+    def __init__(
+        self,
+        data_dir,
+        species="Buse variable",
+        years=range(1966, 2023),
+        lag_day=7,
+        transform=False,
+    ):
+        # WEATHER DATA ----------------------------
+        # Create data xarray (better to handle multi-indexing)
+        era5_hourly = pd.read_csv(data_dir + "/era5_hourly.csv", parse_dates=["datetime"])
+        era5_hourly["date"] = pd.to_datetime(era5_hourly["datetime"].dt.date)
+        era5_hourly["time"] = pd.to_timedelta(era5_hourly.datetime.dt.time.astype(str))
+        era5_hourly = era5_hourly.drop("datetime", axis=1)
+        era5_hourly = era5_hourly.set_index(
+            ["date", "time"]
+        ).to_xarray()  # date and time as distinct indexes
 
-      # WEATHER DATA ----------------------------
-      # Create data xarray (better to handle multi-indexing)
-      era5_hourly = pd.read_csv(data_dir+"/era5_hourly.csv", parse_dates=['datetime'])
-      era5_hourly["date"] = pd.to_datetime(era5_hourly["datetime"].dt.date)
-      era5_hourly['time'] = pd.to_timedelta(era5_hourly.datetime.dt.time.astype(str)) 
-      era5_hourly = era5_hourly.drop('datetime', axis=1)
-      era5_hourly = era5_hourly.set_index(['date', 'time']).to_xarray() # date and time as distinct indexes
+        # Create daily data (with lags)
+        era5_daily = era5_hourly.mean(dim="time")  # get daily mean
+        era5_daily = era5_daily.assign_coords(lag=[0])  # add lag as new coordinate
+        # Make all existing variables depend on the new coordinate
+        for var in era5_daily.data_vars:
+            era5_daily[var] = era5_daily[var].expand_dims({"lag": era5_daily.lag})
 
-      # Create daily data (with lags)
-      era5_daily = era5_hourly.mean(dim="time") # get daily mean
-      era5_daily = era5_daily.assign_coords(lag = [0]) # add lag as new coordinate
-      # Make all existing variables depend on the new coordinate
-      for var in era5_daily.data_vars:
-          era5_daily[var] = era5_daily[var].expand_dims({'lag': era5_daily.lag})
+        # Shift and merge daily data
+        era5_daily_lagged = era5_daily.copy()
+        for lag in range(1, lag_day):
+            df = era5_daily.shift(date=lag)
+            df = df.assign_coords(lag=[lag])
+            era5_daily_lagged = era5_daily_lagged.merge(df.copy())
 
-      # Shift and merge daily data
-      era5_daily_lagged = era5_daily.copy()
-      for lag in range(1,lag_day):
-        df = era5_daily.shift(date=lag)
-        df = df.assign_coords(lag = [lag])
-        era5_daily_lagged = era5_daily_lagged.merge(df.copy())
+        #  Remove all dates with NaN
+        # (-> to guarantee that each item has the same size)
+        # (= equivalent to removing date when no lags are available)
+        era5_daily_lagged = era5_daily_lagged.dropna(dim="date")
 
-      #  Remove all dates with NaN
-      # (-> to guarantee that each item has the same size)
-      # (= equivalent to removing date when no lags are available)
-      era5_daily_lagged = era5_daily_lagged.dropna(dim="date")
+        # check that no NaN values are remaining -> ok !
+        # print('Remaining NaN in ERA5 daily :', era5_daily_lagged.isnull().sum())
 
-      # check that no NaN values are remaining -> ok !
-      # print('Remaining NaN in ERA5 daily :', era5_daily_lagged.isnull().sum())
+        # COUNT DATA ----------------------------
+        # Read data
+        df = pd.read_csv(
+            data_dir + "/all_count_processed.csv", parse_dates=["date", "start", "end"]
+        )
+        df["duration"] = df["end"] - df["start"]
+        df["doy"] = df["date"].dt.day_of_year
+        df["year"] = df["date"].dt.year
 
-      # COUNT DATA ----------------------------
-      # Read data
-      df = pd.read_csv(data_dir+"/all_count_processed.csv", parse_dates=["date", "start", "end"])
-      df["duration"] = df["end"] - df["start"]
-      df["doy"] = df["date"].dt.day_of_year
-      df["year"] = df["date"].dt.year
+        # Check that ERA5 values are available for all observations -> ok !
+        # Otherwise would need to subset the count dataset
+        # print('Number of dates not in ERA5 daily :', len([d for d in df.date.unique() if d not in era5_daily_lagged.date]))
 
-      # Check that ERA5 values are available for all observations -> ok !
-      # Otherwise would need to subset the count dataset
-      # print('Number of dates not in ERA5 daily :', len([d for d in df.date.unique() if d not in era5_daily_lagged.date]))
+        # Filter data by years
+        dfy = df[df["date"].dt.year.isin(years)]
 
-      # Filter data by years
-      dfy = df[df["date"].dt.year.isin(years)]
+        # Filter data by species
+        data_count = dfy[dfy.species == species][["date", "count", "start", "end"]]
+        dfys = (
+            dfy[[x for x in list(dfy) if x not in ["species", "count"]]]
+            .drop_duplicates()
+            .merge(data_count, how="left")
+        )
+        dfys["count"] = dfys["count"].fillna(0)
 
-      # Filter data by species
-      data_count = dfy[dfy.species==species][["date", "count", "start", "end"]]
-      dfys = dfy[[x for x in list(dfy) if x not in ["species", "count"]]].drop_duplicates().merge(data_count, how="left")
-      dfys["count"] = dfys["count"].fillna(0)
+        # Create mask
+        # Corresponding to the fraction of each hour of the day during which the count in question has been happening
+        hours_mat = np.repeat(np.arange(24), len(dfys)).reshape(24, len(dfys))
+        startHour = dfys["start"].dt.hour.values + dfys["start"].dt.minute.values / 60
+        endHour = dfys["end"].dt.hour.values + dfys["end"].dt.minute.values / 60
+        tmp1 = np.maximum(np.minimum(hours_mat - startHour + 1, 1), 0)
+        tmp2 = np.maximum(np.minimum(endHour - hours_mat, 1), 0)
+        mask = np.minimum(tmp1, tmp2)
 
-      # Create mask
-      # Corresponding to the fraction of each hour of the day during which the count in question has been happening
-      hours_mat = np.repeat(np.arange(24), len(dfys)).reshape( 24, len(dfys))
-      startHour = dfys["start"].dt.hour.values + dfys["start"].dt.minute.values/60
-      endHour = dfys["end"].dt.hour.values + dfys["end"].dt.minute.values/60
-      tmp1 = np.maximum(np.minimum(hours_mat - startHour + 1, 1), 0)
-      tmp2 = np.maximum(np.minimum(endHour - hours_mat, 1), 0)
-      mask =  np.minimum(tmp1, tmp2)
+        # Check mask is never 0
+        # mask.sum(axis=0)
 
-      # Check mask is never 0
-      # mask.sum(axis=0)
+        # normalizing
+        if transform:
+            # era5_daily_lagged = (era5_daily_lagged - era5_daily_lagged.mean(dim = "date")) / era5_daily_lagged.std(dim = "date")
+            # era5_hourly = (era5_hourly - era5_hourly.mean(dim = "date")) / era5_hourly.std(dim = "date")
+            era5_daily_lagged = (
+                era5_daily_lagged - era5_daily_lagged.mean()
+            ) / era5_daily_lagged.std()
+            era5_hourly = (era5_hourly - era5_hourly.mean()) / era5_hourly.std()
+            dfys["count"] = np.log10(1 + dfys["count"])
+            dfys["doy"] = dfys["doy"] / 365
+            dfys["year"] = (dfys["year"] - 2000) / 100
 
-      # normalizing
-      if transform:
-        # era5_daily_lagged = (era5_daily_lagged - era5_daily_lagged.mean(dim = "date")) / era5_daily_lagged.std(dim = "date")
-        # era5_hourly = (era5_hourly - era5_hourly.mean(dim = "date")) / era5_hourly.std(dim = "date")
-        era5_daily_lagged = (era5_daily_lagged - era5_daily_lagged.mean()) / era5_daily_lagged.std()
-        era5_hourly = (era5_hourly - era5_hourly.mean()) / era5_hourly.std()
-        dfys["count"] = np.log10(1+dfys["count"])
-        dfys["doy"] = dfys["doy"]/365
-        dfys["year"] = (dfys["year"] - 2000)/100
-
-      # Assign to self
-      self.data = dfys.reset_index(drop=True)
-      self.era5_daily = era5_daily_lagged
-      self.era5_hourly = era5_hourly
-      self.mask = mask
-      self.lag_day = lag_day
-      self.transform = transform
+        # Assign to self
+        self.data = dfys.reset_index(drop=True)
+        self.era5_daily = era5_daily_lagged
+        self.era5_hourly = era5_hourly
+        self.mask = mask
+        self.lag_day = lag_day
+        self.transform = transform
 
     def __len__(self):
         return len(self.data)
@@ -109,11 +126,11 @@ class DefileDataset(Dataset):
         count = self.data["count"][idx]
         doy = self.data["doy"][idx]
         yr = self.data["year"][idx]
-        m = self.mask[:,idx]
+        m = self.mask[:, idx]
 
         date = self.data["date"][idx]
-        era5_h = self.era5_hourly.sel(date = date)
-        era5_d = self.era5_daily.sel(date = date)
+        era5_h = self.era5_hourly.sel(date=date)
+        era5_d = self.era5_daily.sel(date=date)
 
         # convert to numpy before transformations
         sample = count, yr, doy, era5_h, era5_d, m
@@ -121,7 +138,14 @@ class DefileDataset(Dataset):
         # apply transformations
         if self.transform:
             # to array
-            sample = np.array([count]), np.array([yr]), np.array([doy]), era5_h.to_array().values, era5_d.to_array().values, m
+            sample = (
+                np.array([count]),
+                np.array([yr]),
+                np.array([doy]),
+                era5_h.to_array().values,
+                era5_d.to_array().values,
+                m,
+            )
             # to tensor
             sample = tuple([torch.FloatTensor(s) for s in sample])
 
@@ -129,6 +153,7 @@ class DefileDataset(Dataset):
 
     def set_transform(self, value):
         self.transform = value
+
 
 class DefileDataModule(LightningDataModule):
     """`LightningDataModule` for the MNIST dataset.
@@ -180,7 +205,7 @@ class DefileDataModule(LightningDataModule):
         data_dir: str = "data/",
         species: str = "Buse variable",
         lag_day: int = 7,
-        seed: int=0,
+        seed: int = 0,
         train_val_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         batch_size: int = 64,
         num_workers: int = 0,
@@ -200,7 +225,6 @@ class DefileDataModule(LightningDataModule):
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(logger=False)
 
-
         self.data_train: Optional[Dataset] = None
         self.data_val: Optional[Dataset] = None
         self.data_test: Optional[Dataset] = None
@@ -211,7 +235,6 @@ class DefileDataModule(LightningDataModule):
         self.seed = seed
         self.train_val_cum_ratio = np.array(train_val_cum_ratio)
         self.batch_size_per_device = batch_size
-
 
     # def prepare_data(self) -> None:
     #     """Download data if needed. Lightning ensures that `self.prepare_data()` is called only
@@ -242,11 +265,12 @@ class DefileDataModule(LightningDataModule):
                 )
             self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
 
-
         # split dataset years based on type of data collected
-        yr_grp = [np.arange(1966, 1992), # size 26
-                np.arange(1993, 2013), # size 20
-                np.arange(2014, 2021)] # size 7
+        yr_grp = [
+            np.arange(1966, 1992),  # size 26
+            np.arange(1993, 2013),  # size 20
+            np.arange(2014, 2021),
+        ]  # size 7
 
         # Shuffle order
         np.random.seed(self.seed)
@@ -254,7 +278,7 @@ class DefileDataModule(LightningDataModule):
 
         ytraining, yval, ytest = [], [], []
         for y in yr_grp:
-            sz = (len(y)*self.train_val_cum_ratio).astype(int)
+            sz = (len(y) * self.train_val_cum_ratio).astype(int)
             y_data = np.split(y, sz)
             ytraining.extend(y_data[0])
             yval.extend(y_data[1])
@@ -264,9 +288,19 @@ class DefileDataModule(LightningDataModule):
         log.info(f"Validation dataset : selected years - {yval}")
         log.info(f"Test dataset : selected years -{ytest}")
 
-        self.data_train = DefileDataset(self.data_dir, species = self.species, years = ytraining, lag_day=self.lag_day, transform = True)
-        self.data_val = DefileDataset(self.data_dir, species = self.species, years = yval, lag_day=self.lag_day, transform = True)
-        self.data_test = DefileDataset(self.data_dir, species = self.species, years = ytest, lag_day=self.lag_day, transform = True)
+        self.data_train = DefileDataset(
+            self.data_dir,
+            species=self.species,
+            years=ytraining,
+            lag_day=self.lag_day,
+            transform=True,
+        )
+        self.data_val = DefileDataset(
+            self.data_dir, species=self.species, years=yval, lag_day=self.lag_day, transform=True
+        )
+        self.data_test = DefileDataset(
+            self.data_dir, species=self.species, years=ytest, lag_day=self.lag_day, transform=True
+        )
 
     def train_dataloader(self) -> DataLoader[Any]:
         """Create and return the train dataloader.
