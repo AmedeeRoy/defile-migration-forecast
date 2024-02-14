@@ -1,0 +1,30 @@
+_target_: src.models.defile_module.DefileLitModule
+_convert_ : object
+
+optimizer:
+  _target_: torch.optim.Adam
+  _partial_: true
+  lr: 0.0026590698137917137
+  weight_decay: 0.0011271675573096358
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  _partial_: true
+  mode: min
+  factor: 0.1
+  patience: 10
+
+net:
+  _target_: src.models.components.convnet.ConvNet
+  nb_features: 7
+  nb_layer: 4
+
+criterion : 
+  - _target_: src.models.criterion.RMSE
+    alpha: 0.9
+    weights : True
+  - _target_: src.models.criterion.DiffL2
+    alpha: 0.1
+
+# compile model for faster training with pytorch 2.0
+compile: false
