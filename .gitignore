@@ -14,3 +14,5 @@ __pycache__/
 logs/eval/runs/*
 logs/train/runs/*
 logs/train/multiruns/*
+
+.DS_Store
