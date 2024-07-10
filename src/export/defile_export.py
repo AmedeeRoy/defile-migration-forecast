@@ -5,6 +5,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import xarray as xr
 from matplotlib import pyplot as plt
+import torch
 
 
 @dataclass
@@ -16,12 +17,16 @@ class DefileExport:
     def save(self, test_dataset, test_pred):
         test_dataset.set_transform(False)
         predictions = []
+        test_pred_pred = torch.cat(test_pred["pred"], dim=0).squeeze()
+        test_pred_obs = torch.cat(test_pred["obs"], dim=0)
+        test_pred_mask = torch.cat(test_pred["mask"], dim=0)
+
         for i in range(len(test_dataset)):
             count, year, doy, era5_hourly, era5_daily, mask = test_dataset[i]
             pred = era5_hourly.copy()
-            pred = pred.assign(count_pred=("time", test_pred["pred"][i, 0, :]))
-            pred = pred.assign(count=("time", test_pred["obs"][i].repeat(24)))
-            pred = pred.assign(mask=("time", test_pred["mask"][i, :]))
+            pred = pred.assign(count_pred=("time", test_pred_pred[i, :]))
+            pred = pred.assign(count=("time", test_pred_obs[i].repeat(24)))
+            pred = pred.assign(mask=("time", test_pred_mask[i]))
             predictions.append(pred)
 
         predictions = xr.concat(predictions, dim="date")

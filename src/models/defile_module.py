@@ -67,21 +67,27 @@ class DefileLitModule(LightningModule):
         self.test_loss = MeanMetric()
 
         # for saving predictions
-        self.val_pred = {"obs": [], "mask": [], "pred": []}
-        self.test_pred = {"obs": [], "mask": [], "pred": []}
+        self.val_pred = {"obs": [], "mask": [], "pred": [], "pred_masked": []}
+        self.test_pred = {"obs": [], "mask": [], "pred": [], "pred_masked": []}
 
-    def loss(self, count_pred, count, mask):
-        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
+    def setup(self, stage: str) -> None:
+        """Lightning hook that is called at the beginning of fit (train + validate), validate,
+        test, or predict.
+
+        This is a good hook when you need to build models dynamically or adjust something about
+        them. This hook is called on every process when using DDP.
+
+        :param stage: Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
+        """
+        if self.hparams.compile and stage == "fit":
+            self.net = torch.compile(self.net)
 
     def forward(self, yr, doy, era5_hourly) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`."""
         return self.net(yr, doy, era5_hourly)
-
-    def on_train_start(self) -> None:
-        """Lightning hook that is called when training begins."""
-        # by default lightning executes validation step sanity checks before training starts,
-        # so it's worth to make sure validation metrics don't store results from these checks
-        self.val_loss.reset()
+    
+    def loss(self, count_pred, count, mask):
+        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
 
     def model_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor]
@@ -99,6 +105,12 @@ class DefileLitModule(LightningModule):
         count_pred = self.forward(yr, doy, era5_hourly)
         loss = self.loss(count_pred, count, mask)
         return loss
+    
+    def on_train_start(self) -> None:
+        """Lightning hook that is called when training begins."""
+        # by default lightning executes validation step sanity checks before training starts,
+        # so it's worth to make sure validation metrics don't store results from these checks
+        self.val_loss.reset()
 
     def training_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
@@ -139,20 +151,26 @@ class DefileLitModule(LightningModule):
         # save all predictions
         count, yr, doy, era5_hourly, era5_daily, mask = batch
         count_pred = self.forward(yr, doy, era5_hourly)
+
         self.val_pred["obs"].append(count)
         self.val_pred["mask"].append(mask)
         self.val_pred["pred"].append(count_pred)
+        self.val_pred["pred_masked"].append(sum(count_pred[i] * count[i] for i in range(len(count))))
+        #self.val_pred["obs"] = torch.cat((self.val_pred["obs"], count.unsqueeze(0)), dim=0)
+        #self.val_pred["mask"] = torch.cat((self.val_pred["mask"], mask.unsqueeze(0)), dim=0)
+        #self.val_pred["pred"] = torch.cat((self.val_pred["pred"], count_pred.unsqueeze(0)), dim=0)
 
     def on_validation_epoch_end(self) -> None:
         "Lightning hook that is called when a validation epoch ends."
-        for k in self.val_pred.keys():
-            self.val_pred[k] = torch.cat(self.val_pred[k], 0)
-        self.val_pred["pred_masked"] = torch.sum(
-            self.val_pred["pred"].squeeze() * self.val_pred["mask"], dim=1
-        ).unsqueeze(1)
-
+        #for k in self.val_pred.keys():
+        #    self.val_pred[k] = torch.cat(self.val_pred[k], 0)
+        #self.val_pred["pred_masked"] = torch.sum(
+        #    self.val_pred["pred"].squeeze() * self.val_pred["mask"], dim=1
+        #).unsqueeze(1)
+        pred_masked = torch.cat(self.val_pred["pred_masked"], dim=0)
+        obs = torch.cat(self.val_pred["pred_masked"], dim=0)
         explained_variance = ExplainedVariance()
-        self.val_r2_score = explained_variance(self.val_pred["pred_masked"], self.val_pred["obs"])
+        self.val_r2_score = explained_variance(pred_masked, obs)
         self.log("val/r2_score", self.val_r2_score, on_step=False, on_epoch=True, prog_bar=True)
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
@@ -174,32 +192,21 @@ class DefileLitModule(LightningModule):
         self.test_pred["obs"].append(count)
         self.test_pred["mask"].append(mask)
         self.test_pred["pred"].append(count_pred)
+        self.test_pred["pred_masked"].append(sum(count_pred[i] * count[i] for i in range(len(count))))
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
-        for k in self.test_pred.keys():
-            self.test_pred[k] = torch.cat(self.test_pred[k], 0)
-        self.test_pred["pred_masked"] = torch.sum(
-            self.test_pred["pred"].squeeze() * self.test_pred["mask"], dim=1
-        ).unsqueeze(1)
+        # for k in self.test_pred.keys():
+        #    self.test_pred[k] = torch.cat(self.test_pred[k], 0)
+        # self.test_pred["pred_masked"] = torch.sum(
+        #     self.test_pred["pred"].squeeze() * self.test_pred["mask"], dim=1
+        # ).unsqueeze(1)
 
+        pred_masked = torch.cat(self.test_pred["pred_masked"], dim=0)
+        obs = torch.cat(self.test_pred["pred_masked"], dim=0)
         explained_variance = ExplainedVariance()
-        self.test_r2_score = explained_variance(
-            self.test_pred["pred_masked"], self.test_pred["obs"]
-        )
+        self.test_r2_score = explained_variance(pred_masked, obs)
         self.log("test/r2_score", self.test_r2_score, on_step=False, on_epoch=True, prog_bar=True)
-
-    def setup(self, stage: str) -> None:
-        """Lightning hook that is called at the beginning of fit (train + validate), validate,
-        test, or predict.
-
-        This is a good hook when you need to build models dynamically or adjust something about
-        them. This hook is called on every process when using DDP.
-
-        :param stage: Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-        """
-        if self.hparams.compile and stage == "fit":
-            self.net = torch.compile(self.net)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.
