@@ -156,14 +156,9 @@ class DefileDataset(Dataset):
 
 
 class DefileDataModule(LightningDataModule):
-    """`LightningDataModule` for the MNIST dataset.
+    """`LightningDataModule` for the Defile dataset.
 
-    The MNIST database of handwritten digits has a training set of 60,000 examples, and a test set of 10,000 examples.
-    It is a subset of a larger set available from NIST. The digits have been size-normalized and centered in a
-    fixed-size image. The original black and white images from NIST were size normalized to fit in a 20x20 pixel box
-    while preserving their aspect ratio. The resulting images contain grey levels as a result of the anti-aliasing
-    technique used by the normalization algorithm. the images were centered in a 28x28 image by computing the center of
-    mass of the pixels, and translating the image so as to position this point at the center of the 28x28 field.
+    
 
     A `LightningDataModule` implements 7 key methods:
 
@@ -206,15 +201,18 @@ class DefileDataModule(LightningDataModule):
         species: str = "Buse variable",
         lag_day: int = 7,
         seed: int = 0,
-        train_val_cum_ratio: Tuple[float, float] = (0.7, 0.9),
+        train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         batch_size: int = 64,
         num_workers: int = 0,
         pin_memory: bool = False,
     ) -> None:
-        """Initialize a `MNISTDataModule`.
+        """Initialize a `DefileDataModule`.
 
         :param data_dir: The data directory. Defaults to `"data/"`.
-        :param train_val_test_split: The train, validation and test split. Defaults to `(55_000, 5_000, 10_000)`.
+        :param species: The species for which to model the count. Defaults to `"Buse variable"`.
+        :param lag_day: The number of lag day to consider in the model. Defaults to `7`.
+        :param seed: The seed. Defaults to `0`.
+        :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -233,7 +231,7 @@ class DefileDataModule(LightningDataModule):
         self.species = species
         self.lag_day = lag_day
         self.seed = seed
-        self.train_val_cum_ratio = np.array(train_val_cum_ratio)
+        self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.batch_size_per_device = batch_size
 
     # def prepare_data(self) -> None:
@@ -267,18 +265,19 @@ class DefileDataModule(LightningDataModule):
 
         # split dataset years based on type of data collected
         yr_grp = [
-            np.arange(1966, 1992),  # size 26
-            np.arange(1993, 2013),  # size 20
-            np.arange(2014, 2021),
-        ]  # size 7
+            np.arange(1966, 1992),  # size 26. Incidental monitoring
+            np.arange(1993, 2013),  # size 20. 
+            np.arange(2014, 2021),  # size 7. 
+        ]  
 
-        # Shuffle order
+        # Shuffle order of the year in each group
         np.random.seed(self.seed)
         [np.random.shuffle(y) for y in yr_grp]
 
+        # Assign years to each group according to the cumulative ratio defined
         ytraining, yval, ytest = [], [], []
         for y in yr_grp:
-            sz = (len(y) * self.train_val_cum_ratio).astype(int)
+            sz = (len(y) * self.train_val_test_cum_ratio).astype(int)
             y_data = np.split(y, sz)
             ytraining.extend(y_data[0])
             yval.extend(y_data[1])
@@ -288,6 +287,7 @@ class DefileDataModule(LightningDataModule):
         log.info(f"Validation dataset : selected years - {yval}")
         log.info(f"Test dataset : selected years -{ytest}")
 
+        # Create the three dataset (train, validation and test)
         self.data_train = DefileDataset(
             self.data_dir,
             species=self.species,
@@ -296,10 +296,18 @@ class DefileDataModule(LightningDataModule):
             transform=True,
         )
         self.data_val = DefileDataset(
-            self.data_dir, species=self.species, years=yval, lag_day=self.lag_day, transform=True
+            self.data_dir, 
+            species=self.species, 
+            years=yval, 
+            lag_day=self.lag_day, 
+            transform=True
         )
         self.data_test = DefileDataset(
-            self.data_dir, species=self.species, years=ytest, lag_day=self.lag_day, transform=True
+            self.data_dir, 
+            species=self.species, 
+            years=ytest, 
+            lag_day=self.lag_day, 
+            transform=True
         )
 
     def train_dataloader(self) -> DataLoader[Any]:

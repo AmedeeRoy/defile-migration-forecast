@@ -6,7 +6,7 @@ batch_size: 256 # Needs to be divisible by the number of devices (e.g., if in a 
 species: "Buse variable"
 lag_day: 7
 seed: 0
-train_val_cum_ratio: [0.7, 0.9]
+train_val_test_cum_ratio: [0.7, 0.9]
 
 num_workers: 0
 pin_memory: False
