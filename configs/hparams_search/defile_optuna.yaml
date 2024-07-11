@@ -8,7 +8,7 @@ defaults:
 
 # choose metric which will be optimized by Optuna
 # make sure this is the correct name of some metric logged in lightning module!
-optimized_metric: "val/loss"
+optimized_metric: "val/r2_score"
 
 # here we define Optuna hyperparameter search
 # it optimizes for value returned from function with @hydra.main decorator
@@ -30,7 +30,7 @@ hydra:
     n_jobs: 1
 
     # 'minimize' or 'maximize' the objective
-    direction: minimize
+    direction: maximize
 
     # total number of runs that will be executed
     n_trials: 20
@@ -46,6 +46,5 @@ hydra:
     # define hyperparameter search space
     params:
       model.optimizer.lr: interval(0.0001, 0.1)
-      data.batch_size: choice(32, 64, 128, 256)
       model.optimizer.weight_decay: interval(0.0001, 0.1)
       model.net.nb_layer: choice(2, 4, 6)
