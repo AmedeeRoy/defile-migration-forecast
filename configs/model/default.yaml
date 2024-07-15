@@ -4,27 +4,30 @@ _convert_: object
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 0.08760567021073526
-  weight_decay: 0.03708805040356045
+  lr: 0.025287943438475857
+  weight_decay: 0.025947578859460165
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
   _partial_: true
   mode: min
   factor: 0.1
-  patience: 10
+  patience: 2
 
 net:
-  _target_: src.models.components.convnet.ConvNet
-  nb_features: 7
-  nb_layer: 4
+  _target_: src.models.components.convnet.ConvNetplus
+  nb_input_features: 7
+  nb_hidden_features_hourly: 64
+  nb_layer_hourly: 4
+  nb_hidden_features_daily: 16
+  nb_layer_daily: 4
 
 criterion:
   - _target_: src.models.criterion.RMSE
-    alpha: 0.9
-    weights: True
-  - _target_: src.models.criterion.DiffL2
-    alpha: 0.1
+    alpha: 1
+    weights: False
+  # - _target_: src.models.criterion.L2
+  #   alpha: 1
 
 # compile model for faster training with pytorch 2.0
 compile: false

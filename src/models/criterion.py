@@ -4,6 +4,8 @@ from typing import Any, Dict, Tuple
 import torch
 from torch import nn
 
+# from pytorch_forecasting.metrics import TweedieLoss
+
 
 @dataclass
 class RMSE:
@@ -54,6 +56,30 @@ class RMSE:
             w_count = 1
 
         loss = torch.mean((y_pred_start_to_end - y.squeeze()) ** 2 * w_count)
+        return self.alpha * loss
+
+
+@dataclass
+class TweedieLoss:
+    """Home-made Loss function criterion."""
+
+    alpha: 1
+    p: 1.5
+
+    def forward(self, y_pred, y, mask):
+        y_hat = torch.sum(y_pred.squeeze() * mask, dim=1)
+        a = y.squeeze() * torch.exp(y_hat * (1 - self.p)) / (1 - self.p)
+        b = torch.exp(y_hat * (2 - self.p)) / (2 - self.p)
+        loss = torch.mean(-a + b)
+        return self.alpha * loss
+
+
+@dataclass
+class L2:
+    alpha: 1
+
+    def forward(self, y_pred, y, mask):
+        loss = torch.mean(y_pred)
         return self.alpha * loss
 
 
