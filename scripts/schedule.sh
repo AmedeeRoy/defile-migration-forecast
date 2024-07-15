@@ -4,7 +4,7 @@
 
 # hyperparameters optimization
 python src/train.py hparams_search=defile_optuna logger=tensorboard
-# tensorboard --logdir=logs/train/
+# tensorboard --logdir=logs/train/multiruns
 
 # best model training
 python src/train.py trainer.max_epochs=25 logger=tensorboard

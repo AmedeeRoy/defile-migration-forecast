@@ -107,7 +107,7 @@ class DefileDataset(Dataset):
             ) / era5_daily_lagged.std()
             era5_hourly = (era5_hourly - era5_hourly.mean()) / era5_hourly.std()
             dfys["count"] = np.log10(1 + dfys["count"])
-            dfys["doy"] = dfys["doy"] / 365
+            dfys["doy"] = (dfys["doy"] - 183) / 366
             dfys["year"] = (dfys["year"] - 2000) / 100
 
         # Assign to self
@@ -157,8 +157,6 @@ class DefileDataset(Dataset):
 
 class DefileDataModule(LightningDataModule):
     """`LightningDataModule` for the Defile dataset.
-
-    
 
     A `LightningDataModule` implements 7 key methods:
 
@@ -266,9 +264,9 @@ class DefileDataModule(LightningDataModule):
         # split dataset years based on type of data collected
         yr_grp = [
             np.arange(1966, 1992),  # size 26. Incidental monitoring
-            np.arange(1993, 2013),  # size 20. 
-            np.arange(2014, 2021),  # size 7. 
-        ]  
+            np.arange(1993, 2013),  # size 20.
+            np.arange(2014, 2021),  # size 7.
+        ]
 
         # Shuffle order of the year in each group
         np.random.seed(self.seed)
@@ -296,18 +294,10 @@ class DefileDataModule(LightningDataModule):
             transform=True,
         )
         self.data_val = DefileDataset(
-            self.data_dir, 
-            species=self.species, 
-            years=yval, 
-            lag_day=self.lag_day, 
-            transform=True
+            self.data_dir, species=self.species, years=yval, lag_day=self.lag_day, transform=True
         )
         self.data_test = DefileDataset(
-            self.data_dir, 
-            species=self.species, 
-            years=ytest, 
-            lag_day=self.lag_day, 
-            transform=True
+            self.data_dir, species=self.species, years=ytest, lag_day=self.lag_day, transform=True
         )
 
     def train_dataloader(self) -> DataLoader[Any]:

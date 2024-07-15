@@ -82,9 +82,9 @@ class DefileLitModule(LightningModule):
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
 
-    def forward(self, yr, doy, era5_hourly) -> torch.Tensor:
+    def forward(self, yr, doy, era5_hourly, era5_daily) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`."""
-        return self.net(yr, doy, era5_hourly)
+        return self.net(yr, doy, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
         return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
@@ -102,7 +102,7 @@ class DefileLitModule(LightningModule):
             - A tensor of target labels.
         """
         count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly)
+        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
         return loss
 
@@ -150,7 +150,7 @@ class DefileLitModule(LightningModule):
 
         # save all predictions
         count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly)
+        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
 
         self.val_pred["obs"].append(count)
         self.val_pred["mask"].append(mask)
@@ -201,7 +201,7 @@ class DefileLitModule(LightningModule):
 
         # save all predictions
         count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly)
+        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
 
         self.test_pred["obs"].append(count)
         self.test_pred["mask"].append(mask)

@@ -47,4 +47,7 @@ hydra:
     params:
       model.optimizer.lr: interval(0.0001, 0.1)
       model.optimizer.weight_decay: interval(0.0001, 0.1)
-      model.net.nb_layer: choice(2, 4, 6)
+      model.net.nb_layer_hourly: choice(2, 4, 6)
+      model.net.nb_hidden_features_hourly: choice(16, 32, 64, 128)
+      model.net.nb_layer_daily: choice(2, 4, 6)
+      model.net.nb_hidden_features_daily: choice(16, 32, 64, 128)

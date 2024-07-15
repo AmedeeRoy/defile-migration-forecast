@@ -102,5 +102,5 @@ class DefileExport:
         data.groupby("doy").sum().masked_total_counts.plot(ax=ax, label="True")
         data.groupby("doy").sum().estimated_masked_total_counts.plot(ax=ax, label="Prediction")
         plt.legend()
-        fig.savefig(f"{self.plotdir}/timeseries.jpg")
+        fig.savefig(f"{self.plotdir}/doy_sum.jpg")
         plt.close()
