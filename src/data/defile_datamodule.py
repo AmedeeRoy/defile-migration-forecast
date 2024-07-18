@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 from lightning import LightningDataModule
+from suncalc import get_position
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 from torchvision import transforms
 
@@ -34,6 +35,12 @@ class DefileDataset(Dataset):
         era5_hourly = pd.read_csv(data_dir + "/era5_hourly.csv", parse_dates=["datetime"])
         era5_hourly["date"] = pd.to_datetime(era5_hourly["datetime"].dt.date)
         era5_hourly["time"] = pd.to_timedelta(era5_hourly.datetime.dt.time.astype(str))
+        # Add sun position information
+        lon = 5.8919
+        lat = 46.1178
+        sun_position = get_position(era5_hourly["datetime"], lon, lat)
+        era5_hourly["sun_altitude"] = sun_position["altitude"]
+        era5_hourly["sun_azimuth"] = sun_position["azimuth"]
         era5_hourly = era5_hourly.drop("datetime", axis=1)
         era5_hourly = era5_hourly.set_index(
             ["date", "time"]

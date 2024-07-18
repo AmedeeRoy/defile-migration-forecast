@@ -15,13 +15,15 @@ scheduler:
   patience: 2
 
 net:
-  _target_: src.models.components.convnet.ConvNetplus
+  _target_: src.models.components.transformer.Transformer
   nb_input_features: 9
-  nb_hidden_features_hourly: 64
-  nb_layer_hourly: 4
-  nb_hidden_features_daily: 32
-  nb_layer_daily: 4
-  dropout: False
+  embed_size_hourly: 64
+  num_heads_hourly: 8
+  num_blocks_hourly: 4
+  embed_size_daily: 32
+  num_heads_daily: 4
+  num_blocks_daily: 2
+  drop_prob: 0.1
 
 criterion:
   - _target_: src.models.criterion.RMSE

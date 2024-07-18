@@ -92,6 +92,7 @@ class ConvNetplus(nn.Module):
         nb_layer_hourly,
         nb_hidden_features_daily,
         nb_layer_daily,
+        dropout,
     ):
         super(ConvNetplus, self).__init__()
 
@@ -126,6 +127,9 @@ class ConvNetplus(nn.Module):
                 )
             layers_h.append(nn.BatchNorm1d(num_features=nb_hidden_features_hourly))
             layers_h.append(nn.ReLU())
+            if dropout:
+                layers_h.append(nn.Dropout(0.3))
+
         self.layers_h = nn.Sequential(*layers_h)
 
         self.last_layer_h = nn.Sequential(
@@ -169,6 +173,9 @@ class ConvNetplus(nn.Module):
                 )
             layers_d.append(nn.BatchNorm1d(num_features=nb_hidden_features_daily))
             layers_d.append(nn.ReLU())
+            if dropout:
+                layers_d.append(nn.Dropout(0.3))
+
         self.layers_d = nn.Sequential(*layers_d)
 
         self.last_layer_d = nn.Sequential(
@@ -190,6 +197,8 @@ class ConvNetplus(nn.Module):
         out_h = self.last_layer_h(out_h)
 
         doy_ = doy.repeat(1, 7).unsqueeze(1)
+        # dd = torch.arange(-7/366, 0, step = 1/ 366)
+        # doy_ = doy_ + dd
         yr_ = yr.repeat(1, 7).unsqueeze(1)
         X_d = torch.cat([era5_daily, doy_, yr_], 1)
         out_d = torch.mean(self.layers_d(X_d), dim=2)
