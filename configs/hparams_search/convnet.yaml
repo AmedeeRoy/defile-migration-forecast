@@ -51,3 +51,4 @@ hydra:
       model.net.nb_hidden_features_hourly: choice(16, 32, 64, 128)
       model.net.nb_layer_daily: choice(2, 4, 6)
       model.net.nb_hidden_features_daily: choice(16, 32, 64, 128)
+      # model.net.dropout: choice(True, False)
