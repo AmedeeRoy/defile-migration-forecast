@@ -10,6 +10,3 @@ python src/train.py model=transformer hparams_search=transformer logger=tensorbo
 
 # best model training
 python src/train.py trainer.max_epochs=25 logger=tensorboard
-
-# best model training
-python src/eval.py ckpt_path=.logs/train/runs/2024-07-11_15-30-35/checkpoints/epoch_006.ckpt
