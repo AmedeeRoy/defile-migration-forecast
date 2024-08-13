@@ -48,3 +48,5 @@ dependencies:
       - hydra-colorlog
       - rootutils
       - suncalc
+      - openmeteo_sdk
+      - openmeteo_requests
