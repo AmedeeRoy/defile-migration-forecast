@@ -6,6 +6,9 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 
+from src.data.data_transformer import DataTransformer
+from src.data.get_era5 import *  # All function to load the csv era5 data
+from src.data.open_meteo import *  # All function related to the forecast
 from src.utils import (
     RankedLogger,
     extras,
@@ -16,10 +19,6 @@ from src.utils import (
     task_wrapper,
 )
 
-from src.data.get_era5 import *  # All function to load the csv era5 data
-from src.data.open_meteo import *  # All function related to the forcast
-from src.data.data_transformer import DataTransformer
-
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -29,28 +28,28 @@ class DefileDataset(Dataset):
         data_dir,
         species="Buse variable",
         era5_main_location="Defile",
-        era5_main_variables=[
+        era5_main_variables: list = [
             "temperature_2m",
             "total_precipitation",
             "surface_pressure",
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
-        era5_hourly_locations=[
+        era5_hourly_locations: list = [
             "MontTendre",
             "Chasseral",
             "Basel",
             "Dijon",
             "ColGrandSaintBernard",
         ],
-        era5_hourly_variables=[
+        era5_hourly_variables: list = [
             "temperature_2m",
             "total_precipitation",
             "surface_pressure",
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
-        era5_daily_locations=[
+        era5_daily_locations: list = [
             "Defile",
             "Schaffhausen",
             "Basel",
@@ -59,7 +58,7 @@ class DefileDataset(Dataset):
             "Frankfurt",
             "Berlin",
         ],
-        era5_daily_variables=[
+        era5_daily_variables: list = [
             "temperature_2m",
             "total_precipitation",
             "surface_pressure",
@@ -171,17 +170,17 @@ class DefileDataset(Dataset):
     def __getitem__(self, idx):
         # index by count/observation
         count = self.data["count"][idx]
-        doy = self.data["doy"][idx]
         yr = self.data["year"][idx]
-        m = self.mask[:, idx]
+        doy = self.data["doy"][idx]
+        mask = self.mask[:, idx]
 
         date = self.data["date"][idx]
-        era5_m = self.era5_main.sel(date=date)
-        era5_h = self.era5_hourly.sel(date=date)
-        era5_d = self.era5_daily.sel(date=date)
+        era5_main = self.era5_main.sel(date=date)
+        era5_hourly = self.era5_hourly.sel(date=date)
+        era5_daily = self.era5_daily.sel(date=date)
 
         # convert to numpy before transformations
-        sample = count, yr, doy, era5_m, era5_h, era5_d, m
+        sample = count, yr, doy, era5_main, era5_hourly, era5_daily, mask
 
         # apply transformations
         if self.transform:
@@ -190,10 +189,10 @@ class DefileDataset(Dataset):
                 np.array([count]),
                 np.array([yr]),
                 np.array([doy]),
-                era5_m.to_array().values,
-                era5_h.to_array().values,
-                era5_d.to_array().values,
-                m,
+                era5_main.to_array().values,
+                era5_hourly.to_array().values,
+                era5_daily.to_array().values,
+                mask,
             )
             # to tensor
             sample = tuple([torch.FloatTensor(s) for s in sample])
@@ -252,7 +251,6 @@ class ForecastDataset(Dataset):
         trans_daily=None,
         trans_hourly=None,
     ):
-
         # Assert that if transform=True
         if transform == True:
             if trans_main is None or trans_daily is None or trans_hourly is None:
@@ -261,7 +259,7 @@ class ForecastDataset(Dataset):
                 )
 
         # MAIN ERA-5 DATA ----------------------------
-        era5_main = get_forecast_hourly(
+        era5_main = download_forecast_hourly(
             locations=era5_main_location,
             variables=era5_main_variables,
             lag_day=0,
@@ -270,16 +268,16 @@ class ForecastDataset(Dataset):
         )
 
         # HOURLY ERA-5 DATA ----------------------------
-        era5_hourly = get_forecast_hourly(
+        era5_hourly = download_forecast_hourly(
             locations=era5_hourly_locations,
             variables=era5_hourly_variables,
             lag_day=0,
             forecast_day=forecast_day,
-            add_sun=False,
+            add_sun=True,
         )
 
         # DAILY ERA-5 DATA ----------------------------
-        era5_daily = get_forecast_daily(
+        era5_daily = download_forecast_daily(
             locations=era5_daily_locations,
             variables=era5_daily_variables,
             lag_day=lag_day,
@@ -325,29 +323,28 @@ class ForecastDataset(Dataset):
 
     def __getitem__(self, idx):
         # index by count/observation
-        count = ""
-        doy = self.data["doy"][idx]
         yr = self.data["year"][idx]
-
+        doy = self.data["doy"][idx]
         date = self.data["date"][idx]
-        era5_m = self.era5_main.sel(date=date)
-        era5_h = self.era5_hourly.sel(date=date)
-        era5_d = self.era5_daily.sel(date=date)
+
+        era5_main = self.era5_main.sel(date=date)
+        era5_hourly = self.era5_hourly.sel(date=date)
+        era5_daily = self.era5_daily.sel(date=date)
 
         # convert to numpy before transformations
-        sample = count, yr, doy, era5_m, era5_h, era5_d
+        sample = yr, doy, era5_main, era5_hourly, era5_daily
 
         # apply transformations
         if self.transform:
             # to array
             sample = (
-                np.array([count]),
+                np.zeros(1),
                 np.array([yr]),
                 np.array([doy]),
-                era5_m.to_array().values,
-                era5_h.to_array().values,
-                era5_d.to_array().values,
-                m,
+                era5_main.to_array().values,
+                era5_hourly.to_array().values,
+                era5_daily.to_array().values,
+                np.zeros(1),
             )
             # to tensor
             sample = tuple([torch.FloatTensor(s) for s in sample])
@@ -439,6 +436,7 @@ class DefileDataModule(LightningDataModule):
             "v_component_of_wind_10m",
         ],
         lag_day: int = 7,
+        forecast_day: int = 5,
         seed: int = 0,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         batch_size: int = 64,
@@ -475,6 +473,7 @@ class DefileDataModule(LightningDataModule):
         self.era5_daily_locations = era5_daily_locations
         self.era5_daily_variables = era5_daily_variables
         self.lag_day = lag_day
+        self.forecast_day = forecast_day
         self.seed = seed
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.batch_size_per_device = batch_size
@@ -507,9 +506,7 @@ class DefileDataModule(LightningDataModule):
                 raise RuntimeError(
                     f"Batch size ({self.hparams.batch_size}) is not divisible by the number of devices ({self.trainer.world_size})."
                 )
-            self.batch_size_per_device = (
-                self.hparams.batch_size // self.trainer.world_size
-            )
+            self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
 
         # split dataset years based on type of data collected
         yr_grp = [
@@ -523,19 +520,18 @@ class DefileDataModule(LightningDataModule):
         [np.random.shuffle(y) for y in yr_grp]
 
         # Assign years to each group according to the cumulative ratio defined
-        ytraining, yval, ytest = [], [], []
+        self.ytraining, self.yval, self.ytest = [], [], []
         for y in yr_grp:
             sz = (len(y) * self.train_val_test_cum_ratio).astype(int)
             y_data = np.split(y, sz)
-            ytraining.extend(y_data[0])
-            yval.extend(y_data[1])
-            ytest.extend(y_data[2])
+            self.ytraining.extend(y_data[0])
+            self.yval.extend(y_data[1])
+            self.ytest.extend(y_data[2])
 
-        log.info(f"Train dataset : selected years - {ytraining}")
-        log.info(f"Validation dataset : selected years - {yval}")
-        log.info(f"Test dataset : selected years -{ytest}")
+        log.info(f"Train dataset : selected years - {self.ytraining}")
+        log.info(f"Validation dataset : selected years - {self.yval}")
+        log.info(f"Test dataset : selected years -{self.ytest}")
 
-        # Create the three dataset (train, validation and test)
         self.data_train = DefileDataset(
             data_dir=self.data_dir,
             species=self.species,
@@ -545,33 +541,7 @@ class DefileDataModule(LightningDataModule):
             era5_hourly_variables=self.era5_hourly_variables,
             era5_daily_locations=self.era5_daily_locations,
             era5_daily_variables=self.era5_daily_variables,
-            years=ytraining,
-            lag_day=self.lag_day,
-            transform=True,
-        )
-        self.data_val = DefileDataset(
-            data_dir=self.data_dir,
-            species=self.species,
-            era5_main_location=self.era5_main_location,
-            era5_main_variables=self.era5_main_variables,
-            era5_hourly_locations=self.era5_hourly_locations,
-            era5_hourly_variables=self.era5_hourly_variables,
-            era5_daily_locations=self.era5_daily_locations,
-            era5_daily_variables=self.era5_daily_variables,
-            years=yval,
-            lag_day=self.lag_day,
-            transform=True,
-        )
-        self.data_test = DefileDataset(
-            data_dir=self.data_dir,
-            species=self.species,
-            era5_main_location=self.era5_main_location,
-            era5_main_variables=self.era5_main_variables,
-            era5_hourly_locations=self.era5_hourly_locations,
-            era5_hourly_variables=self.era5_hourly_variables,
-            era5_daily_locations=self.era5_daily_locations,
-            era5_daily_variables=self.era5_daily_variables,
-            years=ytest,
+            years=self.ytraining,
             lag_day=self.lag_day,
             transform=True,
         )
@@ -581,6 +551,20 @@ class DefileDataModule(LightningDataModule):
 
         :return: The train dataloader.
         """
+        # self.data_train = DefileDataset(
+        #     data_dir=self.data_dir,
+        #     species=self.species,
+        #     era5_main_location=self.era5_main_location,
+        #     era5_main_variables=self.era5_main_variables,
+        #     era5_hourly_locations=self.era5_hourly_locations,
+        #     era5_hourly_variables=self.era5_hourly_variables,
+        #     era5_daily_locations=self.era5_daily_locations,
+        #     era5_daily_variables=self.era5_daily_variables,
+        #     years=self.ytraining,
+        #     lag_day=self.lag_day,
+        #     transform=True,
+        # )
+
         return DataLoader(
             dataset=self.data_train,
             batch_size=self.batch_size_per_device,
@@ -594,6 +578,20 @@ class DefileDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
+
+        self.data_val = DefileDataset(
+            data_dir=self.data_dir,
+            species=self.species,
+            era5_main_location=self.era5_main_location,
+            era5_main_variables=self.era5_main_variables,
+            era5_hourly_locations=self.era5_hourly_locations,
+            era5_hourly_variables=self.era5_hourly_variables,
+            era5_daily_locations=self.era5_daily_locations,
+            era5_daily_variables=self.era5_daily_variables,
+            years=self.yval,
+            lag_day=self.lag_day,
+            transform=True,
+        )
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.batch_size_per_device,
@@ -607,6 +605,20 @@ class DefileDataModule(LightningDataModule):
 
         :return: The test dataloader.
         """
+        self.data_test = DefileDataset(
+            data_dir=self.data_dir,
+            species=self.species,
+            era5_main_location=self.era5_main_location,
+            era5_main_variables=self.era5_main_variables,
+            era5_hourly_locations=self.era5_hourly_locations,
+            era5_hourly_variables=self.era5_hourly_variables,
+            era5_daily_locations=self.era5_daily_locations,
+            era5_daily_variables=self.era5_daily_variables,
+            years=self.ytest,
+            lag_day=self.lag_day,
+            transform=True,
+        )
+
         return DataLoader(
             dataset=self.data_test,
             batch_size=self.batch_size_per_device,
@@ -615,13 +627,13 @@ class DefileDataModule(LightningDataModule):
             shuffle=False,
         )
 
-    def predict_dataloader(self, forecast_day) -> DataLoader[Any]:
+    def predict_dataloader(self) -> DataLoader[Any]:
         """Create and return the predict dataloader.
 
         :return: The test dataloader.
         """
 
-        forcast_dataset = ForecastDataset(
+        self.data_predict = ForecastDataset(
             era5_main_location=self.era5_main_location,
             era5_main_variables=self.era5_main_variables,
             era5_hourly_locations=self.era5_hourly_locations,
@@ -629,15 +641,14 @@ class DefileDataModule(LightningDataModule):
             era5_daily_locations=self.era5_daily_locations,
             era5_daily_variables=self.era5_daily_variables,
             lag_day=self.lag_day,
-            forecast_day=forecast_day,
+            forecast_day=self.forecast_day,
             transform=self.data_train.transform,
             trans_main=self.data_train.trans_main,
             trans_daily=self.data_train.trans_daily,
             trans_hourly=self.data_train.trans_hourly,
         )
-
         return DataLoader(
-            dataset=forcast_dataset,
+            dataset=self.data_predict,
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,

@@ -16,36 +16,24 @@ era5_main_variables:
   - "u_component_of_wind_100m"
   - "v_component_of_wind_100m"
   - "instantaneous_10m_wind_gust"
+  # - "high_cloud_cover"
+  # - "low_cloud_cover"
+  # - "medium_cloud_cover"
+  # - "total_cloud_cover"
+  # - "surface_solar_radiation_downwards"
+
+era5_hourly_locations:
+  - "Defile"
+
+era5_hourly_variables:
   - "high_cloud_cover"
   - "low_cloud_cover"
   - "medium_cloud_cover"
   - "total_cloud_cover"
   - "surface_solar_radiation_downwards"
 
-era5_hourly_locations:
-  - "MontTendre"
-  - "Chasseral"
-  - "Basel"
-  - "Dijon"
-  - "ColGrandSaintBernard"
-
-era5_hourly_variables:
-  - "temperature_2m"
-  - "total_precipitation"
-  - "surface_pressure"
-  - "u_component_of_wind_10m"
-  - "v_component_of_wind_10m"
-  - "total_cloud_cover"
-  - "surface_solar_radiation_downwards"
-
 era5_daily_locations:
   - "Defile"
-  - "Schaffhausen"
-  - "Basel"
-  - "Munich"
-  - "Stuttgart"
-  - "Frankfurt"
-  - "Berlin"
 
 era5_daily_variables:
   - "temperature_2m"
@@ -55,8 +43,8 @@ era5_daily_variables:
   - "v_component_of_wind_10m"
 
 lag_day: 7
-forecast_day: 5
 seed: 0
 train_val_test_cum_ratio: [0.7, 0.9]
+
 num_workers: 0
 pin_memory: False

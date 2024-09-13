@@ -1,14 +1,14 @@
-import pandas as pd
 import numpy as np
-from openmeteo_sdk.Variable import Variable
+import pandas as pd
 from openmeteo_requests import Client
-from src.data.get_era5 import get_lat_lon
+from openmeteo_sdk.Variable import Variable
 from suncalc import get_position
+
+from src.data.get_era5 import get_lat_lon
 
 
 def convert_era5_variable(variables):
-    """
-    Convert era5 hourly variable names to forecast variable names based on a predefined mapping.
+    """Convert era5 hourly variable names to forecast variable names based on a predefined mapping.
 
     Parameters:
     variables (list of str): A list of variable names to be converted.
@@ -39,13 +39,11 @@ def convert_era5_variable(variables):
         },
         "u_component_of_wind_10m": {
             "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"]
-            * np.cos(np.radians(df["wind_direction_10m"])),
+            "conv": lambda df: df["wind_speed_10m"] * np.cos(np.radians(df["wind_direction_10m"])),
         },
         "v_component_of_wind_10m": {
             "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"]
-            * np.sin(np.radians(df["wind_direction_10m"])),
+            "conv": lambda df: df["wind_speed_10m"] * np.sin(np.radians(df["wind_direction_10m"])),
         },
         "u_component_of_wind_100m": {
             "var_forecast": ["wind_speed_100m", "wind_direction_100m"],
@@ -111,9 +109,8 @@ def convert_era5_variable(variables):
     return list(set(var_forecast_list)), conv_functions
 
 
-def get_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=False):
-    """
-    Retrieves weather forecast data for given locations and variables using the Open-Meteo API.
+def download_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=False):
+    """Retrieves weather forecast data for given locations and variables using the Open-Meteo API.
 
     Parameters:
     -----------
@@ -144,6 +141,7 @@ def get_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=Fal
     # Initialize the Open-Meteo API client
     om = Client()
 
+    print("Download ERA5...")
     # Make a request to the Open-Meteo API to get weather data
     responses = om.weather_api(
         url="https://api.open-meteo.com/v1/forecast",
@@ -152,8 +150,8 @@ def get_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=Fal
             "longitude": lon,
             "hourly": conv_var[0],
             # "models": "ecmwf_ifs025",
-            "lag_day": lag_day,
-            "forecast_day": forecast_day,
+            "past_days": lag_day,
+            "forecast_days": forecast_day + 1,
         },
     )
 
@@ -165,10 +163,7 @@ def get_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=Fal
         hourly = r.Hourly()
 
         df_forcast = pd.DataFrame(
-            {
-                var: hourly.Variables(j).ValuesAsNumpy()
-                for j, var in enumerate(conv_var[0])
-            }
+            {var: hourly.Variables(j).ValuesAsNumpy() for j, var in enumerate(conv_var[0])}
         )
 
         # Create a DataFrame with timestamps and the corresponding location name
@@ -212,9 +207,9 @@ def get_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=Fal
     return era5
 
 
-def get_forecast_daily(locations, variables, lag_day, forecast_day):
+def download_forecast_daily(locations, variables, lag_day, forecast_day):
     # Read the hourly data
-    era5_hourly = get_forecast_hourly(
+    era5_hourly = download_forecast_hourly(
         locations=locations,
         variables=variables,
         lag_day=lag_day,

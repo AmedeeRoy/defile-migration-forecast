@@ -1,5 +1,7 @@
-from suncalc import get_position
 import pandas as pd
+from omegaconf import ListConfig
+from suncalc import get_position
+from tqdm import tqdm
 
 
 def get_lat_lon(locations):
@@ -45,8 +47,8 @@ def get_lat_lon(locations):
 
 
 def get_era5_hourly(data_dir, locations, variables, add_sun=False):
-    """
-    Retrieves hourly ERA5 weather data for specified locations and variables, with the optional addition of sun position data.
+    """Retrieves hourly ERA5 weather data for specified locations and variables, with the optional
+    addition of sun position data.
 
     Parameters:
     ----------
@@ -70,9 +72,9 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
 
     # Check if locations is a string or list of strings
     assert isinstance(
-        locations, (str, list)
+        locations, (str, list, ListConfig)
     ), "Error: 'locations' must be a string or a list of strings."
-    if isinstance(locations, list):
+    if isinstance(locations, (list, ListConfig)):
         assert all(
             isinstance(loc, str) for loc in locations
         ), "Error: All elements in 'locations' list must be strings."
@@ -81,7 +83,9 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
         locations = [locations]
 
     # Check if variables is a list of strings
-    assert isinstance(variables, list), "Error: 'variables' must be a list of strings."
+    assert isinstance(
+        variables, (list, ListConfig)
+    ), "Error: 'variables' must be a list of strings."
     assert all(
         isinstance(var, str) for var in variables
     ), "Error: All elements in 'variables' list must be strings."
@@ -90,7 +94,8 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
     assert isinstance(add_sun, bool), "Error: 'add_sun' must be a boolean value."
 
     era5 = None
-    for loc in locations:
+    print("Fetching ERA5 data...")
+    for loc in tqdm(locations):
         # Read the CSV file for the location
         era5_loc = pd.read_csv(f"{data_dir}/era5/{loc}.csv", parse_dates=["datetime"])
 
@@ -118,9 +123,7 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
 
         # Option 2
         era5_loc["location"] = loc
-        era5 = (
-            era5_loc if era5 is None else pd.concat([era5, era5_loc], ignore_index=True)
-        )
+        era5 = era5_loc if era5 is None else pd.concat([era5, era5_loc], ignore_index=True)
 
     # Rename date to datetime to make it easier to then create `date` and `time`
     era5["date"] = pd.to_datetime(era5["datetime"].dt.date)
