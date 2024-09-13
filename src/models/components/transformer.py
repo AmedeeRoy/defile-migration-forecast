@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 
 # from https://medium.com/@mkaanaslan99/time-series-forecasting-with-a-basic-transformer-model-in-pytorch-650f116a1018
@@ -120,12 +121,14 @@ class Transformer(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, yr, doy, era5_hourly, era5_daily):
-        # Hourly Transformer
+    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
+        # Hourly weather
         doy_ = doy.repeat(1, 24).unsqueeze(1)
         yr_ = yr.repeat(1, 24).unsqueeze(1)
-        x_h = torch.cat([era5_hourly, doy_, yr_], 1)
-        x_h = x_h + self.positional_encoding(x_h.transpose(1, 2)).transpose(1, 2)
+        era5_hourly = rearrange(era5_hourly, "b f t x -> b (f x) t")
+        era5_main = era5_main.squeeze()
+        x_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
+        # x_h = x_h + self.positional_encoding(x_h.transpose(1, 2)).transpose(1, 2)
 
         out_h = self.cnn_embedding_hourly(x_h)
         out_h = out_h.transpose(1, 2)
@@ -134,11 +137,12 @@ class Transformer(nn.Module):
         out_h = out_h.transpose(1, 2)
         out_h = self.cnn_output_hourly(out_h)
 
-        # Daily Transformer
+        # Daily weather
         doy_ = doy.repeat(1, 7).unsqueeze(1)
         yr_ = yr.repeat(1, 7).unsqueeze(1)
+        era5_daily = rearrange(era5_daily, "b f t x -> b (f x) t")
         x_d = torch.cat([era5_daily, doy_, yr_], 1)
-        x_d = x_d + self.positional_encoding(x_d.transpose(1, 2)).transpose(1, 2)
+        # x_d = x_d + self.positional_encoding(x_d.transpose(1, 2)).transpose(1, 2)
 
         out_d = self.cnn_embedding_daily(x_d)
         out_d = out_d.transpose(1, 2)

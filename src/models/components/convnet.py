@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 
 class ConvNet(nn.Module):
@@ -54,21 +55,18 @@ class ConvNet(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, yr, doy, era5_hourly, era5_daily):
+    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
 
         # ---------------------------
-        # Example of a model that only takes doy and era5_hourly
-        # and applies distinct layers of 1D convolutions
+        # Hourly weather
+        doy_ = doy.repeat(1, 24).unsqueeze(1)
+        yr_ = yr.repeat(1, 24).unsqueeze(1)
+        era5_hourly = rearrange(era5_hourly, "b f t x -> b (f x) t")
+        era5_main = era5_main.squeeze()
+        X_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
 
-        # doy repeated to go from (batch, 1) to (batch, 1, 24)
-        doy = doy.repeat(1, 24).unsqueeze(1)
-        yr = yr.repeat(1, 24).unsqueeze(1)
-        # concatenate doy with era_hourly as feature (batch, nfeatures + 2, 24)
-        # X = torch.cat([doy, yr], 1)
-        X = torch.cat([era5_hourly, doy, yr], 1)
-
-        out = self.layers(X)
+        out = self.layers(X_h)
         out = self.last_layer(out)
         out = (
             5 * out
@@ -183,24 +181,26 @@ class ConvNetplus(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, yr, doy, era5_hourly, era5_daily):
+    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
 
         # ---------------------------
-        # Example of a model that only takes doy and era5_hourly
-        # and applies distinct layers of 1D convolutions
+        # Hourly weather
         doy_ = doy.repeat(1, 24).unsqueeze(1)
         yr_ = yr.repeat(1, 24).unsqueeze(1)
-        X_h = torch.cat([era5_hourly, doy_, yr_], 1)
+        era5_hourly = rearrange(era5_hourly, "b f t x -> b (f x) t")
+        era5_main = era5_main.squeeze()
+        X_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
 
         out_h = self.layers_h(X_h)
         out_h = self.last_layer_h(out_h)
 
+        # Daily weather
         doy_ = doy.repeat(1, 7).unsqueeze(1)
-        # dd = torch.arange(-7/366, 0, step = 1/ 366)
-        # doy_ = doy_ + dd
         yr_ = yr.repeat(1, 7).unsqueeze(1)
+        era5_daily = rearrange(era5_daily, "b f t x -> b (f x) t")
         X_d = torch.cat([era5_daily, doy_, yr_], 1)
+
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
