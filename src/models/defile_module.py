@@ -69,6 +69,7 @@ class DefileLitModule(LightningModule):
         # for saving predictions
         self.val_pred = {"obs": [], "mask": [], "pred": []}
         self.test_pred = {"obs": [], "mask": [], "pred": []}
+        self.predict_pred = {"pred": []}
 
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
@@ -82,9 +83,9 @@ class DefileLitModule(LightningModule):
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
 
-    def forward(self, yr, doy, era5_hourly, era5_daily) -> torch.Tensor:
+    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`."""
-        return self.net(yr, doy, era5_hourly, era5_daily)
+        return self.net(yr, doy, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
         return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
@@ -101,8 +102,8 @@ class DefileLitModule(LightningModule):
             - A tensor of predictions.
             - A tensor of target labels.
         """
-        count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
+        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
         return loss
 
@@ -149,8 +150,8 @@ class DefileLitModule(LightningModule):
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         # save all predictions
-        count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
+        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
         self.val_pred["obs"].append(count)
         self.val_pred["mask"].append(mask)
@@ -200,8 +201,8 @@ class DefileLitModule(LightningModule):
         self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         # save all predictions
-        count, yr, doy, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_hourly, era5_daily)
+        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
         self.test_pred["obs"].append(count)
         self.test_pred["mask"].append(mask)
@@ -232,6 +233,27 @@ class DefileLitModule(LightningModule):
             on_epoch=True,
             prog_bar=True,
         )
+
+    def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+        """Perform a single forward step on a batch of data from the predict set.
+
+        :param batch: A batch of data (a tuple) containing the input tensor of images and target
+            labels.
+        :param batch_idx: The index of the current batch.
+        """
+        loss = self.model_step(batch)
+
+        # save all predictions
+        _, yr, doy, era5_main, era5_hourly, era5_daily, _ = batch
+        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
+
+        self.predict_pred["pred"].append(count_pred)
+
+    def on_predict_epoch_end(self) -> None:
+        """Lightning hook that is called when a predict epoch ends."""
+        # Concatenate batches
+        for k in self.predict_pred.keys():
+            self.predict_pred[k] = torch.cat(self.predict_pred[k], 0)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.
