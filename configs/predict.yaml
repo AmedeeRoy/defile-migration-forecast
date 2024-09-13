@@ -11,9 +11,9 @@ defaults:
   - extras: default
   - hydra: default
 
-task_name: "eval"
+task_name: "predict"
 
-tags: ["unet"]
+tags: ["dev"]
 
 # passing checkpoint path is necessary for evaluation
 ckpt_path: ${paths.log_dir}/train/multiruns/2024-09-11_14-58-53/14/checkpoints/epoch_032.ckpt

@@ -4,8 +4,8 @@ _convert_: object
 optimizer:
   _target_: torch.optim.Adam
   _partial_: true
-  lr: 0.0015
-  weight_decay: 0.075
+  lr: 0.005881046823535977
+  weight_decay: 0.03868890090567428
 
 scheduler:
   _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
@@ -16,11 +16,12 @@ scheduler:
 
 net:
   _target_: src.models.components.unet.UNetplus
-  nb_input_features: 9
+  nb_input_features_hourly: 63
   nb_layer_hourly: 2
   nb_hidden_features_hourly: 16
+  nb_input_features_daily: 37
   nb_layer_daily: 6
-  nb_hidden_features_daily: 64
+  nb_hidden_features_daily: 128
   dropout: True
 
 criterion:

@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 
 class DownConv(nn.Module):
@@ -93,16 +94,17 @@ class UpConv(nn.Module):
 class UNetplus(nn.Module):
     def __init__(
         self,
-        nb_input_features,
+        nb_input_features_hourly,
         nb_hidden_features_hourly,
         nb_layer_hourly,
         nb_hidden_features_daily,
+        nb_input_features_daily,
         nb_layer_daily,
         dropout,
     ):
         super(UNetplus, self).__init__()
 
-        self.nb_input_features = nb_input_features
+        self.nb_input_features_hourly = nb_input_features_hourly
         self.nb_hidden_features_hourly = nb_hidden_features_hourly
         self.nb_layer_hourly = nb_layer_hourly
 
@@ -110,7 +112,7 @@ class UNetplus(nn.Module):
         # create the encoder pathway and add to a list
         self.down_convs = nn.ModuleList()
         for i in range(nb_layer_hourly):
-            ins = self.nb_input_features if i == 0 else outs
+            ins = self.nb_input_features_hourly if i == 0 else outs
             outs = self.nb_hidden_features_hourly * (2**i)
             pooling = True if i < nb_layer_hourly - 1 else False
 
@@ -133,6 +135,7 @@ class UNetplus(nn.Module):
         )
 
         # Daily Network --------------------------
+        self.nb_input_features_daily = nb_input_features_daily
         self.nb_layer_daily = nb_layer_daily
         self.nb_hidden_features_daily = nb_hidden_features_daily
         layers_d = []
@@ -140,7 +143,7 @@ class UNetplus(nn.Module):
             if n == 0:
                 layers_d.append(
                     nn.Conv1d(
-                        in_channels=nb_input_features,
+                        in_channels=nb_input_features_daily,
                         out_channels=nb_hidden_features_daily,
                         kernel_size=5,
                         stride=1,
@@ -171,15 +174,17 @@ class UNetplus(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, yr, doy, era5_hourly, era5_daily):
+    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
 
         # ---------------------------
 
-        # Hourly UNet
+        # Hourly weather
         doy_ = doy.repeat(1, 24).unsqueeze(1)
         yr_ = yr.repeat(1, 24).unsqueeze(1)
-        out_h = torch.cat([era5_hourly, doy_, yr_], 1)
+        era5_hourly = rearrange(era5_hourly, "b f t x -> b (f x) t")
+        era5_main = era5_main.squeeze()
+        out_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
 
         encoder_outs = []
         # encoder pathway, save outputs for merging
@@ -192,12 +197,12 @@ class UNetplus(nn.Module):
             out_h = module(before_pool, out_h)
         out_h = self.conv_final(out_h)
 
-        # Daily CNNet
+        # Daily weather
         doy_ = doy.repeat(1, 7).unsqueeze(1)
-        # dd = torch.arange(-7/366, 0, step = 1/ 366)
-        # doy_ = doy_ + dd
         yr_ = yr.repeat(1, 7).unsqueeze(1)
+        era5_daily = rearrange(era5_daily, "b f t x -> b (f x) t")
         X_d = torch.cat([era5_daily, doy_, yr_], 1)
+
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 

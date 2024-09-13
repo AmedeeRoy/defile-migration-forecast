@@ -1,3 +1,4 @@
+import datetime
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
@@ -10,17 +11,81 @@ from matplotlib.patches import Rectangle
 
 @dataclass
 class DefileExport:
-    filepath: str
+    dirpath: str
+    filename: str
+    species: str
     plot: bool
     plotdir: str
 
-    def save(self, test_dataset, test_pred):
+    ### EXPORT PREDICTIONS -------------------
+    def save_predict(self, predict_dataset, predict_pred):
+        predict_dataset.set_transform(False)
+        predictions = []
+
+        for i in range(len(predict_dataset)):
+            yr, doy, era5_main, era5_hourly, era5_daily = predict_dataset[i]
+            pred = era5_main.copy()
+            pred = pred.assign(estimated_hourly_counts=("time", predict_pred["pred"][i, 0, :]))
+            predictions.append(pred)
+
+        predictions = xr.concat(predictions, dim="date")
+        # predictions["time"] = predictions.time.astype(str)
+        today = datetime.date.today().strftime("%Y%m%d")
+        filename = "_".join([today] + self.species.split(" ")) + ".nc"
+
+        predictions.to_netcdf(os.path.join(self.dirpath, filename))
+        print(predictions)
+
+        os.makedirs(self.plotdir)
+        self.plt_predict(predictions)
+
+    def plt_predict(self, data):
+        daily_counts_log10 = data.sum(dim="time").estimated_hourly_counts
+        daily_counts = np.exp(daily_counts_log10) - 1
+
+        data_smooth = data.rolling({"time": 3}, center=True).mean()
+
+        fig, ax = plt.subplots(2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True)
+        ax = ax.flatten()
+        for k in range(len(data.date)):
+            subset = data_smooth.isel(date=k)
+
+            weights = subset.estimated_hourly_counts / subset.estimated_hourly_counts.sum()
+
+            ax[k].bar(np.arange(24), weights * daily_counts[k])
+
+            ax[k].set_title(subset.date.dt.strftime("%Y-%m-%d").item())
+            ax[k].set_xticks(np.arange(0, 24, 3), [str(h) + "h" for h in np.arange(0, 24, 3)])
+
+            ax[k].text(
+                0.05,
+                0.93,
+                f"Total = {daily_counts[k]:.0f}",
+                transform=ax[k].transAxes,
+                fontsize=10,
+                verticalalignment="top",
+                horizontalalignment="left",
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="gray", alpha=0.25),
+            )
+
+        ax[0].set_ylabel("Forecasted individual \ncounts (#)")
+        ax[3].set_ylabel("Forecasted individual \ncounts (#)")
+
+        plt.suptitle(f"Defile Bird Forecasts - {self.species}")
+
+        today = datetime.date.today().strftime("%Y%m%d")
+        filename = "_".join([today] + self.species.split(" ")) + ".png"
+        plt.savefig(os.path.join(self.dirpath, filename))
+        plt.close()
+
+    ### EXPORT TEST -------------------
+    def save_test(self, test_dataset, test_pred):
         test_dataset.set_transform(False)
         predictions = []
 
         for i in range(len(test_dataset)):
-            count, year, doy, era5_hourly, era5_daily, mask = test_dataset[i]
-            pred = era5_hourly.copy()
+            count, yr, doy, era5_main, era5_hourly, era5_daily, mask = test_dataset[i]
+            pred = era5_main.copy()
             pred = pred.assign(estimated_hourly_counts=("time", test_pred["pred"][i, 0, :]))
             pred = pred.assign(masked_total_counts_=("", test_pred["obs"][i]))
             pred = pred.assign(mask=("time", test_pred["mask"][i]))
@@ -39,7 +104,7 @@ class DefileExport:
         )
 
         predictions["time"] = predictions.time.astype(str)
-        predictions.to_netcdf(self.filepath)
+        predictions.to_netcdf(os.path.join(self.dirpath, self.filename))
         print(predictions)
 
         os.makedirs(self.plotdir)
