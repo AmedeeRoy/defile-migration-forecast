@@ -11,6 +11,7 @@ __pycache__/
 *.csv
 
 # logs outputs
+logs/*
 logs/eval/runs/*
 logs/train/runs/*
 logs/train/multiruns/*
