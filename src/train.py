@@ -101,7 +101,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info(f"Best ckpt path: {ckpt_path}")
 
         log.info("Export predictions!")
-        export.save(test_dataset=datamodule.data_test, test_pred=model.test_pred)
+        export.save_test(test_dataset=datamodule.data_test, test_pred=model.test_pred)
 
     test_metrics = trainer.callback_metrics
 
