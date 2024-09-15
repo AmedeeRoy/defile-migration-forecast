@@ -1,0 +1,26 @@
+# @package _global_
+
+# to execute this experiment run:
+# python src/train.py experiment=production
+# python src/predict.py experiment=production
+
+defaults:
+  - override /data: defile
+  - override /model: unet
+  - override /callbacks: default
+  - override /trainer: default
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+hydra:
+  sweeper:
+    params:
+      data:
+        species: ["Buse variable", "Milan royal"]
+
+paths:
+  output_dir: 'prod/${task_name}/${data.species.replace(" ", "_")}'
+
+predict:
+  ckpt_path: ${paths.output_dir}/checkpoints/last.ckpt
