@@ -59,10 +59,11 @@ class PositionalEncodingLayer(nn.Module):
 class Transformer(nn.Module):
     def __init__(
         self,
-        nb_input_features,
+        nb_input_features_hourly,
         embed_size_hourly,
         num_heads_hourly,
         num_blocks_hourly,
+        nb_input_features_daily,
         embed_size_daily,
         num_heads_daily,
         num_blocks_daily,
@@ -70,13 +71,13 @@ class Transformer(nn.Module):
     ):
         super(Transformer, self).__init__()
 
-        self.positional_encoding = PositionalEncodingLayer(dim=nb_input_features)
+        # self.positional_encoding = PositionalEncodingLayer(dim=nb_input_features_hourly)
 
         # Hourly Network --------------------------
 
         self.cnn_embedding_hourly = nn.Sequential(
             nn.Conv1d(
-                nb_input_features,
+                nb_input_features_hourly,
                 embed_size_hourly,
                 kernel_size=5,
                 stride=1,
@@ -103,7 +104,12 @@ class Transformer(nn.Module):
 
         self.cnn_embedding_daily = nn.Sequential(
             nn.Conv1d(
-                nb_input_features, embed_size_daily, kernel_size=5, stride=1, padding=2, dilation=1
+                nb_input_features_daily,
+                embed_size_daily,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.BatchNorm1d(num_features=embed_size_daily),
             nn.LeakyReLU(),

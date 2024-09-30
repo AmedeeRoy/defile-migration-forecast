@@ -26,6 +26,10 @@ class DefileExport:
             yr, doy, era5_main, era5_hourly, era5_daily = predict_dataset[i]
             pred = era5_main.copy()
             pred = pred.assign(estimated_hourly_counts=("time", predict_pred["pred"][i, 0, :]))
+            if predict_pred["pred"].shape[1] > 1:
+                pred = pred.assign(
+                    estimated_hourly_counts_var=("time", predict_pred["pred"][i, 1, :])
+                )
             predictions.append(pred)
 
         predictions = xr.concat(predictions, dim="date")
@@ -36,12 +40,11 @@ class DefileExport:
         predictions.to_netcdf(os.path.join(self.dirpath, filename))
         print(predictions)
 
-        os.makedirs(self.plotdir)
         self.plt_predict(predictions)
 
     def plt_predict(self, data):
-        daily_counts_log10 = data.sum(dim="time").estimated_hourly_counts
-        daily_counts = np.exp(daily_counts_log10) - 1
+        daily_counts_transform = data.sum(dim="time").estimated_hourly_counts
+        daily_counts = (10 * daily_counts_transform) ** 2
 
         data_smooth = data.rolling({"time": 3}, center=True).mean()
 
@@ -87,6 +90,11 @@ class DefileExport:
             count, yr, doy, era5_main, era5_hourly, era5_daily, mask = test_dataset[i]
             pred = era5_main.copy()
             pred = pred.assign(estimated_hourly_counts=("time", test_pred["pred"][i, 0, :]))
+            if test_pred["pred"].shape[1] > 1:
+                pred = pred.assign(
+                    estimated_hourly_counts_var=("time", test_pred["pred"][i, 1, :])
+                )
+
             pred = pred.assign(masked_total_counts_=("", test_pred["obs"][i]))
             pred = pred.assign(mask=("time", test_pred["mask"][i]))
             predictions.append(pred)
@@ -107,7 +115,9 @@ class DefileExport:
         predictions.to_netcdf(os.path.join(self.dirpath, self.filename))
         print(predictions)
 
-        os.makedirs(self.plotdir)
+        if not os.path.exists(self.plotdir):
+            os.makedirs(self.plotdir)
+
         self.plt_counts_distribution(predictions)
         self.plt_true_vs_prediction(predictions)
         self.plt_timeseries(predictions)
@@ -117,9 +127,17 @@ class DefileExport:
         true_count = data.masked_total_counts.values
         pred_count = data.estimated_masked_total_counts.values
 
-        plt.hist(true_count, label="True count", alpha=0.5)
-        plt.hist(pred_count, label="Predicted count", alpha=0.5)
-        plt.xlabel("Counts (log-scale)")
+        plt.hist(
+            true_count, label="True count", alpha=0.5, edgecolor="k", bins=np.linspace(0, 10, 50)
+        )
+        plt.hist(
+            pred_count,
+            label="Predicted count",
+            alpha=0.5,
+            edgecolor="k",
+            bins=np.linspace(0, 10, 50),
+        )
+        plt.xlabel("Counts (transform-scale)")
         plt.ylabel("Histogram")
         plt.legend()
         plt.savefig(f"{self.plotdir}/counts_distribution.jpg")
@@ -136,16 +154,16 @@ class DefileExport:
         plt.scatter(true_count, pred_count, c="black", s=5, alpha=0.4)
         plt.plot(x, y, c="red")
         plt.plot(x, x, "--", c="black")
-        plt.xlabel("True count (log-scale)")
-        plt.ylabel("Predicted count (log-scale)")
+        plt.xlabel("True count (transform-scale)")
+        plt.ylabel("Predicted count (transform-scale)")
         plt.savefig(f"{self.plotdir}/true_vs_prediction.jpg")
         plt.close()
 
     def plt_timeseries(self, data):
         fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
         ax = ax.flatten()
-        for i, k in enumerate(np.random.randint(0, len(data.date), size=16)):
-            subs = data.isel(date=k)
+        for i, d in enumerate(np.random.randint(0, len(data.date), size=16)):
+            subs = data.isel(date=d)
 
             ax[i].plot(np.arange(0, 24), subs.estimated_hourly_counts)
             for k, m in enumerate(subs.mask.values):
@@ -156,7 +174,8 @@ class DefileExport:
 
             ax[i].set_ylim(0, max(subs.estimated_hourly_counts.max(), obs) + 0.1)
             ax[i].set_xlabel("hours")
-            ax[i].set_ylabel("Bird counts (log10)")
+            ax[i].set_ylabel("Bird counts (transform)")
+            ax[i].set_title(data.isel(date=d).date.dt.strftime("%Y-%m-%d").item())
         fig.savefig(f"{self.plotdir}/timeseries.jpg")
         plt.close()
 

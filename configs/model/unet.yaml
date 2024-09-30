@@ -12,24 +12,27 @@ scheduler:
   _partial_: true
   mode: min
   factor: 0.1
-  patience: 2
+  patience: 5
 
 net:
   _target_: src.models.components.unet.UNetplus
-  nb_input_features_hourly: 63
+  nb_input_features_hourly: ${eval:'4+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
   nb_layer_hourly: 2
   nb_hidden_features_hourly: 16
-  nb_input_features_daily: 37
+  nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
   nb_layer_daily: 6
   nb_hidden_features_daily: 128
+  nb_output_features: 1
   dropout: True
 
 criterion:
+  # - _target_: src.models.criterion.Gaussian
+  #   alpha: 1
   - _target_: src.models.criterion.RMSE
     alpha: 1
     weights: False
-  - _target_: src.models.criterion.L2
-    alpha: 1
+  # - _target_: src.models.criterion.L2
+  #   alpha: 1
 
 # compile model for faster training with pytorch 2.0
 compile: false

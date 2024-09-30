@@ -1,3 +1,4 @@
+import pickle
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -68,6 +69,7 @@ class DefileDataset(Dataset):
         years=range(1966, 2023),
         lag_day=7,
         transform=False,
+        transform_data=None,
     ):
         # MAIN ERA-5 DATA ----------------------------
         era5_main = get_era5_hourly(
@@ -82,7 +84,7 @@ class DefileDataset(Dataset):
             data_dir,
             locations=era5_hourly_locations,
             variables=era5_hourly_variables,
-            add_sun=True,
+            add_sun=False,
         )
 
         # DAILY ERA-5 DATA ----------------------------
@@ -137,16 +139,20 @@ class DefileDataset(Dataset):
 
         # normalizing
         # Create a DataTransformers for each era5 data. this class does not store the data, only the transformation and the parameters of the transformation
-        trans_main = DataTransformer(dataset=era5_main)
-        trans_hourly = DataTransformer(dataset=era5_hourly)
-        trans_daily = DataTransformer(dataset=era5_daily)
+        self.transform_data = transform_data
+        if transform_data is None:
+            self.transform_data = {}
+            self.transform_data["main"] = DataTransformer(dataset=era5_main)
+            self.transform_data["hourly"] = DataTransformer(dataset=era5_hourly)
+            self.transform_data["daily"] = DataTransformer(dataset=era5_daily)
 
         if transform:
             # Apply the transformer to each variable
-            era5_main = trans_main.apply_transformers(era5_main)
-            era5_hourly = trans_hourly.apply_transformers(era5_hourly)
-            era5_daily = trans_daily.apply_transformers(era5_daily)
-            dfys["count"] = np.log10(1 + dfys["count"])
+            era5_main = self.transform_data["main"].apply_transformers(era5_main)
+            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
+            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
+            # dfys["count"] = np.log10(dfys["count"]+1)
+            dfys["count"] = np.sqrt(dfys["count"]) / 10
             dfys["doy"] = (dfys["doy"] - 183) / 366
             dfys["year"] = (dfys["year"] - 2000) / 100
 
@@ -155,11 +161,6 @@ class DefileDataset(Dataset):
         self.era5_main = era5_main
         self.era5_daily = era5_daily
         self.era5_hourly = era5_hourly
-        # Export the transformer as a simple dictionary which can me more easily written to the config.yaml file
-        # Note that we can re-create the transoformer super easily with DataTransformer(transformers=trans_main)
-        self.trans_main = trans_main
-        self.trans_daily = trans_daily
-        self.trans_hourly = trans_hourly
         self.mask = mask
         self.lag_day = lag_day
         self.transform = transform
@@ -247,16 +248,12 @@ class ForecastDataset(Dataset):
         lag_day=7,
         forecast_day=5,
         transform=False,
-        trans_main=None,
-        trans_daily=None,
-        trans_hourly=None,
+        transform_data=None,
     ):
         # Assert that if transform=True
         if transform == True:
-            if trans_main is None or trans_daily is None or trans_hourly is None:
-                raise ValueError(
-                    f"trans_main, trans_hourly and trans_daily need to be provided if transform is True"
-                )
+            if transform_data is None:
+                raise ValueError(f"transform_data need to be provided if transform is True")
 
         # MAIN ERA-5 DATA ----------------------------
         era5_main = download_forecast_hourly(
@@ -273,7 +270,7 @@ class ForecastDataset(Dataset):
             variables=era5_hourly_variables,
             lag_day=0,
             forecast_day=forecast_day,
-            add_sun=True,
+            add_sun=False,
         )
 
         # DAILY ERA-5 DATA ----------------------------
@@ -289,6 +286,7 @@ class ForecastDataset(Dataset):
             {
                 "date": pd.date_range(
                     start=pd.Timestamp.now().normalize(),
+                    # start = pd.to_datetime("2017-09-01").normalize(),
                     periods=forecast_day + 1,
                     freq="D",
                 )
@@ -297,11 +295,12 @@ class ForecastDataset(Dataset):
         df["doy"] = df["date"].dt.day_of_year
         df["year"] = df["date"].dt.year
 
+        self.transform_data = transform_data
         if transform:
             # Apply the transformer to each variable
-            era5_main = trans_main.apply_transformers(era5_main)
-            era5_hourly = trans_hourly.apply_transformers(era5_hourly)
-            era5_daily = trans_daily.apply_transformers(era5_daily)
+            era5_main = self.transform_data["main"].apply_transformers(era5_main)
+            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
+            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
             df["doy"] = (df["doy"] - 183) / 366
             df["year"] = (df["year"] - 2000) / 100
 
@@ -310,11 +309,6 @@ class ForecastDataset(Dataset):
         self.era5_main = era5_main
         self.era5_daily = era5_daily
         self.era5_hourly = era5_hourly
-        # Export the transformer as a simple dictionary which can me more easily written to the config.yaml file
-        # Note that we can re-create the transoformer super easily with DataTransformer(transformers=trans_main)
-        self.trans_main = trans_main
-        self.trans_daily = trans_daily
-        self.trans_hourly = trans_hourly
         self.lag_day = lag_day
         self.transform = transform
 
@@ -357,37 +351,6 @@ class ForecastDataset(Dataset):
 
 class DefileDataModule(LightningDataModule):
     """`LightningDataModule` for the Defile dataset.
-
-    A `LightningDataModule` implements 7 key methods:
-
-    ```python
-        def prepare_data(self):
-        # Things to do on 1 GPU/TPU (not on every GPU/TPU in DDP).
-        # Download data, pre-process, split, save to disk, etc...
-
-        def setup(self, stage):
-        # Things to do on every process in DDP.
-        # Load data, set variables, etc...
-
-        def train_dataloader(self):
-        # return train dataloader
-
-        def val_dataloader(self):
-        # return validation dataloader
-
-        def test_dataloader(self):
-        # return test dataloader
-
-        def predict_dataloader(self):
-        # return predict dataloader
-
-        def teardown(self, stage):
-        # Called on every process in DDP.
-        # Clean up after fit or test.
-    ```
-
-    This allows you to share a full dataset without explaining how to download,
-    split, transform and process the data.
 
     Read the docs:
         https://lightning.ai/docs/pytorch/latest/data/datamodule.html
@@ -437,7 +400,6 @@ class DefileDataModule(LightningDataModule):
         ],
         lag_day: int = 7,
         forecast_day: int = 5,
-        seed: int = 0,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         batch_size: int = 64,
         num_workers: int = 0,
@@ -474,31 +436,10 @@ class DefileDataModule(LightningDataModule):
         self.era5_daily_variables = era5_daily_variables
         self.lag_day = lag_day
         self.forecast_day = forecast_day
-        self.seed = seed
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.batch_size_per_device = batch_size
-
-    # def prepare_data(self) -> None:
-    #     """Download data if needed. Lightning ensures that `self.prepare_data()` is called only
-    #     within a single process on CPU, so you can safely add your downloading logic within. In
-    #     case of multi-node training, the execution of this hook depends upon
-    #     `self.prepare_data_per_node()`.
-
-    #     Do not use it to assign state (self.x = y).
-    #     """
-    #     MNIST(self.hparams.data_dir, train=True, download=True)
-    #     MNIST(self.hparams.data_dir, train=False, download=True)
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
-
-        This method is called by Lightning before `trainer.fit()`, `trainer.validate()`, `trainer.test()`, and
-        `trainer.predict()`, so be careful not to execute things like random split twice! Also, it is called after
-        `self.prepare_data()` and there is a barrier in between which ensures that all the processes proceed to
-        `self.setup()` once the data is prepared and available for use.
-
-        :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
-        """
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
 
         # Divide batch size by the number of devices.
         if self.trainer is not None:
@@ -516,7 +457,7 @@ class DefileDataModule(LightningDataModule):
         ]
 
         # Shuffle order of the year in each group
-        np.random.seed(self.seed)
+        # np.random.seed(self.seed)
         [np.random.shuffle(y) for y in yr_grp]
 
         # Assign years to each group according to the cumulative ratio defined
@@ -544,6 +485,7 @@ class DefileDataModule(LightningDataModule):
             years=self.ytraining,
             lag_day=self.lag_day,
             transform=True,
+            transform_data=None,
         )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -551,20 +493,6 @@ class DefileDataModule(LightningDataModule):
 
         :return: The train dataloader.
         """
-        # self.data_train = DefileDataset(
-        #     data_dir=self.data_dir,
-        #     species=self.species,
-        #     era5_main_location=self.era5_main_location,
-        #     era5_main_variables=self.era5_main_variables,
-        #     era5_hourly_locations=self.era5_hourly_locations,
-        #     era5_hourly_variables=self.era5_hourly_variables,
-        #     era5_daily_locations=self.era5_daily_locations,
-        #     era5_daily_variables=self.era5_daily_variables,
-        #     years=self.ytraining,
-        #     lag_day=self.lag_day,
-        #     transform=True,
-        # )
-
         return DataLoader(
             dataset=self.data_train,
             batch_size=self.batch_size_per_device,
@@ -578,7 +506,6 @@ class DefileDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
-
         self.data_val = DefileDataset(
             data_dir=self.data_dir,
             species=self.species,
@@ -591,7 +518,9 @@ class DefileDataModule(LightningDataModule):
             years=self.yval,
             lag_day=self.lag_day,
             transform=True,
+            transform_data=self.data_train.transform_data,
         )
+
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.batch_size_per_device,
@@ -605,6 +534,7 @@ class DefileDataModule(LightningDataModule):
 
         :return: The test dataloader.
         """
+
         self.data_test = DefileDataset(
             data_dir=self.data_dir,
             species=self.species,
@@ -617,6 +547,7 @@ class DefileDataModule(LightningDataModule):
             years=self.ytest,
             lag_day=self.lag_day,
             transform=True,
+            transform_data=self.data_train.transform_data,
         )
 
         return DataLoader(
@@ -632,7 +563,6 @@ class DefileDataModule(LightningDataModule):
 
         :return: The test dataloader.
         """
-
         self.data_predict = ForecastDataset(
             era5_main_location=self.era5_main_location,
             era5_main_variables=self.era5_main_variables,
@@ -642,10 +572,8 @@ class DefileDataModule(LightningDataModule):
             era5_daily_variables=self.era5_daily_variables,
             lag_day=self.lag_day,
             forecast_day=self.forecast_day,
-            transform=self.data_train.transform,
-            trans_main=self.data_train.trans_main,
-            trans_daily=self.data_train.trans_daily,
-            trans_hourly=self.data_train.trans_hourly,
+            transform=True,
+            transform_data=self.data_train.transform_data,
         )
         return DataLoader(
             dataset=self.data_predict,
@@ -654,30 +582,6 @@ class DefileDataModule(LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
         )
-
-    # def teardown(self, stage: Optional[str] = None) -> None:
-    #     """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`,
-    #     `trainer.test()`, and `trainer.predict()`.
-
-    #     :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-    #         Defaults to ``None``.
-    #     """
-    #     pass
-
-    # def state_dict(self) -> Dict[Any, Any]:
-    #     """Called when saving a checkpoint. Implement to generate and save the datamodule state.
-
-    #     :return: A dictionary containing the datamodule state that you want to save.
-    #     """
-    #     return {}
-
-    # def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-    #     """Called when loading a checkpoint. Implement to reload datamodule state given datamodule
-    #     `state_dict()`.
-
-    #     :param state_dict: The datamodule state returned by `self.state_dict()`.
-    #     """
-    #     pass
 
 
 if __name__ == "__main__":

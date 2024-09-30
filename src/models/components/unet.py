@@ -100,7 +100,8 @@ class UNetplus(nn.Module):
         nb_hidden_features_daily,
         nb_input_features_daily,
         nb_layer_daily,
-        dropout,
+        nb_output_features: int = 1,
+        dropout: bool = True,
     ):
         super(UNetplus, self).__init__()
 
@@ -130,7 +131,7 @@ class UNetplus(nn.Module):
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
-            nn.Conv1d(4, 1, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.Sigmoid(),
         )
 
@@ -176,7 +177,6 @@ class UNetplus(nn.Module):
 
     def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
-
         # ---------------------------
 
         # Hourly weather
