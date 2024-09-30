@@ -16,10 +16,11 @@ scheduler:
 
 net:
   _target_: src.models.components.transformer.Transformer
-  nb_input_features: 9
+  nb_input_features_hourly: ${eval:'4+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
   embed_size_hourly: 64
   num_heads_hourly: 8
   num_blocks_hourly: 4
+  nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
   embed_size_daily: 32
   num_heads_daily: 4
   num_blocks_daily: 2
@@ -29,8 +30,8 @@ criterion:
   - _target_: src.models.criterion.RMSE
     alpha: 1
     weights: False
-  - _target_: src.models.criterion.L2
-    alpha: .1
+  # - _target_: src.models.criterion.L2
+  #   alpha: .1
 
 # compile model for faster training with pytorch 2.0
 compile: false

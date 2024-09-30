@@ -56,7 +56,4 @@ era5_daily_variables:
 
 lag_day: 7
 forecast_day: 5
-seed: 0
 train_val_test_cum_ratio: [0.7, 0.9]
-num_workers: 0
-pin_memory: False
