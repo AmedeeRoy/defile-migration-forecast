@@ -90,3 +90,15 @@ class DiffL2:
     def forward(self, y_pred, y, mask):
         loss = torch.mean(torch.diff(y_pred, 1) ** 2)
         return self.alpha * loss
+
+
+@dataclass
+class Gaussian:
+    alpha: 1
+
+    def forward(self, y_pred, y, mask):
+        y_pred_start_to_end = torch.sum(y_pred * mask.unsqueeze(1), dim=2)
+        loss = torch.mean(
+            ((y_pred_start_to_end[:, 0] - y.squeeze()) ** 2) / (1e-5 + y_pred_start_to_end[:, 1])
+        )
+        return self.alpha * loss

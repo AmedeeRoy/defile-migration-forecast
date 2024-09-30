@@ -166,7 +166,9 @@ class DefileLitModule(LightningModule):
 
         # Get masked predictions
         obs = self.val_pred["obs"].squeeze()
-        pred_masked = torch.sum(self.val_pred["pred"].squeeze() * self.val_pred["mask"], dim=1)
+        pred_masked = torch.sum(
+            self.val_pred["pred"][:, 0, :].squeeze() * self.val_pred["mask"], dim=1
+        )
 
         # Compute R2 score
         explained_variance = ExplainedVariance()
@@ -216,7 +218,9 @@ class DefileLitModule(LightningModule):
 
         # Get masked predictions
         obs = self.test_pred["obs"].squeeze()
-        pred_masked = torch.sum(self.test_pred["pred"].squeeze() * self.test_pred["mask"], dim=1)
+        pred_masked = torch.sum(
+            self.test_pred["pred"][:, 0, :].squeeze() * self.test_pred["mask"], dim=1
+        )
 
         # Compute R2 score
         explained_variance = ExplainedVariance()
