@@ -33,6 +33,12 @@ def main(cfg: DictConfig) -> None:
 
     assert cfg.ckpt_path
 
+    # Load hparams.yaml
+    hparams = OmegaConf.load(cfg.train_params)
+
+    # Add data parameters to your config
+    cfg.data = hparams.data
+
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
 

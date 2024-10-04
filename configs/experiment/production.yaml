@@ -4,50 +4,14 @@
 # python src/predict.py experiment=production
 
 defaults:
-  - override /hydra: default
   - override /data: defile
+  - override /model: unet
 
 run:
   dir: prod/${task_name}/${data.species}
 sweep:
   dir: prod/${task_name}/${data.species}
 
-data:
-  era5_main_location: "Defile"
-  era5_main_variables:
-    - "temperature_2m"
-    - "dewpoint_temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-    - "u_component_of_wind_100m"
-    - "v_component_of_wind_100m"
-    - "instantaneous_10m_wind_gust"
-    # - "high_cloud_cover"
-    # - "low_cloud_cover"
-    # - "medium_cloud_cover"
-    # - "total_cloud_cover"
-    # - "surface_solar_radiation_downwards"
+train_params: prod/models/${data.species}/csv/version_0/hparams.yaml
 
-  era5_hourly_locations:
-    - "Defile"
-
-  era5_hourly_variables:
-    - "high_cloud_cover"
-    - "low_cloud_cover"
-    - "medium_cloud_cover"
-    - "total_cloud_cover"
-    - "surface_solar_radiation_downwards"
-
-  era5_daily_locations:
-    - "Defile"
-
-  era5_daily_variables:
-    - "temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-
-ckpt_path: prod/models/${data.species}/checkpoint/best.cpkt
+ckpt_path: prod/models/${data.species}/checkpoints/last.cpkt
