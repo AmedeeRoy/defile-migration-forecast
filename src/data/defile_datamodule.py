@@ -27,7 +27,7 @@ class DefileDataset(Dataset):
     def __init__(
         self,
         data_dir,
-        species="Buse variable",
+        species="Common Buzzard",
         era5_main_location="Defile",
         era5_main_variables: list = [
             "temperature_2m",
@@ -253,7 +253,9 @@ class ForecastDataset(Dataset):
         # Assert that if transform=True
         if transform == True:
             if transform_data is None:
-                raise ValueError(f"transform_data need to be provided if transform is True")
+                raise ValueError(
+                    f"transform_data need to be provided if transform is True"
+                )
 
         # MAIN ERA-5 DATA ----------------------------
         era5_main = download_forecast_hourly(
@@ -359,7 +361,7 @@ class DefileDataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: str = "data/",
-        species: str = "Buse variable",
+        species: str = "Common Buzzard",
         era5_main_location: str = "Defile",
         era5_main_variables: list = [
             "temperature_2m",
@@ -408,7 +410,7 @@ class DefileDataModule(LightningDataModule):
         """Initialize a `DefileDataModule`.
 
         :param data_dir: The data directory. Defaults to `"data/"`.
-        :param species: The species for which to model the count. Defaults to `"Buse variable"`.
+        :param species: The species for which to model the count. Defaults to `"Common Buzzard"`.
         :param lag_day: The number of lag day to consider in the model. Defaults to `7`.
         :param seed: The seed. Defaults to `0`.
         :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
@@ -447,7 +449,9 @@ class DefileDataModule(LightningDataModule):
                 raise RuntimeError(
                     f"Batch size ({self.hparams.batch_size}) is not divisible by the number of devices ({self.trainer.world_size})."
                 )
-            self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
+            self.batch_size_per_device = (
+                self.hparams.batch_size // self.trainer.world_size
+            )
 
         # split dataset years based on type of data collected
         yr_grp = [
