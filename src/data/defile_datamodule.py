@@ -118,6 +118,8 @@ class DefileDataset(Dataset):
 
         # Filter data by species
         data_count = dfy[dfy.species == species][["date", "count", "start", "end"]]
+        if len(data_count) == 0:
+            raise ValueError(f"No data for species {species} in the selected years.")
         dfys = (
             dfy[[x for x in list(dfy) if x not in ["species", "count"]]]
             .drop_duplicates()
