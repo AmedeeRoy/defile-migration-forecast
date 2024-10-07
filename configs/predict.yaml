@@ -16,6 +16,4 @@ task_name: "predict"
 tags: ["dev"]
 
 # passing checkpoint path is necessary for evaluation
-ckpt_path: prod/models/${data.species}/checkpoints/last.cpkt
-
-train_params: prod/models/${data.species}/csv/version_0/hparams.yaml
+ckpt_path_pred: prod/models/${data.species}/checkpoints/best.cpkt

@@ -1,7 +1,6 @@
 # @package _global_
 
 # to execute this experiment run:
-# python src/predict.py experiment=production
 
 defaults:
   - override /data: defile
@@ -11,7 +10,3 @@ run:
   dir: prod/${task_name}/${data.species}
 sweep:
   dir: prod/${task_name}/${data.species}
-
-train_params: prod/models/${data.species}/csv/version_0/hparams.yaml
-
-ckpt_path: prod/models/${data.species}/checkpoints/last.cpkt
