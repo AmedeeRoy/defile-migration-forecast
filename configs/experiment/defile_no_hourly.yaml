@@ -1,7 +1,7 @@
 # @package _global_
 
 # to execute this experiment run:
-# python train.py experiment=example
+# python src/train.py experiment=defile_no_hourly
 
 defaults:
   - override /data: defile
@@ -10,7 +10,7 @@ defaults:
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-tags: ["unet", "defile_only"]
+tags: ["unet", "defile_no_hourly"]
 
 data:
   era5_main_location: "Defile"

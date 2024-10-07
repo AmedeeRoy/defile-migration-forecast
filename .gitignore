@@ -14,5 +14,9 @@ __pycache__/
 logs/eval/runs/*
 logs/train/runs/*
 logs/train/multiruns/*
+logs/predict/runs/*
+
+# production outputs
+prod/models/*
 
 .DS_Store
