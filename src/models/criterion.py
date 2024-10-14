@@ -99,6 +99,24 @@ class Gaussian:
     def forward(self, y_pred, y, mask):
         y_pred_start_to_end = torch.sum(y_pred * mask.unsqueeze(1), dim=2)
         loss = torch.mean(
-            ((y_pred_start_to_end[:, 0] - y.squeeze()) ** 2) / (1e-5 + y_pred_start_to_end[:, 1])
+            ((y_pred_start_to_end[:, 0] - y.squeeze()) ** 2)
+            / (1e-5 + y_pred_start_to_end[:, 1])
+        )
+        return self.alpha * loss
+
+
+@dataclass
+class Poisson:
+    alpha: float = 1.0  # setting alpha as a float to be flexible
+
+    def forward(self, y_pred, y, mask):
+        # Sum over the masked values, similar to your Gaussian example
+        y_pred_start_to_end = torch.sum(y_pred * mask.unsqueeze(1), dim=2)
+
+        # Poisson NLL loss calculation
+        epsilon = 1e-5  # Small value to avoid log(0)
+        loss = torch.mean(
+            y_pred_start_to_end[:, 0]
+            - y.squeeze() * torch.log(y_pred_start_to_end[:, 0] + epsilon)
         )
         return self.alpha * loss
