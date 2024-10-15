@@ -105,27 +105,33 @@ class DefileDataset(Dataset):
             data_dir + "/count/all_count_processed.csv",
             parse_dates=["date", "start", "end"],
         )
-        df["duration"] = df["end"] - df["start"]
-        df["doy"] = df["date"].dt.day_of_year
-        df["year"] = df["date"].dt.year
-
-        # Check that ERA5 values are available for all observations -> ok !
-        # Otherwise would need to subset the count dataset
-        # print('Number of dates not in ERA5 daily :', len([d for d in df.date.unique() if d not in era5_daily_lagged.date]))
 
         # Filter data by years
         dfy = df[df["date"].dt.year.isin(years)]
 
-        # Filter data by species
-        data_count = dfy[dfy.species == species][["date", "count", "start", "end"]]
+        # Filter data by species and sum count of all species happening during the same period
+        data_count = (
+            dfy[dfy.species == species][["date", "count", "start", "end"]]
+            .groupby(["date", "start", "end"], as_index=False)["count"]
+            .sum()
+        )
         if len(data_count) == 0:
             raise ValueError(f"No data for species {species} in the selected years.")
-        dfys = (
-            dfy[[x for x in list(dfy) if x not in ["species", "count"]]]
-            .drop_duplicates()
-            .merge(data_count, how="left")
-        )
+
+        # Build data.frame with the zero count
+        # Extract the dataframe with all period (regardless of the species)
+        df_all_period = df[
+            [x for x in list(df) if x not in ["species", "count"]]
+        ].drop_duplicates()
+
+        dfys = pd.merge(df_all_period, data_count, how="left")
+        # Replace NA (no match in data_count) with 0
         dfys["count"] = dfys["count"].fillna(0)
+
+        # Add pre-cumputed variable
+        dfys["duration"] = dfys["end"] - dfys["start"]
+        dfys["doy"] = dfys["date"].dt.day_of_year
+        dfys["year"] = dfys["date"].dt.year
 
         # Create mask
         # Corresponding to the fraction of each hour of the day during which the count in question has been happening
