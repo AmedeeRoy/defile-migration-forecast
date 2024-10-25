@@ -66,7 +66,8 @@ class DefileDataset(Dataset):
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
-        years=range(1966, 2023),
+        years=range(1966, 2024),
+        doy=[196, 335],
         lag_day=7,
         transform=False,
         transform_data=None,
@@ -107,7 +108,13 @@ class DefileDataset(Dataset):
         )
 
         # Filter data by years
-        dfy = df[df["date"].dt.year.isin(years)]
+        df["doy"] = df["date"].dt.day_of_year
+        df["year"] = df["date"].dt.year
+        dfy = df[
+            df["date"].dt.year.isin(years)
+            & (df["doy"] >= doy[0])
+            & (df["doy"] <= doy[1])
+        ]
 
         # Filter data by species and sum count of all species happening during the same period
         data_count = (
@@ -120,8 +127,8 @@ class DefileDataset(Dataset):
 
         # Build data.frame with the zero count
         # Extract the dataframe with all period (regardless of the species)
-        df_all_period = df[
-            [x for x in list(df) if x not in ["species", "count"]]
+        df_all_period = dfy[
+            [x for x in list(dfy) if x not in ["species", "count"]]
         ].drop_duplicates()
 
         dfys = pd.merge(df_all_period, data_count, how="left")
@@ -130,8 +137,6 @@ class DefileDataset(Dataset):
 
         # Add pre-cumputed variable
         dfys["duration"] = dfys["end"] - dfys["start"]
-        dfys["doy"] = dfys["date"].dt.day_of_year
-        dfys["year"] = dfys["date"].dt.year
 
         # Create mask
         # Corresponding to the fraction of each hour of the day during which the count in question has been happening
