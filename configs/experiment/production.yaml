@@ -5,8 +5,11 @@
 defaults:
   - override /data: defile
   - override /model: unet
+  - override train:
+    seed: 0
 
 run:
   dir: prod/${task_name}/${data.species}
 sweep:
-  dir: prod/${task_name}/${data.species}
+  dir: prod/${task_name}
+  subdir: ${data.species}

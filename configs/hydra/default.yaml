@@ -10,7 +10,7 @@ run:
   dir: ${paths.log_dir}/${task_name}/runs/${now:%Y-%m-%d}_${now:%H-%M-%S}/${data.species}
 sweep:
   dir: ${paths.log_dir}/${task_name}/multiruns/${now:%Y-%m-%d}_${now:%H-%M-%S}
-  subdir: ${data.species}
+  subdir: ${hydra.job.num}/${data.species}
 
 job_logging:
   handlers:
