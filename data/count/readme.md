@@ -50,6 +50,9 @@ We are using the raw data `data/raw/all_data_défilé_tri_v2023` for all data 
 - Delete the observation of a Marsh Harrier on the 2020-11-03 at 20:05 because this if after endtime
 - Delete observations oon the 2021-10-29: time of observations don't make sense.
 - Modify time slightly to match end time for 22.Sep.17 19:04 -> 18:59, 14.Sep.19 20:00 -> 19:59, 22.Sep.19 20:00 -> 19:59, 2021-09-02 20:00, 2021-10-20 18:00, 2021-09-01 20:00
+- modify time of survey of 2017-11-14 and 2019-07-30
+- Delete because of no time provided: Goéland leucophée 29.08.2019, Martinet à ventre blanc 09.09.2019 , Pigeon colombin 12.09.2019, 6 observations on the 17.09.2019, Faucon émerillon 09.10.2020, Grand Cormoran and Pigeon ramier 14.10.2020, Circaète Jean-le-Blanc 17.08.2021, Goéland leucophée 04.09.2021, Aigle royal 11.09.2021, Bec-croisé des sapins 16.09.2021, Aigle royal 21.09.2021, Aigle royal 30.09.2021, Pipit spioncelle 13.10.2021, Faucon pèlerin 14.10.2021, Grive mauvis 25.10.2021, Grive mauvis and Vautour fauve 06.11.2021
+- Correct effort on the 6.11.2021 setting all time as it seems like they've just entered all the data at the end of the day 09:00-18:31
 
 These modification and merging of the two dataset was performed manually into `data/count_2021.xlsx`
 
