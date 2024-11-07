@@ -413,6 +413,8 @@ class DefileDataModule(LightningDataModule):
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
+        years: list = range(1966, 2024),
+        doy: Tuple[float, float] = (196, 335),
         lag_day: int = 7,
         forecast_day: int = 5,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
@@ -449,6 +451,8 @@ class DefileDataModule(LightningDataModule):
         self.era5_hourly_variables = era5_hourly_variables
         self.era5_daily_locations = era5_daily_locations
         self.era5_daily_variables = era5_daily_variables
+        self.years = years
+        self.doy = doy
         self.lag_day = lag_day
         self.forecast_day = forecast_day
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
@@ -468,9 +472,11 @@ class DefileDataModule(LightningDataModule):
 
         # split dataset years based on type of data collected
         yr_grp = [
-            np.arange(1966, 1992),  # size 26. Incidental monitoring
-            np.arange(1993, 2013),  # size 20.
-            np.arange(2014, 2021),  # size 7.
+            np.array(
+                [y for y in self.years if y < 1993]
+            ),  # size 26. Incidental monitoring
+            np.array([y for y in self.years if 1993 <= y <= 2013]),  # size 20.
+            np.array([y for y in years if y > 2013]),
         ]
 
         # Shuffle order of the year in each group
@@ -500,6 +506,7 @@ class DefileDataModule(LightningDataModule):
             era5_daily_locations=self.era5_daily_locations,
             era5_daily_variables=self.era5_daily_variables,
             years=self.ytraining,
+            doy=self.doy,
             lag_day=self.lag_day,
             transform=True,
             transform_data=None,
