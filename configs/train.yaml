@@ -9,6 +9,7 @@ defaults:
   - callbacks: default
   - logger: csv # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
   - trainer: default
+  # - export: default
   - paths: default
   - extras: default
   - hydra: default
