@@ -164,6 +164,6 @@ class Transformer(nn.Module):
         pred_mask[:6] = 0
         pred_mask[21:] = 0
         pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
-        out = out * pred_mask
+        out = out * pred_mask.to(out.device)
 
         return out

@@ -55,9 +55,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
 
-    log.info(f"Instantiating export <{cfg.export._target_}>")
-    export = hydra.utils.instantiate(cfg.export)
-
     object_dict = {
         "cfg": cfg,
         "datamodule": datamodule,
@@ -86,9 +83,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         log.info(f"Best ckpt path: {ckpt_path}")
 
-        log.info("Export predictions!")
-        export.save_test(test_dataset=datamodule.data_test, test_pred=model.test_pred)
-
     if cfg.get("predict"):
         log.info("Starting forecasting!")
         ckpt_path = trainer.checkpoint_callback.best_model_path
@@ -97,11 +91,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
             ckpt_path = None
         trainer.predict(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         log.info(f"Best ckpt path: {ckpt_path}")
-
-        log.info("Export predictions!")
-        export.save_predict(
-            predict_dataset=datamodule.data_predict, predict_pred=model.predict_pred
-        )
 
     test_metrics = trainer.callback_metrics
 

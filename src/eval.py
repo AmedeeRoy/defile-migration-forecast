@@ -49,9 +49,6 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     log.info(f"Instantiating trainer <{cfg.trainer._target_}>")
     trainer: Trainer = hydra.utils.instantiate(cfg.trainer, logger=logger)
 
-    log.info(f"Instantiating export <{cfg.export._target_}>")
-    export = hydra.utils.instantiate(cfg.export)
-
     object_dict = {
         "cfg": cfg,
         "datamodule": datamodule,
@@ -66,9 +63,6 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     log.info("Starting testing!")
     trainer.test(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
-
-    log.info("Export predictions!")
-    export.save_test(test_dataset=datamodule.data_test, test_pred=model.test_pred)
 
     metric_dict = trainer.callback_metrics
 

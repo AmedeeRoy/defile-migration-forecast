@@ -4,16 +4,13 @@ defaults:
   - _self_
   - data: defile
   - model: unet
-  - logger: csv
+  # - logger: csv
   - trainer: default
-  - export: default
   - paths: default
   - extras: default
   - hydra: default
 
 task_name: "predict"
-
-tags: ["dev"]
 
 # passing checkpoint path is necessary for evaluation
 ckpt_path_pred: prod/models/${data.species}/checkpoints/best.ckpt
