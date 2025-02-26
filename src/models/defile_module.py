@@ -220,7 +220,7 @@ class DefileLitModule(LightningModule):
         """Lightning hook that is called when a test epoch ends."""
         # Concatenate batches
         for k in self.test_pred.keys():
-            self.test_pred[k] = torch.cat(self.test_pred[k], 0)
+            self.test_pred[k] = torch.cat(self.test_pred[k], 0).cpu()
 
         # Get masked predictions
         obs = self.test_pred["obs"].squeeze()
@@ -381,7 +381,7 @@ class DefileLitModule(LightningModule):
         """Lightning hook that is called when a predict epoch ends."""
         # Concatenate batches
         for k in self.predict_pred.keys():
-            self.predict_pred[k] = torch.cat(self.predict_pred[k], 0)
+            self.predict_pred[k] = torch.cat(self.predict_pred[k], 0).cpu()
 
         self.save_predict(self.trainer.datamodule.data_predict, self.predict_pred)
 
