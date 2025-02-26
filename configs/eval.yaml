@@ -13,8 +13,6 @@ defaults:
 
 task_name: "eval"
 
-tags: ["unet"]
-
 # passing checkpoint path is necessary for evaluation
 ckpt_path: null
 
