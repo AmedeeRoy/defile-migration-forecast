@@ -27,7 +27,7 @@ class DefileDataset(Dataset):
     def __init__(
         self,
         data_dir,
-        species="Buse variable",
+        species="Common Buzzard",
         era5_main_location="Defile",
         era5_main_variables: list = [
             "temperature_2m",
@@ -66,7 +66,8 @@ class DefileDataset(Dataset):
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
-        years=range(1966, 2023),
+        years=range(1966, 2024),
+        doy=[196, 335],
         lag_day=7,
         transform=False,
         transform_data=None,
@@ -105,25 +106,37 @@ class DefileDataset(Dataset):
             data_dir + "/count/all_count_processed.csv",
             parse_dates=["date", "start", "end"],
         )
-        df["duration"] = df["end"] - df["start"]
-        df["doy"] = df["date"].dt.day_of_year
-        df["year"] = df["date"].dt.year
-
-        # Check that ERA5 values are available for all observations -> ok !
-        # Otherwise would need to subset the count dataset
-        # print('Number of dates not in ERA5 daily :', len([d for d in df.date.unique() if d not in era5_daily_lagged.date]))
 
         # Filter data by years
-        dfy = df[df["date"].dt.year.isin(years)]
+        df["doy"] = df["date"].dt.day_of_year
+        df["year"] = df["date"].dt.year
+        dfy = df[
+            df["date"].dt.year.isin(years)
+            & (df["doy"] >= doy[0])
+            & (df["doy"] <= doy[1])
+        ]
 
-        # Filter data by species
-        data_count = dfy[dfy.species == species][["date", "count", "start", "end"]]
-        dfys = (
-            dfy[[x for x in list(dfy) if x not in ["species", "count"]]]
-            .drop_duplicates()
-            .merge(data_count, how="left")
+        # Filter data by species and sum count of all species happening during the same period
+        data_count = (
+            dfy[dfy.species == species][["date", "count", "start", "end"]]
+            .groupby(["date", "start", "end"], as_index=False)["count"]
+            .sum()
         )
+        if len(data_count) == 0:
+            raise ValueError(f"No data for species {species} in the selected years.")
+
+        # Build data.frame with the zero count
+        # Extract the dataframe with all period (regardless of the species)
+        df_all_period = dfy[
+            [x for x in list(dfy) if x not in ["species", "count"]]
+        ].drop_duplicates()
+
+        dfys = pd.merge(df_all_period, data_count, how="left")
+        # Replace NA (no match in data_count) with 0
         dfys["count"] = dfys["count"].fillna(0)
+
+        # Add pre-cumputed variable
+        dfys["duration"] = dfys["end"] - dfys["start"]
 
         # Create mask
         # Corresponding to the fraction of each hour of the day during which the count in question has been happening
@@ -253,7 +266,9 @@ class ForecastDataset(Dataset):
         # Assert that if transform=True
         if transform == True:
             if transform_data is None:
-                raise ValueError(f"transform_data need to be provided if transform is True")
+                raise ValueError(
+                    f"transform_data need to be provided if transform is True"
+                )
 
         # MAIN ERA-5 DATA ----------------------------
         era5_main = download_forecast_hourly(
@@ -359,7 +374,7 @@ class DefileDataModule(LightningDataModule):
     def __init__(
         self,
         data_dir: str = "data/",
-        species: str = "Buse variable",
+        species: str = "Common Buzzard",
         era5_main_location: str = "Defile",
         era5_main_variables: list = [
             "temperature_2m",
@@ -398,6 +413,8 @@ class DefileDataModule(LightningDataModule):
             "u_component_of_wind_10m",
             "v_component_of_wind_10m",
         ],
+        years: list = range(1966, 2024),
+        doy: Tuple[float, float] = (196, 335),
         lag_day: int = 7,
         forecast_day: int = 5,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
@@ -408,7 +425,7 @@ class DefileDataModule(LightningDataModule):
         """Initialize a `DefileDataModule`.
 
         :param data_dir: The data directory. Defaults to `"data/"`.
-        :param species: The species for which to model the count. Defaults to `"Buse variable"`.
+        :param species: The species for which to model the count. Defaults to `"Common Buzzard"`.
         :param lag_day: The number of lag day to consider in the model. Defaults to `7`.
         :param seed: The seed. Defaults to `0`.
         :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
@@ -434,6 +451,8 @@ class DefileDataModule(LightningDataModule):
         self.era5_hourly_variables = era5_hourly_variables
         self.era5_daily_locations = era5_daily_locations
         self.era5_daily_variables = era5_daily_variables
+        self.years = years
+        self.doy = doy
         self.lag_day = lag_day
         self.forecast_day = forecast_day
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
@@ -447,13 +466,17 @@ class DefileDataModule(LightningDataModule):
                 raise RuntimeError(
                     f"Batch size ({self.hparams.batch_size}) is not divisible by the number of devices ({self.trainer.world_size})."
                 )
-            self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
+            self.batch_size_per_device = (
+                self.hparams.batch_size // self.trainer.world_size
+            )
 
         # split dataset years based on type of data collected
         yr_grp = [
-            np.arange(1966, 1992),  # size 26. Incidental monitoring
-            np.arange(1993, 2013),  # size 20.
-            np.arange(2014, 2021),  # size 7.
+            np.array(
+                [y for y in self.years if y < 1993]
+            ),  # size 26. Incidental monitoring
+            np.array([y for y in self.years if 1993 <= y <= 2013]),  # size 20.
+            np.array([y for y in years if y > 2013]),
         ]
 
         # Shuffle order of the year in each group
@@ -483,6 +506,7 @@ class DefileDataModule(LightningDataModule):
             era5_daily_locations=self.era5_daily_locations,
             era5_daily_variables=self.era5_daily_variables,
             years=self.ytraining,
+            doy=self.doy,
             lag_day=self.lag_day,
             transform=True,
             transform_data=None,

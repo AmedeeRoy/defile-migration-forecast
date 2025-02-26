@@ -31,7 +31,7 @@ def main(cfg: DictConfig) -> None:
     # (e.g. ask for tags if none are provided in cfg, print cfg tree, etc.)
     extras(cfg)
 
-    assert cfg.ckpt_path
+    assert cfg.ckpt_path_pred
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)
@@ -56,7 +56,7 @@ def main(cfg: DictConfig) -> None:
     }
 
     log.info("Starting predictions!")
-    trainer.predict(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path)
+    trainer.predict(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path_pred)
 
     log.info("Export predictions!")
     export.save_predict(predict_dataset=datamodule.data_predict, predict_pred=model.predict_pred)
