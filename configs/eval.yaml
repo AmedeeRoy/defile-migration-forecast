@@ -6,7 +6,6 @@ defaults:
   - model: unet
   - logger: csv
   - trainer: default
-  - export: default
   - paths: default
   - extras: default
   - hydra: default

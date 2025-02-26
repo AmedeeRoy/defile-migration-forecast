@@ -1,10 +1,16 @@
 import os
 from typing import Any, Dict, Tuple
 
+import numpy as np
+import xarray as xr
+import datetime
 import torch
 from lightning import LightningModule
 from torchmetrics import MaxMetric, MeanMetric
 from torchmetrics.regression import ExplainedVariance, SpearmanCorrCoef
+
+from matplotlib import pyplot as plt
+from matplotlib.patches import Rectangle
 
 
 class DefileLitModule(LightningModule):
@@ -238,6 +244,7 @@ class DefileLitModule(LightningModule):
             prog_bar=True,
         )
 
+   ### EXPORT PREDICTIONS -------------------
     def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single forward step on a batch of data from the predict set.
 
@@ -258,6 +265,68 @@ class DefileLitModule(LightningModule):
         # Concatenate batches
         for k in self.predict_pred.keys():
             self.predict_pred[k] = torch.cat(self.predict_pred[k], 0)
+
+        self.save_predict(self.trainer.datamodule.data_predict, self.predict_pred)
+
+    def save_predict(self, predict_dataset, predict_pred):
+        predict_dataset.set_transform(False)
+        predictions = []
+
+        for i in range(len(predict_dataset)):
+            yr, doy, era5_main, era5_hourly, era5_daily = predict_dataset[i]
+            pred = era5_main.copy()
+            pred = pred.assign(estimated_hourly_counts=("time", predict_pred["pred"][i, 0, :]))
+            if predict_pred["pred"].shape[1] > 1:
+                pred = pred.assign(
+                    estimated_hourly_counts_var=("time", predict_pred["pred"][i, 1, :])
+                )
+            predictions.append(pred)
+
+        predictions = xr.concat(predictions, dim="date")
+        # predictions["time"] = predictions.time.astype(str)
+        today = datetime.date.today().strftime("%Y%m%d")
+        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
+
+        predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
+        self.plt_predict(predictions)
+
+    def plt_predict(self, data):
+        daily_counts_transform = data.sum(dim="time").estimated_hourly_counts
+        daily_counts = (10 * daily_counts_transform) ** 2
+
+        data_smooth = data.rolling({"time": 3}, center=True).mean()
+
+        fig, ax = plt.subplots(2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True)
+        ax = ax.flatten()
+        for k in range(len(data.date)):
+            subset = data_smooth.isel(date=k)
+
+            weights = subset.estimated_hourly_counts / subset.estimated_hourly_counts.sum()
+
+            ax[k].bar(np.arange(24), weights * daily_counts[k])
+
+            ax[k].set_title(subset.date.dt.strftime("%Y-%m-%d").item())
+            ax[k].set_xticks(np.arange(0, 24, 3), [str(h) + "h" for h in np.arange(0, 24, 3)])
+
+            ax[k].text(
+                0.05,
+                0.93,
+                f"Total = {daily_counts[k]:.0f}",
+                transform=ax[k].transAxes,
+                fontsize=10,
+                verticalalignment="top",
+                horizontalalignment="left",
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="gray", alpha=0.25),
+            )
+
+        ax[0].set_ylabel("Forecasted individual \ncounts (#)")
+        ax[3].set_ylabel("Forecasted individual \ncounts (#)")
+        plt.suptitle(f"Defile Bird Forecasts - {self.trainer.datamodule.species}")
+        today = datetime.date.today().strftime("%Y%m%d")
+        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".png"
+        plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        plt.close()
+
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

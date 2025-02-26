@@ -4,9 +4,8 @@ defaults:
   - _self_
   - data: defile
   - model: unet
-  - logger: csv
+  # - logger: csv
   - trainer: default
-  - export: default
   - paths: default
   - extras: default
   - hydra: default

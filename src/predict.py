@@ -45,9 +45,6 @@ def main(cfg: DictConfig) -> None:
     log.info("Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
 
-    log.info(f"Instantiating export <{cfg.export._target_}>")
-    export = hydra.utils.instantiate(cfg.export)
-
     object_dict = {
         "cfg": cfg,
         "datamodule": datamodule,
@@ -57,9 +54,6 @@ def main(cfg: DictConfig) -> None:
 
     log.info("Starting predictions!")
     trainer.predict(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path_pred)
-
-    log.info("Export predictions!")
-    export.save_predict(predict_dataset=datamodule.data_predict, predict_pred=model.predict_pred)
     # https://www.trektellen.org/species/graph/3/2422/101/0?g=&l=&k=&jaar2=&jaar3=&graphtype1=bar&graphtype2=line&graphtype3=line&hidempbars=1&
     # https://www.trektellen.org/count/view/2422/20240919
 
