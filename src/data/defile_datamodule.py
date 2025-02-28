@@ -530,7 +530,7 @@ class DefileDataModule(LightningDataModule):
             era5_daily_variables=self.era5_daily_variables,
             years=self.yval,
             lag_day=self.lag_day,
-            transform=True,
+            transform=self.data_train.transform,
             transform_data=self.data_train.transform_data,
         )
 
@@ -559,7 +559,7 @@ class DefileDataModule(LightningDataModule):
             era5_daily_variables=self.era5_daily_variables,
             years=self.ytest,
             lag_day=self.lag_day,
-            transform=True,
+            transform=self.data_train.transform,
             transform_data=self.data_train.transform_data,
         )
 
@@ -585,7 +585,7 @@ class DefileDataModule(LightningDataModule):
             era5_daily_variables=self.era5_daily_variables,
             lag_day=self.lag_day,
             forecast_day=self.forecast_day,
-            transform=True,
+            transform=self.data_train.transform,
             transform_data=self.data_train.transform_data,
         )
         return DataLoader(
