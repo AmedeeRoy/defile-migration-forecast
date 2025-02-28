@@ -23,15 +23,13 @@ from src.utils import (
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
-def sample_transform(sample):
+def sample2tensor(sample):
     transformed_sample = []
     for s in sample:
-        if isinstance(s, (int, float)):
-            transformed_sample.append(np.array([s]))  # Scalar to array
+        if isinstance(s, np.ndarray):
         elif hasattr(s, "to_array"):
             transformed_sample.append(s.to_array().values)  # xarray to numpy
         else:
-            transformed_sample.append(s)  # Keep unchanged (mask)
 
     # to tensor
     sample = tuple([torch.FloatTensor(s) for s in transformed_sample])
@@ -210,9 +208,8 @@ class DefileDataset(Dataset):
             self.mask[:, idx],
         )
 
-        # Transoform to tensor
-        if self.transform:
-            sample = sample_transform(sample)
+        # Transform to tensor
+        sample = sample2tensor(sample)
 
         return sample
 
@@ -344,8 +341,7 @@ class ForecastDataset(Dataset):
         )
 
         # Transoform to tensor
-        if self.transform:
-            sample = sample_transform([np.zeros(1)] + list(sample) + [np.zeros(1)])
+        sample = sample2tensor([np.zeros(1)] + list(sample) + [np.zeros(1)])
 
         return sample
 
