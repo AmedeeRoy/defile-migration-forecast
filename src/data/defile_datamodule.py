@@ -169,16 +169,16 @@ class DefileDataset(Dataset):
         # normalizing
         # Create a DataTransformers for each era5 data. this class does not store the data, only the transformation and the parameters of the transformation
         if transform_data is None:
-            self.transform_data = {}
-            self.transform_data["main"] = DataTransformer(dataset=era5_main)
-            self.transform_data["hourly"] = DataTransformer(dataset=era5_hourly)
-            self.transform_data["daily"] = DataTransformer(dataset=era5_daily)
+            transform_data = {}
+            transform_data["main"] = DataTransformer(dataset=era5_main)
+            transform_data["hourly"] = DataTransformer(dataset=era5_hourly)
+            transform_data["daily"] = DataTransformer(dataset=era5_daily)
 
         if transform:
             # Apply the transformer to each variable
-            era5_main = self.transform_data["main"].apply_transformers(era5_main)
-            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
-            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
+            era5_main = transform_data["main"].apply_transformers(era5_main)
+            era5_hourly = transform_data["hourly"].apply_transformers(era5_hourly)
+            era5_daily = transform_data["daily"].apply_transformers(era5_daily)
             # dfys["count"] = np.log10(dfys["count"]+1)
             dfys["count"] = np.sqrt(dfys["count"]) / 10
             dfys["doy"] = (dfys["doy"] - 183) / 366
@@ -313,12 +313,11 @@ class ForecastDataset(Dataset):
         df["doy"] = df["date"].dt.day_of_year
         df["year"] = df["date"].dt.year
 
-        self.transform_data = transform_data
         if transform:
             # Apply the transformer to each variable
-            era5_main = self.transform_data["main"].apply_transformers(era5_main)
-            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
-            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
+            era5_main = transform_data["main"].apply_transformers(era5_main)
+            era5_hourly = transform_data["hourly"].apply_transformers(era5_hourly)
+            era5_daily = transform_data["daily"].apply_transformers(era5_daily)
             df["doy"] = (df["doy"] - 183) / 366
             df["year"] = (df["year"] - 2000) / 100
 
@@ -329,6 +328,7 @@ class ForecastDataset(Dataset):
         self.era5_hourly = era5_hourly
         self.lag_day = lag_day
         self.transform = transform
+        self.transform_data = transform_data
 
     def __len__(self):
         return len(self.data)
