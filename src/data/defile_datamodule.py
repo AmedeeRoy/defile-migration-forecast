@@ -23,6 +23,22 @@ from src.utils import (
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
+def sample_transform(sample):
+    transformed_sample = []
+    for s in sample:
+        if isinstance(s, (int, float)):
+            transformed_sample.append(np.array([s]))  # Scalar to array
+        elif hasattr(s, "to_array"):
+            transformed_sample.append(s.to_array().values)  # xarray to numpy
+        else:
+            transformed_sample.append(s)  # Keep unchanged (mask)
+
+    # to tensor
+    sample = tuple([torch.FloatTensor(s) for s in transformed_sample])
+
+    return sample
+
+
 class DefileDataset(Dataset):
     def __init__(
         self,
@@ -152,7 +168,6 @@ class DefileDataset(Dataset):
 
         # normalizing
         # Create a DataTransformers for each era5 data. this class does not store the data, only the transformation and the parameters of the transformation
-        self.transform_data = transform_data
         if transform_data is None:
             self.transform_data = {}
             self.transform_data["main"] = DataTransformer(dataset=era5_main)
@@ -177,39 +192,27 @@ class DefileDataset(Dataset):
         self.mask = mask
         self.lag_day = lag_day
         self.transform = transform
+        self.transform_data = transform_data
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
+
         # index by count/observation
-        count = self.data["count"][idx]
-        yr = self.data["year"][idx]
-        doy = self.data["doy"][idx]
-        mask = self.mask[:, idx]
+        sample = (
+            self.data["count"][idx],
+            self.data["year"][idx],
+            self.data["doy"][idx],
+            self.era5_main.sel(date=self.data["date"][idx]),
+            self.era5_hourly.sel(date=self.data["date"][idx]),
+            self.era5_daily.sel(date=self.data["date"][idx]),
+            self.mask[:, idx],
+        )
 
-        date = self.data["date"][idx]
-        era5_main = self.era5_main.sel(date=date)
-        era5_hourly = self.era5_hourly.sel(date=date)
-        era5_daily = self.era5_daily.sel(date=date)
-
-        # convert to numpy before transformations
-        sample = count, yr, doy, era5_main, era5_hourly, era5_daily, mask
-
-        # apply transformations
+        # Transoform to tensor
         if self.transform:
-            # to array
-            sample = (
-                np.array([count]),
-                np.array([yr]),
-                np.array([doy]),
-                era5_main.to_array().values,
-                era5_hourly.to_array().values,
-                era5_daily.to_array().values,
-                mask,
-            )
-            # to tensor
-            sample = tuple([torch.FloatTensor(s) for s in sample])
+            sample = sample_transform(sample)
 
         return sample
 
@@ -332,31 +335,17 @@ class ForecastDataset(Dataset):
 
     def __getitem__(self, idx):
         # index by count/observation
-        yr = self.data["year"][idx]
-        doy = self.data["doy"][idx]
-        date = self.data["date"][idx]
+        sample = (
+            self.data["year"][idx],
+            self.data["doy"][idx],
+            self.era5_main.sel(date=self.data["date"][idx]),
+            self.era5_hourly.sel(date=self.data["date"][idx]),
+            self.era5_daily.sel(date=self.data["date"][idx]),
+        )
 
-        era5_main = self.era5_main.sel(date=date)
-        era5_hourly = self.era5_hourly.sel(date=date)
-        era5_daily = self.era5_daily.sel(date=date)
-
-        # convert to numpy before transformations
-        sample = yr, doy, era5_main, era5_hourly, era5_daily
-
-        # apply transformations
+        # Transoform to tensor
         if self.transform:
-            # to array
-            sample = (
-                np.zeros(1),
-                np.array([yr]),
-                np.array([doy]),
-                era5_main.to_array().values,
-                era5_hourly.to_array().values,
-                era5_daily.to_array().values,
-                np.zeros(1),
-            )
-            # to tensor
-            sample = tuple([torch.FloatTensor(s) for s in sample])
+            sample = sample_transform([np.zeros(1)] + list(sample) + [np.zeros(1)])
 
         return sample
 

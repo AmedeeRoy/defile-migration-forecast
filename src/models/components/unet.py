@@ -20,7 +20,12 @@ class DownConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(self.in_channels),
             nn.Conv1d(
-                self.in_channels, self.out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                self.in_channels,
+                self.out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
@@ -68,13 +73,25 @@ class UpConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(2 * out_channels),
             nn.Conv1d(
-                2 * out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                2 * out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
 
         self.conv2 = nn.Sequential(
-            nn.Conv1d(out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
+            ),
             nn.ReLU(),
         )
 
@@ -131,7 +148,9 @@ class UNetplus(nn.Module):
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
-            nn.Conv1d(4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
+            ),
             nn.Sigmoid(),
         )
 
@@ -209,10 +228,10 @@ class UNetplus(nn.Module):
         out = 5 * out_h * out_d
 
         # Force count to be zero between 0-? and ?-24 hr
-        pred_mask = np.array([1 for i in range(24)])
-        pred_mask[:6] = 0
-        pred_mask[21:] = 0
-        pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
-        out = out * pred_mask.to(out.device)
+        # pred_mask = np.array([1 for i in range(24)])
+        # pred_mask[:6] = 0
+        # pred_mask[21:] = 0
+        # pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
+        # out = out * pred_mask.to(out.device)
 
         return out  # (batch, 1, 24)

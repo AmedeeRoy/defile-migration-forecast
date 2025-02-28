@@ -59,3 +59,4 @@ forecast_day: 5
 train_val_test_cum_ratio: [0.7, 0.9]
 years: ${eval:"list(range(1966, 2024))"}
 doy: [196, 335]
+year_conversion: "none" # "constant" or "none" or "period"
