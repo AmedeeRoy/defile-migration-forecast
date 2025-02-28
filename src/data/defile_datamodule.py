@@ -27,9 +27,11 @@ def sample2tensor(sample):
     transformed_sample = []
     for s in sample:
         if isinstance(s, np.ndarray):
+            transformed_sample.append(s)  # Keep np.array unchanged
         elif hasattr(s, "to_array"):
             transformed_sample.append(s.to_array().values)  # xarray to numpy
         else:
+            transformed_sample.append(np.array([s]))
 
     # to tensor
     sample = tuple([torch.FloatTensor(s) for s in transformed_sample])
