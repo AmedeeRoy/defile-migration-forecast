@@ -2,7 +2,9 @@
 
 # TRAIN
 # Main training with all data
-python src/train.py data.species="Common Buzzard"
+python src/train.py
+
+python src/train.py data="test"
 
 # Alternative 1: evaluation model with Defile values only
 python src/train.py experiment=defile_only data.species="Common Buzzard"
