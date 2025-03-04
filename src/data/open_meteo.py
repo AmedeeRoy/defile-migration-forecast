@@ -141,7 +141,7 @@ def download_forecast_hourly(locations, variables, lag_day, forecast_day, add_su
     # Initialize the Open-Meteo API client
     om = Client()
 
-    print("Download ERA5...")
+    print(f"Download ERA5 data on api.open-meteo.com for {locations}...")
     # Make a request to the Open-Meteo API to get weather data
     responses = om.weather_api(
         url="https://api.open-meteo.com/v1/forecast",
