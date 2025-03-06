@@ -276,7 +276,7 @@ class DefileLitModule(LightningModule):
         self.save_test(self.trainer.datamodule.data_test, self.test_pred)
 
     def save_test(self, test_dataset, test_pred):
-        test_dataset.set_transform(False)
+        test_dataset.set_return_original(True)
         test = []
 
         for i in range(len(test_dataset)):
@@ -311,7 +311,7 @@ class DefileLitModule(LightningModule):
         
         test["time"] = test.time.astype(str)
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + ".nc"
-        print(predictions)
+        print(test)
         test.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
 
         if not os.path.exists(self.trainer.logger.log_dir):
@@ -434,7 +434,7 @@ class DefileLitModule(LightningModule):
         self.save_predict(self.trainer.datamodule.data_predict, self.predict_pred)
 
     def save_predict(self, predict_dataset, predict_pred):
-        predict_dataset.set_transform(False)
+        predict_dataset.set_return_original(True)
         predictions = []
 
         for i in range(len(predict_dataset)):
