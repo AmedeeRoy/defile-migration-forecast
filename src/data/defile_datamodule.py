@@ -465,18 +465,22 @@ class DefileDataModule(LightningDataModule):
 
         # Compute transformation
 
-        # Transformation of the count
-        count["count_trans"] = np.sqrt(count["count"]) / 10
-        count["year_used_trans"] = (count["year_used"] - 2000) / 100
-        count["doy_trans"] = (count["doy"] - 183) / 366
-        self.count = count
-
         # Create a DataTransformers for each era5 data. This class does not store the data, only the transformation and the parameters of the transformation
         self.transform_data = {
+            "count": lambda x: np.log1p(x),  # np.sqrt(x) / 10,
+            "count_rev": lambda x: np.expm1(x),  # (10 * x) ** 2,
+            "year_used": lambda x: (x - 2000) / 100,
+            "doy": lambda x: (x - 183) / 366,
             "main": DataTransformer(dataset=self.era5_main),
             "hourly": DataTransformer(dataset=self.era5_hourly),
             "daily": DataTransformer(dataset=self.era5_daily),
         }
+
+        # Transformation of the count
+        count["count_trans"] = self.transform_data["count"](count["count"])
+        count["year_used_trans"] = self.transform_data["year_used"](count["year_used"])
+        count["doy_trans"] = self.transform_data["doy"](count["doy"])
+        self.count = count
 
         # Apply transformation
         self.era5_main_trans = self.transform_data["main"].apply_transformers(
