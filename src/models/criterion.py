@@ -79,7 +79,7 @@ class L2:
     alpha: 1
 
     def forward(self, y_pred, y, mask):
-        loss = torch.mean(y_pred)
+        loss = torch.mean((torch.sum(y_pred.squeeze(), dim=1)) ** 2)
         return self.alpha * loss
 
 
@@ -97,7 +97,7 @@ class Gaussian:
     alpha: 1
 
     def forward(self, y_pred, y, mask):
-        y_pred_start_to_end = torch.sum(y_pred * mask.unsqueeze(1), dim=2)
+        y_pred_start_to_end = torch.sum(y_pred.squeeze() * mask, dim=1)
         loss = torch.mean(
             ((y_pred_start_to_end[:, 0] - y.squeeze()) ** 2)
             / (1e-5 + y_pred_start_to_end[:, 1])
@@ -111,7 +111,7 @@ class Poisson:
 
     def forward(self, y_pred, y, mask):
         # Sum over the masked values, similar to your Gaussian example
-        y_pred_start_to_end = torch.sum(y_pred * mask.unsqueeze(1), dim=2)
+        y_pred_start_to_end = torch.sum(y_pred.squeeze() * mask, dim=1)
 
         # Poisson NLL loss calculation
         epsilon = 1e-5  # Small value to avoid log(0)

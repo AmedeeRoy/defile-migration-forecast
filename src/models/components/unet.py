@@ -227,10 +227,10 @@ class UNetplus(nn.Module):
 
         out = 5 * out_h * out_d
 
-        # Force count to be zero between 0-? and ?-24 hr
+        # Force count to be zero during the hours of day with no data
         pred_mask = np.array([1 for i in range(24)])
-        pred_mask[:6] = 0
-        pred_mask[21:] = 0
+        pred_mask[:5] = 0
+        pred_mask[19:] = 0
         pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
         out = out * pred_mask.to(out.device)
 

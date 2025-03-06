@@ -31,7 +31,9 @@ criterion:
   - _target_: src.models.criterion.RMSE
     alpha: 1
     weights: False
-  # - _target_: src.models.criterion.L2
+  - _target_: src.models.criterion.L2
+    alpha: 0.01
+  #- _target_: src.models.criterion.Poisson
   #   alpha: 1
 
 # compile model for faster training with pytorch 2.0
