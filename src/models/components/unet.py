@@ -20,7 +20,12 @@ class DownConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(self.in_channels),
             nn.Conv1d(
-                self.in_channels, self.out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                self.in_channels,
+                self.out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
@@ -68,13 +73,25 @@ class UpConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(2 * out_channels),
             nn.Conv1d(
-                2 * out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                2 * out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
 
         self.conv2 = nn.Sequential(
-            nn.Conv1d(out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
+            ),
             nn.ReLU(),
         )
 
@@ -131,7 +148,9 @@ class UNetplus(nn.Module):
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
-            nn.Conv1d(4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
+            ),
             nn.Sigmoid(),
         )
 

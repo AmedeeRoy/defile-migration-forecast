@@ -11,7 +11,9 @@ class Transformer:
 
         # Validation to ensure only one of dataset or transformer is provided
         if data is not None and params is not None:
-            raise ValueError("Both data and params cannot be provided at the same time.")
+            raise ValueError(
+                "Both data and params cannot be provided at the same time."
+            )
 
         self.params = {}
 
@@ -66,7 +68,9 @@ class DataTransformer:
     def __init__(self, dataset: xr.Dataset = None, transformers=None):
         # Validation to ensure only one of dataset or transformer is provided
         if dataset is not None and transformers is not None:
-            raise ValueError("Both dataset and transformer cannot be provided at the same time.")
+            raise ValueError(
+                "Both dataset and transformer cannot be provided at the same time."
+            )
 
         # Initialize the transformation dictionary
         self.transformation_dict = {

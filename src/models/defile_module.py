@@ -94,7 +94,9 @@ class DefileLitModule(LightningModule):
         return self.net(yr, doy, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
-        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
+        return torch.stack(
+            [c.forward(count_pred, count, mask) for c in self.criterion]
+        ).sum()
 
     def model_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor]
@@ -112,6 +114,8 @@ class DefileLitModule(LightningModule):
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
         return loss
+
+    ### TRAIN -------------------
 
     def on_train_start(self) -> None:
         """Lightning hook that is called when training begins."""
@@ -133,7 +137,9 @@ class DefileLitModule(LightningModule):
 
         # update and log metrics
         self.train_loss(loss)
-        self.log("train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True
+        )
         # return loss or backpropagation will fail
         return loss
 
@@ -141,7 +147,11 @@ class DefileLitModule(LightningModule):
         "Lightning hook that is called when a training epoch ends."
         pass
 
-    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    ### VALIDATION -------------------
+
+    def validation_step(
+        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> None:
         """Perform a single validation step on a batch of data from the validation set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -179,7 +189,13 @@ class DefileLitModule(LightningModule):
         # Compute R2 score
         explained_variance = ExplainedVariance()
         self.val_r2_score = explained_variance(pred_masked, obs)
-        self.log("val/r2_score", self.val_r2_score, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val/r2_score",
+            self.val_r2_score,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
 
         # Compute spearman correlation coeff
         spearman_coeff = SpearmanCorrCoef()
@@ -195,7 +211,11 @@ class DefileLitModule(LightningModule):
         # reinitialize validation step
         self.val_pred = {"obs": [], "mask": [], "pred": []}
 
-    def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    ### TEST -------------------
+
+    def test_step(
+        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> None:
         """Perform a single test step on a batch of data from the test set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -206,7 +226,9 @@ class DefileLitModule(LightningModule):
 
         # update and log metrics
         self.test_loss(loss)
-        self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
+        )
 
         # save all predictions
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
@@ -231,7 +253,13 @@ class DefileLitModule(LightningModule):
         # Compute R2 score
         explained_variance = ExplainedVariance()
         self.test_r2_score = explained_variance(pred_masked, obs)
-        self.log("test/r2_score", self.test_r2_score, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "test/r2_score",
+            self.test_r2_score,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
 
         # Compute spearman correlation coeff
         spearman_coeff = SpearmanCorrCoef()
@@ -249,53 +277,61 @@ class DefileLitModule(LightningModule):
 
     def save_test(self, test_dataset, test_pred):
         test_dataset.set_transform(False)
-        predictions = []
+        test = []
 
         for i in range(len(test_dataset)):
             count, yr, doy, era5_main, era5_hourly, era5_daily, mask = test_dataset[i]
-            pred = era5_main.copy()
-            pred = pred.assign(estimated_hourly_counts=("time", test_pred["pred"][i, 0, :]))
+            t = era5_main.copy()
+            t = t.assign(estimated_hourly_counts=("time", test_pred["pred"][i, 0, :]))
+            # not sure what this does... seems like never used?
             if test_pred["pred"].shape[1] > 1:
-                pred = pred.assign(
+                t = t.assign(
                     estimated_hourly_counts_var=("time", test_pred["pred"][i, 1, :])
                 )
 
-            pred = pred.assign(masked_total_counts_=("", test_pred["obs"][i]))
-            pred = pred.assign(mask=("time", test_pred["mask"][i]))
-            predictions.append(pred)
+            t = t.assign(masked_total_counts_=("", test_pred["obs"][i]))
+            t = t.assign(mask=("time", test_pred["mask"][i]))
+            test.append(t)
 
-        predictions = xr.concat(predictions, dim="date")
+        test = xr.concat(test, dim="date")
         # ugly way to deal with 'obs' dimensions
-        predictions = predictions.assign(
-            masked_total_counts=("date", predictions["masked_total_counts_"].values.squeeze())
+        test = test.assign(
+            masked_total_counts=(
+                "date",
+                test["masked_total_counts_"].values.squeeze(),
+            )
         )
-        predictions = predictions.drop_dims("")
-        predictions = predictions.assign(
+        test = test.drop_dims("")
+        test = test.assign(
             estimated_masked_total_counts=(
-                predictions["estimated_hourly_counts"] * predictions["mask"]
+                test["estimated_hourly_counts"] * test["mask"]
             ).sum(dim="time")
         )
 
-        predictions["time"] = predictions.time.astype(str)
         
+        test["time"] = test.time.astype(str)
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + ".nc"
-        predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
         print(predictions)
+        test.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
 
         if not os.path.exists(self.trainer.logger.log_dir):
             os.makedirs(self.trainer.logger.log_dir)
 
-        self.plt_counts_distribution(predictions)
-        self.plt_true_vs_prediction(predictions)
-        self.plt_timeseries(predictions)
-        self.plt_doy_sum(predictions)
+        self.plt_counts_distribution(test)
+        self.plt_true_vs_prediction(test)
+        self.plt_timeseries(test)
+        self.plt_doy_sum(test)
 
     def plt_counts_distribution(self, data):
         true_count = data.masked_total_counts.values
         pred_count = data.estimated_masked_total_counts.values
 
         plt.hist(
-            true_count, label="True count", alpha=0.5, edgecolor="k", bins=np.linspace(0, 10, 50)
+            true_count,
+            label="True count",
+            alpha=0.5,
+            edgecolor="k",
+            bins=np.linspace(0, 10, 50),
         )
         plt.hist(
             pred_count,
@@ -308,7 +344,10 @@ class DefileLitModule(LightningModule):
         plt.ylabel("Histogram")
         plt.legend()
 
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "counts_distribution.jpg"
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" "))
+            + "counts_distribution.jpg"
+        )
         plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
 
@@ -325,7 +364,10 @@ class DefileLitModule(LightningModule):
         plt.plot(x, x, "--", c="black")
         plt.xlabel("True count (transform-scale)")
         plt.ylabel("Predicted count (transform-scale)")
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "true_vs_prediction.jpg"
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" "))
+            + "true_vs_prediction.jpg"
+        )
         plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
 
@@ -346,7 +388,9 @@ class DefileLitModule(LightningModule):
             ax[i].set_xlabel("hours")
             ax[i].set_ylabel("Bird counts (transform)")
             ax[i].set_title(data.isel(date=d).date.dt.strftime("%Y-%m-%d").item())
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "timeseries.jpg"
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" ")) + "timeseries.jpg"
+        )
         fig.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
 
@@ -355,14 +399,18 @@ class DefileLitModule(LightningModule):
 
         fig, ax = plt.subplots(1, 1, figsize=(5, 5))
         data.groupby("doy").sum().masked_total_counts.plot(ax=ax, label="True")
-        data.groupby("doy").sum().estimated_masked_total_counts.plot(ax=ax, label="Prediction")
+        data.groupby("doy").sum().estimated_masked_total_counts.plot(
+            ax=ax, label="Prediction"
+        )
         plt.legend()
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + "doy_sum.jpg"
         fig.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
 
-   ### EXPORT PREDICTIONS -------------------
-    def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
+    ### EXPORT PREDICTIONS -------------------
+    def predict_step(
+        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
+    ) -> None:
         """Perform a single forward step on a batch of data from the predict set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -392,7 +440,9 @@ class DefileLitModule(LightningModule):
         for i in range(len(predict_dataset)):
             yr, doy, era5_main, era5_hourly, era5_daily = predict_dataset[i]
             pred = era5_main.copy()
-            pred = pred.assign(estimated_hourly_counts=("time", predict_pred["pred"][i, 0, :]))
+            pred = pred.assign(
+                estimated_hourly_counts=("time", predict_pred["pred"][i, 0, :])
+            )
             if predict_pred["pred"].shape[1] > 1:
                 pred = pred.assign(
                     estimated_hourly_counts_var=("time", predict_pred["pred"][i, 1, :])
@@ -402,28 +452,38 @@ class DefileLitModule(LightningModule):
         predictions = xr.concat(predictions, dim="date")
         # predictions["time"] = predictions.time.astype(str)
         today = datetime.date.today().strftime("%Y%m%d")
-        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
+        filename = (
+            "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
+        )
 
         predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
         self.plt_predict(predictions)
 
     def plt_predict(self, data):
         daily_counts_transform = data.sum(dim="time").estimated_hourly_counts
-        daily_counts = (10 * daily_counts_transform) ** 2
+        daily_counts = self.trainer.datamodule.transform_data["count_rev"](
+            daily_counts_transform
+        )
 
         data_smooth = data.rolling({"time": 3}, center=True).mean()
 
-        fig, ax = plt.subplots(2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True)
+        fig, ax = plt.subplots(
+            2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True
+        )
         ax = ax.flatten()
         for k in range(len(data.date)):
             subset = data_smooth.isel(date=k)
 
-            weights = subset.estimated_hourly_counts / subset.estimated_hourly_counts.sum()
+            weights = (
+                subset.estimated_hourly_counts / subset.estimated_hourly_counts.sum()
+            )
 
             ax[k].bar(np.arange(24), weights * daily_counts[k])
 
             ax[k].set_title(subset.date.dt.strftime("%Y-%m-%d").item())
-            ax[k].set_xticks(np.arange(0, 24, 3), [str(h) + "h" for h in np.arange(0, 24, 3)])
+            ax[k].set_xticks(
+                np.arange(0, 24, 3), [str(h) + "h" for h in np.arange(0, 24, 3)]
+            )
 
             ax[k].text(
                 0.05,
@@ -440,10 +500,11 @@ class DefileLitModule(LightningModule):
         ax[3].set_ylabel("Forecasted individual \ncounts (#)")
         plt.suptitle(f"Defile Bird Forecasts - {self.trainer.datamodule.species}")
         today = datetime.date.today().strftime("%Y%m%d")
-        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".png"
+        filename = (
+            "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".png"
+        )
         plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
-
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

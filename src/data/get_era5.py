@@ -123,7 +123,9 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
 
         # Option 2
         era5_loc["location"] = loc
-        era5 = era5_loc if era5 is None else pd.concat([era5, era5_loc], ignore_index=True)
+        era5 = (
+            era5_loc if era5 is None else pd.concat([era5, era5_loc], ignore_index=True)
+        )
 
     # Rename date to datetime to make it easier to then create `date` and `time`
     era5["date"] = pd.to_datetime(era5["datetime"].dt.date)
