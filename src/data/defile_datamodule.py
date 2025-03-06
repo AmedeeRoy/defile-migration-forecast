@@ -401,8 +401,12 @@ class DefileDataModule(LightningDataModule):
         # Replace NA (no match in data_count) with 0
         count["count"] = count["count"].fillna(0)
 
+        # counvert to hourly count
+        count["duration"] = (count["end"] - count["start"]).dt.total_seconds() / 3600
+        count["count_raw"] = count["count"]
+        count["count"] = count["count"] / count["duration"]
+
         # Add pre-cumputed variable
-        count["duration"] = count["end"] - count["start"]
         count["doy"] = count["date"].dt.day_of_year
         count["year"] = count["date"].dt.year
         # This value are determine to become 0,1,2 when transformed.
