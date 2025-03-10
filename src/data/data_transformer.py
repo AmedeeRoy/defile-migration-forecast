@@ -124,6 +124,7 @@ class DataTransformer:
 
     # Function to apply transformations
     def apply_transformers(self, dataset: xr.Dataset):
+        dataset = dataset.copy()
         for var in dataset.data_vars:
             if var in self.transformers and var in self.transformation_dict:
                 dataset[var] = self.transformers[var].apply(data=dataset[var])
