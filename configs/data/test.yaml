@@ -3,7 +3,9 @@ data_dir: ${paths.data_dir}
 
 batch_size: 256 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
 
-species: "Common Buzzard"
+num_workers: 0
+
+species: "Black Kite"
 
 era5_main_location: "Defile"
 era5_main_variables:
@@ -54,7 +56,7 @@ era5_daily_variables:
   - "u_component_of_wind_10m"
   - "v_component_of_wind_10m"
 
-years: ${eval:"list(range(1966, 2024))"}
+years: ${eval:"list(range(2004, 2024))"}
 doy: [196, 335]
 lag_day: 7
 forecast_day: 5

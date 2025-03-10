@@ -151,7 +151,8 @@ class UNetplus(nn.Module):
             nn.Conv1d(
                 4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
             ),
-            nn.Sigmoid(),
+            nn.Sigmoid(),  # force output between 0-1
+            # nn.ReLU(),  # force output >= 0
         )
 
         # Daily Network --------------------------
@@ -191,7 +192,8 @@ class UNetplus(nn.Module):
 
         self.last_layer_d = nn.Sequential(
             nn.Linear(nb_hidden_features_daily, 1),
-            nn.Sigmoid(),
+            nn.Sigmoid(),  # force output between 0-1
+            # nn.ReLU(),  # force output >= 0
         )
 
     def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
@@ -226,6 +228,7 @@ class UNetplus(nn.Module):
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
         out = 5 * out_h * out_d
+        # out = out_h + out_d
 
         # Force count to be zero during the hours of day with no data
         pred_mask = np.array([1 for i in range(24)])

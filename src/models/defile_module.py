@@ -8,6 +8,7 @@ import torch
 from lightning import LightningModule
 from torchmetrics import MaxMetric, MeanMetric
 from torchmetrics.regression import ExplainedVariance, SpearmanCorrCoef
+from scipy.stats import spearmanr
 
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
@@ -198,8 +199,12 @@ class DefileLitModule(LightningModule):
         )
 
         # Compute spearman correlation coeff
-        spearman_coeff = SpearmanCorrCoef()
-        self.val_spearman_coeff = spearman_coeff(pred_masked, obs)
+        # spearman_coeff = SpearmanCorrCoef()
+        # self.val_spearman_coeff = spearman_coeff(pred_masked, obs)
+        obs_np = obs.cpu().numpy()
+        pred_np = pred_masked.cpu().numpy()
+        self.val_spearman_coeff, _ = spearmanr(pred_np, obs_np)
+
         self.log(
             "val/spearman_coeff",
             self.val_spearman_coeff,
@@ -234,9 +239,9 @@ class DefileLitModule(LightningModule):
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
-        self.test_pred["obs"].append(count)
-        self.test_pred["mask"].append(mask)
-        self.test_pred["pred"].append(count_pred)
+        self.test_pred["obs"].append(count)  # single value
+        self.test_pred["mask"].append(mask)  # hourly mask
+        self.test_pred["pred"].append(count_pred)  # hourly count
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""

@@ -6,6 +6,8 @@ python src/train.py
 
 python src/train.py data="test"
 
+python src/train.py data="test" trainer=gpu
+
 # Alternative 1: evaluation model with Defile values only
 python src/train.py experiment=defile_only data.species="Common Buzzard"
 
