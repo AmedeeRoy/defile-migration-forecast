@@ -100,7 +100,7 @@ class DefileLitModule(LightningModule):
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
-        self.save_hyperparameters(logger=False)
+        self.save_hyperparameters(ignore=["net"], logger=False)
 
         self.net = net
         self.criterion = criterion
@@ -301,8 +301,11 @@ class DefileLitModule(LightningModule):
         )
 
         # Compute spearman correlation coeff
-        spearman_coeff = SpearmanCorrCoef()
-        self.test_spearman_coeff = spearman_coeff(pred_masked, obs)
+        # spearman_coeff = SpearmanCorrCoef()
+        # self.test_spearman_coeff = spearman_coeff(pred_masked, obs)
+        obs_np = obs.cpu().numpy()
+        pred_np = pred_masked.cpu().numpy()
+        self.test_spearman_coeff, _ = spearmanr(pred_np, obs_np)
         self.log(
             "test/spearman_coeff",
             self.test_spearman_coeff,

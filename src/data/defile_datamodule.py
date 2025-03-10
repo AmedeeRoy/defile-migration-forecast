@@ -534,6 +534,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=True,
         )
 
@@ -575,6 +576,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 
@@ -616,6 +618,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 
@@ -642,6 +645,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 
