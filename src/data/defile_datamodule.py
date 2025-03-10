@@ -81,7 +81,7 @@ class DefileDataset(Dataset):
             )
         else:
             sample = (
-                count["count_trans"],
+                count["count"],
                 count["year_used_trans"],
                 count["doy_trans"],
                 self.era5_main_trans.sel(date=count["date"]),
@@ -471,8 +471,8 @@ class DefileDataModule(LightningDataModule):
 
         # Create a DataTransformers for each era5 data. This class does not store the data, only the transformation and the parameters of the transformation
         self.transform_data = {
-            "count": lambda x: np.log1p(x),  # np.sqrt(x) / 10,
-            "count_rev": lambda x: np.expm1(x),  # (10 * x) ** 2,
+            # "count": lambda x: x,  # np.log1p(x),  # np.sqrt(x) / 10,
+            # "count_rev": lambda x: x,  # np.expm1(x),  # (10 * x) ** 2,
             "year_used": lambda x: (x - 2000) / 100,
             "doy": lambda x: (x - 183) / 366,
             "main": DataTransformer(dataset=self.era5_main),
@@ -481,7 +481,7 @@ class DefileDataModule(LightningDataModule):
         }
 
         # Transformation of the count
-        count["count_trans"] = self.transform_data["count"](count["count"])
+        # count["count_trans"] = self.transform_data["count"](count["count"])
         count["year_used_trans"] = self.transform_data["year_used"](count["year_used"])
         count["doy_trans"] = self.transform_data["doy"](count["doy"])
         self.count = count
