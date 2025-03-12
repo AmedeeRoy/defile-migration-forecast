@@ -464,7 +464,7 @@ class DefileDataModule(LightningDataModule):
             count["tvt"] = np.random.choice(
                 ["train", "val", "test"],
                 size=len(count),
-                p=np.diff([0] + list(self.train_val_test_cum_ratio)),
+                p=np.diff(np.concatenate(([0], train_val_test_cum_ratio, [1]))),
             )
 
         # Compute transformation
