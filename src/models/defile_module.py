@@ -314,8 +314,9 @@ class DefileLitModule(LightningModule):
             prog_bar=True,
         )
 
-        # Compute spearman correlation coeff
-        self.save_test(self.trainer.datamodule.data_test, self.test_pred)
+        # Save test result to logger
+        if self.trainer.logger:  # Only save if logger present (e.g., not during debug)
+            self.save_test(self.trainer.datamodule.data_test, self.test_pred)
 
     def save_test(self, test_dataset, test_pred):
 
@@ -428,19 +429,20 @@ class DefileLitModule(LightningModule):
         plt.close()
 
     def plt_timeseries(self, data, log_transformed=True):
-        fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
-        ax = ax.flatten()
 
-        # Sample indices proportionally to weights sum of estimated counts per date
-        valid_indices = np.where(data.obs_count > 0)[0]
+        daily_average = data.mean(dim="time")["obs_count"]
+        valid_indices = np.where(daily_average > 0)[0]
         weights = data.pred_log_hourly_count[valid_indices].sum(dim="time").values
         sampled_indices = np.random.choice(
             valid_indices, size=16, p=weights / weights.sum()
         )
 
-        for i, d in enumerate(sampled_indices):
+        fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
+        ax = ax.flatten()
+
+        for i, d in enumerate(daily_average[sampled_indices].date):
             # Select data for this day
-            subs = data.isel(date=d)
+            subs = data.sel(date=d)
 
             if log_transformed:
                 obs = np.log1p(subs["obs_count"])
@@ -449,28 +451,39 @@ class DefileLitModule(LightningModule):
                 obs = subs["obs_count"]
                 pred = np.expm1(subs["pred_log_hourly_count"])
 
-            # Plot the prediction (blue line)
-            ax[i].plot(np.arange(0, 24), pred)
+            # If there is a single observation on that day, the structure of pred is different (no date dimension) and the plot need to be done differently.
+            if "date" in pred.dims:
+                pred_first = pred.isel(date=0)  # If date is a dimension
+                mask = subs.mask.values
+                # mask = subs.mask.sum(dim="date").values  # summing over all observations.
+                obs = obs.values
+            else:
+                pred_first = pred
+                obs = [obs.values]
+                mask = [subs.mask.values]
 
-            ymax = max(pred.max(), obs) + 0.1
+            # plot the prediction (only the first prediction is show - all should be the same for the day)
+            ax[i].plot(np.arange(0, 24), pred_first)
+
+            # find the max y value for drawing the rectangle
+            ymax = max(pred.max(), max(obs)) + 0.1
 
             # Plot the mask as yellow transparant background
-            for k, m in enumerate(subs.mask.values):
+            for k, m in enumerate(np.sum(mask, axis=0)):
                 ax[i].add_patch(
-                    Rectangle((k, 0), 1, ymax, color=(1, 1, 0, m))
+                    Rectangle((k, 0), 1, ymax, color=(1, 1, 0, min(1, m)))
                 )  # RGBA: (1, 1, 0) is yellow, 'm' controls the alpha
 
-            first_nonzero = np.argmax(subs.mask.values > 0)
-            last_nonzero = (
-                len(subs.mask.values) - 1 - np.argmax(np.flip(subs.mask.values) > 0)
-            )
+            for u, o in enumerate(obs):
+                first_nonzero = np.argmax(mask[u] > 0)
+                last_nonzero = len(mask[u]) - 1 - np.argmax(np.flip(mask[u]) > 0)
 
-            ax[i].plot([first_nonzero, last_nonzero + 1], [obs, obs], c="tab:red")
+                ax[i].plot([first_nonzero, last_nonzero + 1], [o, o], c="tab:red")
 
             # ax[i].set_ylim(0, ymax)
             ax[i].set_xlabel("hours")
-            ax[i].set_ylabel(f"{'Log ' if log_transformed else ''}Bird counts ")
-            ax[i].set_title(data.isel(date=d).date.dt.strftime("%Y-%m-%d").item())
+            ax[i].set_ylabel(f"Bird counts {'(transform)' if log_transformed else ''}")
+            ax[i].set_title(d.date.dt.strftime("%Y-%m-%d").item())
 
         filename = (
             "_".join(self.trainer.datamodule.species.split(" "))
@@ -571,8 +584,9 @@ class DefileLitModule(LightningModule):
             "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
         )
 
-        predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
-        self.plt_predict(predictions)
+        if self.trainer.logger:
+            predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
+            self.plt_predict(predictions)
 
     def plt_predict(self, data):
 
@@ -582,7 +596,7 @@ class DefileLitModule(LightningModule):
             2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True
         )
         ax = ax.flatten()
-        for k in len(pred_count.date):
+        for k in range(len(pred_count)):
             subset = pred_count.isel(date=k)
 
             ax[k].bar(np.arange(24), subset.values)
