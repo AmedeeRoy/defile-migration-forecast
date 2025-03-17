@@ -428,7 +428,7 @@ class DefileLitModule(LightningModule):
         plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
         plt.close()
 
-    def plt_timeseries(self, data, log_transformed=True):
+    def plt_timeseries(self, data, log_transformed=True, global_y_lim=False):
 
         daily_average = data.mean(dim="time")["obs_count"]
         valid_indices = np.where(daily_average > 0)[0]
@@ -437,13 +437,13 @@ class DefileLitModule(LightningModule):
             valid_indices, size=16, p=weights / weights.sum()
         )
 
-        fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
-        ax = ax.flatten()
+        all_obs = []
+        all_pred = []
+        all_mask = []
+        all_pred_first = []
 
-        for i, d in enumerate(daily_average[sampled_indices].date):
-            # Select data for this day
+        for d in daily_average[sampled_indices].date:
             subs = data.sel(date=d)
-
             if log_transformed:
                 obs = np.log1p(subs["obs_count"])
                 pred = subs["pred_log_hourly_count"]
@@ -462,28 +462,50 @@ class DefileLitModule(LightningModule):
                 obs = [obs.values]
                 mask = [subs.mask.values]
 
+            all_obs.append(obs)
+            all_pred.append(pred)
+            all_pred_first.append(pred_first)
+            all_mask.append(mask)
+
+        # Compute maximum y value across all subplots
+        ymax = (
+            max(
+                np.max([np.max(p.values) for p in all_pred]),
+                np.max([np.max(o) for o in all_obs]),
+            )
+            + 0.1
+        )
+
+        fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
+        ax = ax.flatten()
+
+        for i, d in enumerate(daily_average[sampled_indices].date):
+
             # plot the prediction (only the first prediction is show - all should be the same for the day)
-            ax[i].plot(np.arange(0, 24), pred_first)
+            ax[i].plot(np.arange(0, 24), all_pred_first[i])
 
             # find the max y value for drawing the rectangle
-            ymax = max(pred.max(), max(obs)) + 0.1
+            if not global_y_lim:
+                ymax = max(all_pred[i].max(), max(all_obs[i])) + 0.1
 
             # Plot the mask as yellow transparant background
-            for k, m in enumerate(np.sum(mask, axis=0)):
+            for k, m in enumerate(np.sum(all_mask[i], axis=0)):
                 ax[i].add_patch(
                     Rectangle((k, 0), 1, ymax, color=(1, 1, 0, min(1, m)))
                 )  # RGBA: (1, 1, 0) is yellow, 'm' controls the alpha
 
-            for u, o in enumerate(obs):
-                first_nonzero = np.argmax(mask[u] > 0)
-                last_nonzero = len(mask[u]) - 1 - np.argmax(np.flip(mask[u]) > 0)
+            for u, o in enumerate(all_obs[i]):
+                first_nonzero = np.argmax(all_mask[i][u] > 0)
+                last_nonzero = (
+                    len(all_mask[i][u]) - 1 - np.argmax(np.flip(all_mask[i][u]) > 0)
+                )
 
                 ax[i].plot([first_nonzero, last_nonzero + 1], [o, o], c="tab:red")
 
-            # ax[i].set_ylim(0, ymax)
-            ax[i].set_xlabel("hours")
-            ax[i].set_ylabel(f"Bird counts {'(transform)' if log_transformed else ''}")
-            ax[i].set_title(d.date.dt.strftime("%Y-%m-%d").item())
+        # ax[i].set_ylim(0, ymax)
+        ax[i].set_xlabel("hours")
+        ax[i].set_ylabel(f"Bird counts {'(transform)' if log_transformed else ''}")
+        ax[i].set_title(d.date.dt.strftime("%Y-%m-%d").item())
 
         filename = (
             "_".join(self.trainer.datamodule.species.split(" "))
@@ -616,6 +638,7 @@ class DefileLitModule(LightningModule):
                 horizontalalignment="left",
                 bbox=dict(boxstyle="round,pad=0.5", facecolor="gray", alpha=0.25),
             )
+            ax[k].set_xlim(6, 21)
 
         ax[0].set_ylabel("Forecasted individual \ncounts (#)")
         ax[3].set_ylabel("Forecasted individual \ncounts (#)")
