@@ -153,12 +153,22 @@ class ForecastDataset(Dataset):
             {
                 "date": pd.date_range(
                     start=pd.Timestamp.now().normalize(),
-                    # start = pd.to_datetime("2017-09-01").normalize(),
                     periods=forecast_day + 1,
                     freq="D",
                 )
             }
         )
+
+        # fake date
+        if False:
+            dt = (
+                pd.Timestamp.now().normalize()
+                - pd.to_datetime("2024-09-01").normalize()
+            )
+            count["date"] = count["date"] + dt
+            self.era5_main["date"] = self.era5_main["date"] + dt
+            self.era5_hourly["date"] = self.era5_hourly["date"] + dt
+            self.era5_daily["date"] = self.era5_daily["date"] + dt
 
         count["doy"] = count["date"].dt.day_of_year
         count["year"] = count["date"].dt.year
