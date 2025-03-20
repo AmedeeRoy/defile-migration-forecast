@@ -115,7 +115,6 @@ class ForecastDataset(Dataset):
         if transform_data is None:
             raise ValueError(f"transform_data need to be provided if transform is True")
 
-        self.year_used = year_used
         self.lag_day = lag_day
         self.forecast_day = forecast_day
         self.transform_data = transform_data
