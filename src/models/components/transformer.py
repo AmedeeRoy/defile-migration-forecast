@@ -44,12 +44,20 @@ class PositionalEncodingLayer(nn.Module):
         """:param Tensor[batch_size, seq_len] input_sequences :return Tensor[batch_size, seq_len,
         dim] position_encoding."""
         positions = (
-            torch.arange(input_sequences.size(1)).unsqueeze(1).to(input_sequences.device)
+            torch.arange(input_sequences.size(1))
+            .unsqueeze(1)
+            .to(input_sequences.device)
         )  # [seq_len, 1]
-        indexes = torch.arange(self.dim).unsqueeze(0).to(input_sequences.device)  # [1, dim]
+        indexes = (
+            torch.arange(self.dim).unsqueeze(0).to(input_sequences.device)
+        )  # [1, dim]
         angles = self.get_angles(positions, indexes)  # [seq_len, dim]
-        angles[:, 0::2] = torch.sin(angles[:, 0::2])  # apply sin to even indices in the tensor; 2i
-        angles[:, 1::2] = torch.cos(angles[:, 1::2])  # apply cos to odd indices in the tensor; 2i
+        angles[:, 0::2] = torch.sin(
+            angles[:, 0::2]
+        )  # apply sin to even indices in the tensor; 2i
+        angles[:, 1::2] = torch.cos(
+            angles[:, 1::2]
+        )  # apply cos to odd indices in the tensor; 2i
         position_encoding = angles.unsqueeze(0).repeat(
             input_sequences.size(0), 1, 1
         )  # [batch_size, seq_len, dim]
@@ -96,7 +104,9 @@ class Transformer(nn.Module):
         )
 
         self.cnn_output_hourly = nn.Sequential(
-            nn.Conv1d(embed_size_hourly, 1, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                embed_size_hourly, 1, kernel_size=5, stride=1, padding=2, dilation=1
+            ),
             nn.Sigmoid(),
         )
 

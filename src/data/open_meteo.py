@@ -39,11 +39,13 @@ def convert_era5_variable(variables):
         },
         "u_component_of_wind_10m": {
             "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"] * np.cos(np.radians(df["wind_direction_10m"])),
+            "conv": lambda df: df["wind_speed_10m"]
+            * np.cos(np.radians(df["wind_direction_10m"])),
         },
         "v_component_of_wind_10m": {
             "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"] * np.sin(np.radians(df["wind_direction_10m"])),
+            "conv": lambda df: df["wind_speed_10m"]
+            * np.sin(np.radians(df["wind_direction_10m"])),
         },
         "u_component_of_wind_100m": {
             "var_forecast": ["wind_speed_100m", "wind_direction_100m"],
@@ -109,7 +111,9 @@ def convert_era5_variable(variables):
     return list(set(var_forecast_list)), conv_functions
 
 
-def download_forecast_hourly(locations, variables, lag_day, forecast_day, add_sun=False):
+def download_forecast_hourly(
+    locations, variables, lag_day, forecast_day, add_sun=False
+):
     """Retrieves weather forecast data for given locations and variables using the Open-Meteo API.
 
     Parameters:
@@ -141,7 +145,7 @@ def download_forecast_hourly(locations, variables, lag_day, forecast_day, add_su
     # Initialize the Open-Meteo API client
     om = Client()
 
-    print("Download ERA5...")
+    print(f"Download ERA5 data on api.open-meteo.com for {locations}...")
     # Make a request to the Open-Meteo API to get weather data
     responses = om.weather_api(
         url="https://api.open-meteo.com/v1/forecast",
@@ -163,7 +167,10 @@ def download_forecast_hourly(locations, variables, lag_day, forecast_day, add_su
         hourly = r.Hourly()
 
         df_forcast = pd.DataFrame(
-            {var: hourly.Variables(j).ValuesAsNumpy() for j, var in enumerate(conv_var[0])}
+            {
+                var: hourly.Variables(j).ValuesAsNumpy()
+                for j, var in enumerate(conv_var[0])
+            }
         )
 
         # Create a DataFrame with timestamps and the corresponding location name

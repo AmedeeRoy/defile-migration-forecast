@@ -5,11 +5,10 @@
 defaults:
   - override /data: defile
   - override /model: unet
-  - override train:
-    seed: 0
 
 run:
   dir: prod/${task_name}/${data.species}
 sweep:
   dir: prod/${task_name}
   subdir: ${data.species}
+# What about https://github.com/AmedeeRoy/defile-migration-forecast/commit/66a1138c731b5ec0c9d043d9961c5ee89a585a9a?

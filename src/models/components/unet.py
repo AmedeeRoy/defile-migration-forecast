@@ -20,7 +20,12 @@ class DownConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(self.in_channels),
             nn.Conv1d(
-                self.in_channels, self.out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                self.in_channels,
+                self.out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
@@ -68,13 +73,25 @@ class UpConv(nn.Module):
         self.conv1 = nn.Sequential(
             nn.BatchNorm1d(2 * out_channels),
             nn.Conv1d(
-                2 * out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1
+                2 * out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
             ),
             nn.ReLU(),
         )
 
         self.conv2 = nn.Sequential(
-            nn.Conv1d(out_channels, out_channels, kernel_size=5, stride=1, padding=2, dilation=1),
+            nn.Conv1d(
+                out_channels,
+                out_channels,
+                kernel_size=5,
+                stride=1,
+                padding=2,
+                dilation=1,
+            ),
             nn.ReLU(),
         )
 
@@ -131,8 +148,11 @@ class UNetplus(nn.Module):
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
-            nn.Conv1d(4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1),
-            nn.Sigmoid(),
+            nn.Conv1d(
+                4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
+            ),
+            nn.Sigmoid(),  # force output between 0-1
+            # nn.ReLU(),  # force output >= 0
         )
 
         # Daily Network --------------------------
@@ -172,7 +192,8 @@ class UNetplus(nn.Module):
 
         self.last_layer_d = nn.Sequential(
             nn.Linear(nb_hidden_features_daily, 1),
-            nn.Sigmoid(),
+            nn.Sigmoid(),  # force output between 0-1
+            # nn.ReLU(),  # force output >= 0
         )
 
     def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
@@ -206,12 +227,13 @@ class UNetplus(nn.Module):
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
-        out = 5 * out_h * out_d
+        out = 8 * out_h * out_d  # exp(8)-1 = 2979
+        # out = out_h + out_d
 
-        # Force count to be zero between 0-? and ?-24 hr
+        # Force count to be zero during the hours of day with no data
         pred_mask = np.array([1 for i in range(24)])
-        pred_mask[:6] = 0
-        pred_mask[21:] = 0
+        pred_mask[:5] = 0
+        pred_mask[19:] = 0
         pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
         out = out * pred_mask.to(out.device)
 

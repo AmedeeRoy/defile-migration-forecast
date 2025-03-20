@@ -28,11 +28,15 @@ net:
 criterion:
   # - _target_: src.models.criterion.Gaussian
   #   alpha: 1
-  - _target_: src.models.criterion.RMSE
-    alpha: 1
-    weights: False
+  # - _target_: src.models.criterion.RMSE
+  #  alpha: 1
   # - _target_: src.models.criterion.L2
-  #   alpha: 1
+  #  alpha: 0.01
+  #- _target_: src.models.criterion.Poisson
+  #  alpha: 1
+  - _target_: src.models.criterion.TweedieLoss
+    alpha: 1
+    p: 1.5
 
 # compile model for faster training with pytorch 2.0
 compile: false

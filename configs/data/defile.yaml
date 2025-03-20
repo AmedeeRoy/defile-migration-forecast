@@ -3,6 +3,8 @@ data_dir: ${paths.data_dir}
 
 batch_size: 256 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
 
+num_workers: 0
+
 species: "Common Buzzard"
 
 era5_main_location: "Defile"
@@ -59,3 +61,5 @@ forecast_day: 5
 train_val_test_cum_ratio: [0.7, 0.9]
 years: ${eval:"list(range(1966, 2024))"}
 doy: [196, 335]
+train_val_test: "period"
+year_used: "constant" # "constant" or "none" or "period"

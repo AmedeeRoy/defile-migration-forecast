@@ -23,255 +23,107 @@ from src.utils import (
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
+def sample2tensor(sample):
+    transformed_sample = []
+    for s in sample:
+        if isinstance(s, np.ndarray):
+            transformed_sample.append(s)  # Keep np.array unchanged
+        elif hasattr(s, "to_array"):
+            transformed_sample.append(s.to_array().values)  # xarray to numpy
+        else:
+            transformed_sample.append(np.array([s]))
+
+    # to tensor
+    return tuple([torch.FloatTensor(s) for s in transformed_sample])
+
+
 class DefileDataset(Dataset):
     def __init__(
         self,
-        data_dir,
-        species="Common Buzzard",
-        era5_main_location="Defile",
-        era5_main_variables: list = [
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        era5_hourly_locations: list = [
-            "MontTendre",
-            "Chasseral",
-            "Basel",
-            "Dijon",
-            "ColGrandSaintBernard",
-        ],
-        era5_hourly_variables: list = [
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        era5_daily_locations: list = [
-            "Defile",
-            "Schaffhausen",
-            "Basel",
-            "Munich",
-            "Stuttgart",
-            "Frankfurt",
-            "Berlin",
-        ],
-        era5_daily_variables: list = [
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        years=range(1966, 2024),
-        doy=[196, 335],
-        lag_day=7,
-        transform=False,
-        transform_data=None,
+        count,
+        era5_main,
+        era5_hourly,
+        era5_daily,
+        era5_main_trans,
+        era5_hourly_trans,
+        era5_daily_trans,
+        mask,
+        return_original=False,
     ):
-        # MAIN ERA-5 DATA ----------------------------
-        era5_main = get_era5_hourly(
-            data_dir,
-            locations=era5_main_location,
-            variables=era5_main_variables,
-            add_sun=True,
-        )
-
-        # HOURLY ERA-5 DATA ----------------------------
-        era5_hourly = get_era5_hourly(
-            data_dir,
-            locations=era5_hourly_locations,
-            variables=era5_hourly_variables,
-            add_sun=False,
-        )
-
-        # DAILY ERA-5 DATA ----------------------------
-        era5_daily = get_era5_daily(
-            data_dir,
-            locations=era5_daily_locations,
-            variables=era5_daily_variables,
-            lag_day=lag_day,
-        )
-
-        # --------
-        ## Why not filtering era5 by year too?
-        # -------
-
-        # COUNT DATA ----------------------------
-        # Read data
-        df = pd.read_csv(
-            data_dir + "/count/all_count_processed.csv",
-            parse_dates=["date", "start", "end"],
-        )
-
-        # Filter data by years
-        df["doy"] = df["date"].dt.day_of_year
-        df["year"] = df["date"].dt.year
-        dfy = df[
-            df["date"].dt.year.isin(years)
-            & (df["doy"] >= doy[0])
-            & (df["doy"] <= doy[1])
-        ]
-
-        # Filter data by species and sum count of all species happening during the same period
-        data_count = (
-            dfy[dfy.species == species][["date", "count", "start", "end"]]
-            .groupby(["date", "start", "end"], as_index=False)["count"]
-            .sum()
-        )
-        if len(data_count) == 0:
-            raise ValueError(f"No data for species {species} in the selected years.")
-
-        # Build data.frame with the zero count
-        # Extract the dataframe with all period (regardless of the species)
-        df_all_period = dfy[
-            [x for x in list(dfy) if x not in ["species", "count"]]
-        ].drop_duplicates()
-
-        dfys = pd.merge(df_all_period, data_count, how="left")
-        # Replace NA (no match in data_count) with 0
-        dfys["count"] = dfys["count"].fillna(0)
-
-        # Add pre-cumputed variable
-        dfys["duration"] = dfys["end"] - dfys["start"]
-
-        # Create mask
-        # Corresponding to the fraction of each hour of the day during which the count in question has been happening
-        hours_mat = np.repeat(np.arange(24), len(dfys)).reshape(24, len(dfys))
-        startHour = dfys["start"].dt.hour.values + dfys["start"].dt.minute.values / 60
-        endHour = dfys["end"].dt.hour.values + dfys["end"].dt.minute.values / 60
-        tmp1 = np.maximum(np.minimum(hours_mat - startHour + 1, 1), 0)
-        tmp2 = np.maximum(np.minimum(endHour - hours_mat, 1), 0)
-        mask = np.minimum(tmp1, tmp2)
-
-        # Check mask is never 0
-        # mask.sum(axis=0)
-
-        # normalizing
-        # Create a DataTransformers for each era5 data. this class does not store the data, only the transformation and the parameters of the transformation
-        self.transform_data = transform_data
-        if transform_data is None:
-            self.transform_data = {}
-            self.transform_data["main"] = DataTransformer(dataset=era5_main)
-            self.transform_data["hourly"] = DataTransformer(dataset=era5_hourly)
-            self.transform_data["daily"] = DataTransformer(dataset=era5_daily)
-
-        if transform:
-            # Apply the transformer to each variable
-            era5_main = self.transform_data["main"].apply_transformers(era5_main)
-            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
-            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
-            # dfys["count"] = np.log10(dfys["count"]+1)
-            dfys["count"] = np.sqrt(dfys["count"]) / 10
-            dfys["doy"] = (dfys["doy"] - 183) / 366
-            dfys["year"] = (dfys["year"] - 2000) / 100
 
         # Assign to self
-        self.data = dfys.reset_index(drop=True)
+        self.count = count
         self.era5_main = era5_main
         self.era5_daily = era5_daily
         self.era5_hourly = era5_hourly
+        self.era5_main_trans = era5_main_trans
+        self.era5_hourly_trans = era5_hourly_trans
+        self.era5_daily_trans = era5_daily_trans
         self.mask = mask
-        self.lag_day = lag_day
-        self.transform = transform
+        self.return_original = return_original
 
     def __len__(self):
-        return len(self.data)
+        return len(self.count)
 
     def __getitem__(self, idx):
+        count = self.count.iloc[idx]
+
         # index by count/observation
-        count = self.data["count"][idx]
-        yr = self.data["year"][idx]
-        doy = self.data["doy"][idx]
-        mask = self.mask[:, idx]
-
-        date = self.data["date"][idx]
-        era5_main = self.era5_main.sel(date=date)
-        era5_hourly = self.era5_hourly.sel(date=date)
-        era5_daily = self.era5_daily.sel(date=date)
-
-        # convert to numpy before transformations
-        sample = count, yr, doy, era5_main, era5_hourly, era5_daily, mask
-
-        # apply transformations
-        if self.transform:
-            # to array
+        if self.return_original:
             sample = (
-                np.array([count]),
-                np.array([yr]),
-                np.array([doy]),
-                era5_main.to_array().values,
-                era5_hourly.to_array().values,
-                era5_daily.to_array().values,
-                mask,
+                count["count"],
+                count["year_used"],
+                count["doy"],
+                self.era5_main.sel(date=count["date"]),
+                self.era5_hourly.sel(date=count["date"]),
+                self.era5_daily.sel(date=count["date"]),
+                self.mask[:, idx],
             )
-            # to tensor
-            sample = tuple([torch.FloatTensor(s) for s in sample])
-
+        else:
+            sample = (
+                count["count"],
+                count["year_used_trans"],
+                count["doy_trans"],
+                self.era5_main_trans.sel(date=count["date"]),
+                self.era5_hourly_trans.sel(date=count["date"]),
+                self.era5_daily_trans.sel(date=count["date"]),
+                self.mask[:, idx],
+            )
+            sample = sample2tensor(sample)
         return sample
 
-    def set_transform(self, value):
-        self.transform = value
+    def set_return_original(self, value):
+        self.return_original = value
 
 
 class ForecastDataset(Dataset):
     def __init__(
         self,
-        era5_main_location="Defile",
-        era5_main_variables=[
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        era5_hourly_locations=[
-            "MontTendre",
-            "Chasseral",
-            "Basel",
-            "Dijon",
-            "ColGrandSaintBernard",
-        ],
-        era5_hourly_variables=[
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        era5_daily_locations=[
-            "Defile",
-            "Schaffhausen",
-            "Basel",
-            "Munich",
-            "Stuttgart",
-            "Frankfurt",
-            "Berlin",
-        ],
-        era5_daily_variables=[
-            "temperature_2m",
-            "total_precipitation",
-            "surface_pressure",
-            "u_component_of_wind_10m",
-            "v_component_of_wind_10m",
-        ],
-        lag_day=7,
-        forecast_day=5,
-        transform=False,
-        transform_data=None,
+        era5_main_location,
+        era5_main_variables,
+        era5_hourly_locations,
+        era5_hourly_variables,
+        era5_daily_locations,
+        era5_daily_variables,
+        lag_day,
+        forecast_day,
+        transform_data,
+        return_original=False,
+        year_used="none",
     ):
         # Assert that if transform=True
-        if transform == True:
-            if transform_data is None:
-                raise ValueError(
-                    f"transform_data need to be provided if transform is True"
-                )
+        if transform_data is None:
+            raise ValueError(f"transform_data need to be provided if transform is True")
+
+        self.year_used = year_used
+        self.lag_day = lag_day
+        self.forecast_day = forecast_day
+        self.transform_data = transform_data
+        self.return_original = return_original
+        self.year_used = year_used
 
         # MAIN ERA-5 DATA ----------------------------
-        era5_main = download_forecast_hourly(
+        self.era5_main = download_forecast_hourly(
             locations=era5_main_location,
             variables=era5_main_variables,
             lag_day=0,
@@ -280,7 +132,7 @@ class ForecastDataset(Dataset):
         )
 
         # HOURLY ERA-5 DATA ----------------------------
-        era5_hourly = download_forecast_hourly(
+        self.era5_hourly = download_forecast_hourly(
             locations=era5_hourly_locations,
             variables=era5_hourly_variables,
             lag_day=0,
@@ -289,7 +141,7 @@ class ForecastDataset(Dataset):
         )
 
         # DAILY ERA-5 DATA ----------------------------
-        era5_daily = download_forecast_daily(
+        self.era5_daily = download_forecast_daily(
             locations=era5_daily_locations,
             variables=era5_daily_variables,
             lag_day=lag_day,
@@ -297,71 +149,81 @@ class ForecastDataset(Dataset):
         )
 
         # Create a data.frame with the initial values
-        df = pd.DataFrame(
+        count = pd.DataFrame(
             {
                 "date": pd.date_range(
                     start=pd.Timestamp.now().normalize(),
-                    # start = pd.to_datetime("2017-09-01").normalize(),
                     periods=forecast_day + 1,
                     freq="D",
                 )
             }
         )
-        df["doy"] = df["date"].dt.day_of_year
-        df["year"] = df["date"].dt.year
 
-        self.transform_data = transform_data
-        if transform:
-            # Apply the transformer to each variable
-            era5_main = self.transform_data["main"].apply_transformers(era5_main)
-            era5_hourly = self.transform_data["hourly"].apply_transformers(era5_hourly)
-            era5_daily = self.transform_data["daily"].apply_transformers(era5_daily)
-            df["doy"] = (df["doy"] - 183) / 366
-            df["year"] = (df["year"] - 2000) / 100
+        # fake date
+        if False:
+            dt = (
+                pd.Timestamp.now().normalize()
+                - pd.to_datetime("2024-09-01").normalize()
+            )
+            count["date"] = count["date"] + dt
+            self.era5_main["date"] = self.era5_main["date"] + dt
+            self.era5_hourly["date"] = self.era5_hourly["date"] + dt
+            self.era5_daily["date"] = self.era5_daily["date"] + dt
 
-        # Assign to self
-        self.data = df.reset_index(drop=True)
-        self.era5_main = era5_main
-        self.era5_daily = era5_daily
-        self.era5_hourly = era5_hourly
-        self.lag_day = lag_day
-        self.transform = transform
+        count["doy"] = count["date"].dt.day_of_year
+        count["year"] = count["date"].dt.year
+        # This value are determine to become 0,1,2 when transformed.
+        count["year_period"] = np.where(
+            count["year"] < 1993, 2000, np.where(count["year"] <= 2013, 2100, 2200)
+        )
+        count["year_used"] = np.where(
+            self.year_used == "constant",
+            2000,
+            np.where(self.year_used == "period", count["year_period"], count["year"]),
+        )
+        count["year_used_trans"] = (count["year_used"] - 2000) / 100
+        count["doy_trans"] = (count["doy"] - 183) / 366
+
+        self.count = count
+
+        # Apply transformation
+        self.era5_main_trans = self.transform_data["main"].apply_transformers(
+            self.era5_main
+        )
+        self.era5_hourly_trans = self.transform_data["hourly"].apply_transformers(
+            self.era5_hourly
+        )
+        self.era5_daily_trans = self.transform_data["daily"].apply_transformers(
+            self.era5_daily
+        )
 
     def __len__(self):
-        return len(self.data)
+        return len(self.count)
 
     def __getitem__(self, idx):
+        date = self.count["date"][idx]
+
         # index by count/observation
-        yr = self.data["year"][idx]
-        doy = self.data["doy"][idx]
-        date = self.data["date"][idx]
-
-        era5_main = self.era5_main.sel(date=date)
-        era5_hourly = self.era5_hourly.sel(date=date)
-        era5_daily = self.era5_daily.sel(date=date)
-
-        # convert to numpy before transformations
-        sample = yr, doy, era5_main, era5_hourly, era5_daily
-
-        # apply transformations
-        if self.transform:
-            # to array
-            sample = (
-                np.zeros(1),
-                np.array([yr]),
-                np.array([doy]),
-                era5_main.to_array().values,
-                era5_hourly.to_array().values,
-                era5_daily.to_array().values,
-                np.zeros(1),
+        if self.return_original:
+            return (
+                self.count["year_used"][idx],
+                self.count["doy"][idx],
+                self.era5_main.sel(date=date),
+                self.era5_hourly.sel(date=date),
+                self.era5_daily.sel(date=date),
             )
-            # to tensor
-            sample = tuple([torch.FloatTensor(s) for s in sample])
+        else:
+            sample = (
+                self.count["year_used_trans"][idx],
+                self.count["doy_trans"][idx],
+                self.era5_main_trans.sel(date=date),
+                self.era5_hourly_trans.sel(date=date),
+                self.era5_daily_trans.sel(date=date),
+            )
+            return sample2tensor([np.zeros(1)] + list(sample) + [np.zeros(1)])
 
-        return sample
-
-    def set_transform(self, value):
-        self.transform = value
+    def set_return_original(self, value):
+        self.return_original = value
 
 
 class DefileDataModule(LightningDataModule):
@@ -418,6 +280,8 @@ class DefileDataModule(LightningDataModule):
         lag_day: int = 7,
         forecast_day: int = 5,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
+        train_val_test: str = "period",
+        year_used: str = "none",
         batch_size: int = 64,
         num_workers: int = 0,
         pin_memory: bool = False,
@@ -426,9 +290,13 @@ class DefileDataModule(LightningDataModule):
 
         :param data_dir: The data directory. Defaults to `"data/"`.
         :param species: The species for which to model the count. Defaults to `"Common Buzzard"`.
+        :param years: List of the year considered in the model
+        :param doy: Range (min and max) of the day of year considered in the model
         :param lag_day: The number of lag day to consider in the model. Defaults to `7`.
-        :param seed: The seed. Defaults to `0`.
+        :param forecast_day: Number of day ahead used for prediction
         :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
+        :param train_val_test: The type of train, validation and test split. Defaults to `"period"`.
+        :param year_used: The type of year variable used in the model. Defaults to `"none"`.  "constant" for no information of year included in the model, "none" for the exact year or "period" where only a broad category of year period is included
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -455,7 +323,9 @@ class DefileDataModule(LightningDataModule):
         self.doy = doy
         self.lag_day = lag_day
         self.forecast_day = forecast_day
+        self.train_val_test = train_val_test
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
+        self.year_used = year_used
         self.batch_size_per_device = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -470,46 +340,198 @@ class DefileDataModule(LightningDataModule):
                 self.hparams.batch_size // self.trainer.world_size
             )
 
-        # split dataset years based on type of data collected
-        yr_grp = [
-            np.array(
-                [y for y in self.years if y < 1993]
-            ),  # size 26. Incidental monitoring
-            np.array([y for y in self.years if 1993 <= y <= 2013]),  # size 20.
-            np.array([y for y in years if y > 2013]),
+        # Load the data
+        # MAIN ERA-5 DATA ----------------------------
+        era5_main = get_era5_hourly(
+            data_dir,
+            locations=era5_main_location,
+            variables=era5_main_variables,
+            add_sun=True,
+        )
+
+        # HOURLY ERA-5 DATA ----------------------------
+        era5_hourly = get_era5_hourly(
+            data_dir,
+            locations=era5_hourly_locations,
+            variables=era5_hourly_variables,
+            add_sun=False,
+        )
+
+        # DAILY ERA-5 DATA ----------------------------
+        era5_daily = get_era5_daily(
+            data_dir,
+            locations=era5_daily_locations,
+            variables=era5_daily_variables,
+            lag_day=lag_day,
+        )
+
+        # Filter data by years and day of year
+        def filter_by_date(xr):
+            return xr.sel(
+                date=(
+                    (xr.date.dt.year.isin(years))
+                    & (xr.date.dt.dayofyear >= doy[0])
+                    & (xr.date.dt.dayofyear <= doy[1])
+                )
+            )
+
+        self.era5_main = filter_by_date(era5_main)
+        self.era5_hourly = filter_by_date(era5_hourly)
+        self.era5_daily = filter_by_date(era5_daily)
+
+        # COUNT DATA ----------------------------
+        # Read data
+        all_count = pd.read_csv(
+            data_dir + "/count/all_count_processed.csv",
+            parse_dates=["date", "start", "end"],
+        )
+
+        # Filter data by years and day of year
+        all_count = all_count[
+            all_count["date"].dt.year.isin(years)
+            & all_count["date"].dt.day_of_year.between(*doy)
         ]
 
-        # Shuffle order of the year in each group
-        # np.random.seed(self.seed)
-        [np.random.shuffle(y) for y in yr_grp]
+        # Filter data by species and sum count of all species happening during the same period
+        count_sp = (
+            all_count[all_count.species == species][["date", "count", "start", "end"]]
+            .groupby(["date", "start", "end"], as_index=False)["count"]
+            .sum()
+        )
+        if len(count_sp) == 0:
+            raise ValueError(f"No data for species {species} in the selected years.")
 
-        # Assign years to each group according to the cumulative ratio defined
-        self.ytraining, self.yval, self.ytest = [], [], []
-        for y in yr_grp:
-            sz = (len(y) * self.train_val_test_cum_ratio).astype(int)
-            y_data = np.split(y, sz)
-            self.ytraining.extend(y_data[0])
-            self.yval.extend(y_data[1])
-            self.ytest.extend(y_data[2])
+        # Build dataframe with the zero count
+        # Extract the dataframe with all period (regardless of the species)
+        all_count_sp = all_count[
+            [x for x in list(all_count) if x not in ["species", "count"]]
+        ].drop_duplicates()
 
-        log.info(f"Train dataset : selected years - {self.ytraining}")
-        log.info(f"Validation dataset : selected years - {self.yval}")
-        log.info(f"Test dataset : selected years -{self.ytest}")
+        count = pd.merge(all_count_sp, count_sp, how="left")
+        # Replace NA (no match in data_count) with 0
+        count["count"] = count["count"].fillna(0)
+
+        # counvert to hourly count
+        count["duration"] = (count["end"] - count["start"]).dt.total_seconds() / 3600
+        count["count_raw"] = count["count"]
+        count["count"] = count["count"] / count["duration"]
+
+        # Add pre-cumputed variable
+        count["doy"] = count["date"].dt.day_of_year
+        count["year"] = count["date"].dt.year
+        # This value are determine to become 0,1,2 when transformed.
+        count["year_period"] = np.where(
+            count["year"] < 1993, 2000, np.where(count["year"] <= 2013, 2100, 2200)
+        )
+        count["year_used"] = np.where(
+            self.year_used == "constant",
+            2000,
+            np.where(self.year_used == "period", count["year_period"], count["year"]),
+        )
+
+        # Create mask
+        # Corresponding to the fraction of each hour of the day during which the count in question has been happening
+        hours_mat = np.repeat(np.arange(24), len(count)).reshape(24, len(count))
+        startHour = count["start"].dt.hour.values + count["start"].dt.minute.values / 60
+        endHour = count["end"].dt.hour.values + count["end"].dt.minute.values / 60
+        tmp1 = np.maximum(np.minimum(hours_mat - startHour + 1, 1), 0)
+        tmp2 = np.maximum(np.minimum(endHour - hours_mat, 1), 0)
+        self.mask = np.minimum(tmp1, tmp2)
+        # mask.sum(axis=0) # Check mask is never 0
+
+        # Splitting Training, Validation and Test
+        # OPTION 1: split dataset years based on type of data collected
+        if train_val_test == "period":
+            # Get unique years for each period
+            yr_grp = {
+                period: np.unique(count.loc[count["year_period"] == period, "year"])
+                for period in [2000, 2100, 2200]
+            }
+
+            # Shuffle order of the year in each group
+            # np.random.seed(self.seed)
+            [np.random.shuffle(y) for y in yr_grp.values()]
+
+            # Assign years to each group according to the cumulative ratio defined
+            for period, y in yr_grp.items():
+                sz = (len(y) * self.train_val_test_cum_ratio).astype(int)
+                y_train, y_val, y_test = np.split(y, sz)
+                count.loc[count["year"].isin(y_train), "tvt"] = "train"
+                count.loc[count["year"].isin(y_val), "tvt"] = "val"
+                count.loc[count["year"].isin(y_test), "tvt"] = "test"
+
+            log.info(
+                f"Train dataset: selected years - {sorted(count.loc[count['tvt'] == 'train', 'year'].unique())}"
+            )
+            log.info(
+                f"Validation dataset: selected years - {sorted(count.loc[count['tvt'] == 'val', 'year'].unique())}"
+            )
+            log.info(
+                f"Test dataset: selected years - {sorted(count.loc[count['tvt'] == 'test', 'year'].unique())}"
+            )
+        else:
+            # Assign each row in count["tvt"] randomly based on proportions
+            count["tvt"] = np.random.choice(
+                ["train", "val", "test"],
+                size=len(count),
+                p=np.diff(np.concatenate(([0], train_val_test_cum_ratio, [1]))),
+            )
+
+        # Compute transformation
+
+        # Create a DataTransformers for each era5 data. This class does not store the data, only the transformation and the parameters of the transformation
+        self.transform_data = {
+            # "count": lambda x: x,  # np.log1p(x),  # np.sqrt(x) / 10,
+            # "count_rev": lambda x: x,  # np.expm1(x),  # (10 * x) ** 2,
+            "year_used": lambda x: (x - 2000) / 100,
+            "doy": lambda x: (x - 183) / 366,
+            "main": DataTransformer(dataset=self.era5_main),
+            "hourly": DataTransformer(dataset=self.era5_hourly),
+            "daily": DataTransformer(dataset=self.era5_daily),
+        }
+
+        # Transformation of the count
+        # count["count_trans"] = self.transform_data["count"](count["count"])
+        count["year_used_trans"] = self.transform_data["year_used"](count["year_used"])
+        count["doy_trans"] = self.transform_data["doy"](count["doy"])
+        self.count = count
+
+        # Apply transformation
+        self.era5_main_trans = self.transform_data["main"].apply_transformers(
+            self.era5_main
+        )
+        self.era5_hourly_trans = self.transform_data["hourly"].apply_transformers(
+            self.era5_hourly
+        )
+        self.era5_daily_trans = self.transform_data["daily"].apply_transformers(
+            self.era5_daily
+        )
+
+        idx = self.count["tvt"] == "train"
+        count = self.count[idx]
+        mask = self.mask[:, idx]
 
         self.data_train = DefileDataset(
-            data_dir=self.data_dir,
-            species=self.species,
-            era5_main_location=self.era5_main_location,
-            era5_main_variables=self.era5_main_variables,
-            era5_hourly_locations=self.era5_hourly_locations,
-            era5_hourly_variables=self.era5_hourly_variables,
-            era5_daily_locations=self.era5_daily_locations,
-            era5_daily_variables=self.era5_daily_variables,
-            years=self.ytraining,
-            doy=self.doy,
-            lag_day=self.lag_day,
-            transform=True,
-            transform_data=None,
+            count=count,
+            era5_main=self.era5_main.sel(
+                date=np.isin(self.era5_main["date"], count["date"])
+            ),
+            era5_hourly=self.era5_hourly.sel(
+                date=np.isin(self.era5_hourly["date"], count["date"])
+            ),
+            era5_daily=self.era5_daily.sel(
+                date=np.isin(self.era5_daily["date"], count["date"])
+            ),
+            era5_main_trans=self.era5_main_trans.sel(
+                date=np.isin(self.era5_main_trans["date"], count["date"])
+            ),
+            era5_hourly_trans=self.era5_hourly_trans.sel(
+                date=np.isin(self.era5_hourly_trans["date"], count["date"])
+            ),
+            era5_daily_trans=self.era5_daily_trans.sel(
+                date=np.isin(self.era5_daily_trans["date"], count["date"])
+            ),
+            mask=mask,
         )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -522,6 +544,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=True,
         )
 
@@ -530,19 +553,32 @@ class DefileDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
+
+        idx = self.count["tvt"] == "val"
+        count = self.count[idx]
+        mask = self.mask[:, idx]
+
         self.data_val = DefileDataset(
-            data_dir=self.data_dir,
-            species=self.species,
-            era5_main_location=self.era5_main_location,
-            era5_main_variables=self.era5_main_variables,
-            era5_hourly_locations=self.era5_hourly_locations,
-            era5_hourly_variables=self.era5_hourly_variables,
-            era5_daily_locations=self.era5_daily_locations,
-            era5_daily_variables=self.era5_daily_variables,
-            years=self.yval,
-            lag_day=self.lag_day,
-            transform=True,
-            transform_data=self.data_train.transform_data,
+            count=count,
+            era5_main=self.era5_main.sel(
+                date=np.isin(self.era5_main["date"], count["date"])
+            ),
+            era5_hourly=self.era5_hourly.sel(
+                date=np.isin(self.era5_hourly["date"], count["date"])
+            ),
+            era5_daily=self.era5_daily.sel(
+                date=np.isin(self.era5_daily["date"], count["date"])
+            ),
+            era5_main_trans=self.era5_main_trans.sel(
+                date=np.isin(self.era5_main_trans["date"], count["date"])
+            ),
+            era5_hourly_trans=self.era5_hourly_trans.sel(
+                date=np.isin(self.era5_hourly_trans["date"], count["date"])
+            ),
+            era5_daily_trans=self.era5_daily_trans.sel(
+                date=np.isin(self.era5_daily_trans["date"], count["date"])
+            ),
+            mask=mask,
         )
 
         return DataLoader(
@@ -550,6 +586,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 
@@ -559,19 +596,31 @@ class DefileDataModule(LightningDataModule):
         :return: The test dataloader.
         """
 
+        idx = self.count["tvt"] == "test"
+        count = self.count[idx]
+        mask = self.mask[:, idx]
+
         self.data_test = DefileDataset(
-            data_dir=self.data_dir,
-            species=self.species,
-            era5_main_location=self.era5_main_location,
-            era5_main_variables=self.era5_main_variables,
-            era5_hourly_locations=self.era5_hourly_locations,
-            era5_hourly_variables=self.era5_hourly_variables,
-            era5_daily_locations=self.era5_daily_locations,
-            era5_daily_variables=self.era5_daily_variables,
-            years=self.ytest,
-            lag_day=self.lag_day,
-            transform=True,
-            transform_data=self.data_train.transform_data,
+            count=count,
+            era5_main=self.era5_main.sel(
+                date=np.isin(self.era5_main["date"], count["date"])
+            ),
+            era5_hourly=self.era5_hourly.sel(
+                date=np.isin(self.era5_hourly["date"], count["date"])
+            ),
+            era5_daily=self.era5_daily.sel(
+                date=np.isin(self.era5_daily["date"], count["date"])
+            ),
+            era5_main_trans=self.era5_main_trans.sel(
+                date=np.isin(self.era5_main_trans["date"], count["date"])
+            ),
+            era5_hourly_trans=self.era5_hourly_trans.sel(
+                date=np.isin(self.era5_hourly_trans["date"], count["date"])
+            ),
+            era5_daily_trans=self.era5_daily_trans.sel(
+                date=np.isin(self.era5_daily_trans["date"], count["date"])
+            ),
+            mask=mask,
         )
 
         return DataLoader(
@@ -579,6 +628,7 @@ class DefileDataModule(LightningDataModule):
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 
@@ -596,14 +646,16 @@ class DefileDataModule(LightningDataModule):
             era5_daily_variables=self.era5_daily_variables,
             lag_day=self.lag_day,
             forecast_day=self.forecast_day,
-            transform=True,
-            transform_data=self.data_train.transform_data,
+            transform_data=self.transform_data,
+            return_original=self.data_train.return_original,
+            year_used=self.year_used,
         )
         return DataLoader(
             dataset=self.data_predict,
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
+            persistent_workers=True if self.num_workers > 0 else False,
             shuffle=False,
         )
 

@@ -1,0 +1,20 @@
+# @package _global_
+
+defaults:
+  - _self_
+  - data: defile-small
+  - model: unet
+  - logger: csv
+  - trainer: default
+  - paths: default
+  - extras: default
+  - hydra: default
+  - experiment: null
+
+task_name: "eval"
+
+# passing checkpoint path is necessary for evaluation
+ckpt_path: null
+
+# seed for random number generators in pytorch, numpy and python.random
+seed: 0
