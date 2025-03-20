@@ -407,6 +407,7 @@ class DefileDataModule(LightningDataModule):
         ].drop_duplicates()
 
         count = pd.merge(all_count_sp, count_sp, how="left")
+        
         # Replace NA (no match in data_count) with 0
         count["count"] = count["count"].fillna(0)
 
@@ -414,6 +415,7 @@ class DefileDataModule(LightningDataModule):
         count["duration"] = (count["end"] - count["start"]).dt.total_seconds() / 3600
         count["count_raw"] = count["count"]
         count["count"] = count["count"] / count["duration"]
+        count = count.dropna()
 
         # Add pre-cumputed variable
         count["doy"] = count["date"].dt.day_of_year
