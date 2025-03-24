@@ -430,12 +430,18 @@ class DefileLitModule(LightningModule):
 
     def plt_timeseries(self, data, log_transformed=True, global_y_lim=False):
 
+        n_rows, n_cols = 4, 4
+
         daily_average = data.mean(dim="time")["obs_count"]
         valid_indices = np.where(daily_average > 0)[0]
         weights = data.pred_log_hourly_count[valid_indices].sum(dim="time").values
         sampled_indices = np.random.choice(
-            valid_indices, size=16, p=weights / weights.sum()
+            valid_indices, size=n_rows * n_cols, p=weights / weights.sum()
         )
+        # Sort sampled indices by date
+        sampled_indices = sampled_indices[
+            np.argsort(daily_average[sampled_indices].date)
+        ]
 
         all_obs = []
         all_pred = []
@@ -476,7 +482,9 @@ class DefileLitModule(LightningModule):
             + 0.1
         )
 
-        fig, ax = plt.subplots(4, 4, figsize=(12, 8), tight_layout=True)
+        fig, ax = plt.subplots(
+            n_rows, n_cols, figsize=(3 * n_cols, 2 * n_rows), tight_layout=True
+        )
         ax = ax.flatten()
 
         for i, d in enumerate(daily_average[sampled_indices].date):
@@ -499,13 +507,29 @@ class DefileLitModule(LightningModule):
                 last_nonzero = (
                     len(all_mask[i][u]) - 1 - np.argmax(np.flip(all_mask[i][u]) > 0)
                 )
-
                 ax[i].plot([first_nonzero, last_nonzero + 1], [o, o], c="tab:red")
 
-        # ax[i].set_ylim(0, ymax)
-        ax[i].set_xlabel("hours")
-        ax[i].set_ylabel(f"Bird counts {'(transform)' if log_transformed else ''}")
-        ax[i].set_title(d.date.dt.strftime("%Y-%m-%d").item())
+            ax[i].set_xticks([0, 6, 12, 18, 24])
+
+            ax[i].text(
+                0.02,
+                0.92,
+                d.date.dt.strftime("%Y-%m-%d").item(),
+                transform=ax[i].transAxes,
+                fontsize=9,
+                verticalalignment="top",
+                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
+            )
+
+            if (
+                global_y_lim and i % n_cols != 0
+            ):  # Hide y-axis labels except for the first column
+                ax[i].set_yticklabels([])  # Hide y-axis labels
+
+            if i < (n_rows - 1) * n_cols:  # Hide x labels except for bottom row
+                ax[i].set_xticklabels([])  # Hide x-axis labels
+
+        fig.subplots_adjust(hspace=0.3, wspace=0.3)
 
         filename = (
             "_".join(self.trainer.datamodule.species.split(" "))
