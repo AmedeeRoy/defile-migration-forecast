@@ -20,6 +20,7 @@ net:
   nb_layer_hourly: 2
   nb_hidden_features_hourly: 16
   nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
+  nb_lag_day :  ${data.lag_day}
   nb_layer_daily: 6
   nb_hidden_features_daily: 128
   nb_output_features: 1
