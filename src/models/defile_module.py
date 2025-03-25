@@ -14,41 +14,7 @@ from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
 import pickle
-
-
-def applyMask(y_pred, mask, return_hourly=True):
-    # Check if y_pred and mask are xarray DataArrays
-    if isinstance(y_pred, np.ndarray):
-        # Convert log(bird)/hr to bird/hr for DataArray (using xarray methods)
-        y_pred_count = np.expm1(y_pred)
-
-        # Apply the mask (sum over hours where the mask is 1)
-        y_masked = np.sum(y_pred_count * mask, axis=1)
-
-        # Normalize by summing the mask and dividing if requested
-        if return_hourly:
-            y_masked = y_masked / np.sum(mask, axis=1)
-
-        return y_masked
-
-    # Check if y_pred and mask are torch tensors
-    elif isinstance(y_pred, torch.Tensor):
-        # Convert log(bird)/hr to bird/hr for torch tensor
-        y_pred_count = torch.expm1(y_pred)
-
-        # Apply the mask (sum over hours where the mask is 1)
-        y_masked = torch.sum(y_pred_count.squeeze() * mask, dim=1)
-
-        # Normalize by summing the mask and dividing if requested
-        if return_hourly:
-            y_masked = y_masked / torch.sum(mask, dim=1)
-
-        return y_masked
-
-    else:
-        raise TypeError(
-            "Unsupported type for y_pred or mask. Must be torch.Tensor or xarray.DataArray."
-        )
+from src.models.criterion import applyMask
 
 
 class DefileLitModule(LightningModule):
@@ -89,6 +55,7 @@ class DefileLitModule(LightningModule):
         scheduler: torch.optim.lr_scheduler,
         criterion: Any,
         compile: bool,
+        output_dir: str
     ) -> None:
         """Initialize a `MNISTLitModule`.
 
@@ -104,6 +71,7 @@ class DefileLitModule(LightningModule):
 
         self.net = net
         self.criterion = criterion
+        self.output_dir = output_dir
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -361,10 +329,10 @@ class DefileLitModule(LightningModule):
 
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + ".nc"
         print(test)
-        test.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
+        test.to_netcdf(os.path.join(self.output_dir, filename))
 
-        if not os.path.exists(self.trainer.logger.log_dir):
-            os.makedirs(self.trainer.logger.log_dir)
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
         self.plt_counts_distribution(test)
         self.plt_true_vs_prediction(test)
@@ -401,7 +369,7 @@ class DefileLitModule(LightningModule):
             "_".join(self.trainer.datamodule.species.split(" "))
             + "_counts_distribution.jpg"
         )
-        plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        plt.savefig(os.path.join(self.output_dir, filename))
         plt.close()
 
     def plt_true_vs_prediction(self, data, log_transformed=True):
@@ -425,7 +393,7 @@ class DefileLitModule(LightningModule):
             "_".join(self.trainer.datamodule.species.split(" "))
             + "_true_vs_prediction.jpg"
         )
-        plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        plt.savefig(os.path.join(self.output_dir, filename))
         plt.close()
 
     def plt_timeseries(self, data, log_transformed=True, global_y_lim=False):
@@ -513,7 +481,7 @@ class DefileLitModule(LightningModule):
             + ("_log_transformed" if log_transformed else "")
             + ".jpg"
         )
-        fig.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        fig.savefig(os.path.join(self.output_dir, filename))
         plt.close()
 
     def plt_doy_sum(self, data):
@@ -558,7 +526,7 @@ class DefileLitModule(LightningModule):
         plt.tight_layout()
 
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_doy_sum.jpg"
-        fig.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        fig.savefig(os.path.join(self.output_dir, filename))
         plt.close()
 
     ### EXPORT PREDICTIONS -------------------
@@ -607,7 +575,7 @@ class DefileLitModule(LightningModule):
         )
 
         if self.trainer.logger:
-            predictions.to_netcdf(os.path.join(self.trainer.logger.log_dir, filename))
+            predictions.to_netcdf(os.path.join(self.output_dir, filename))
             self.plt_predict(predictions)
 
     def plt_predict(self, data):
@@ -647,7 +615,7 @@ class DefileLitModule(LightningModule):
         filename = (
             "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".png"
         )
-        plt.savefig(os.path.join(self.trainer.logger.log_dir, filename))
+        plt.savefig(os.path.join(self.output_dir, filename))
         plt.close()
 
     def configure_optimizers(self) -> Dict[str, Any]:

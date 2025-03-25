@@ -114,6 +114,7 @@ class UNetplus(nn.Module):
         nb_input_features_hourly,
         nb_hidden_features_hourly,
         nb_layer_hourly,
+        nb_lag_day,
         nb_hidden_features_daily,
         nb_input_features_daily,
         nb_layer_daily,
@@ -156,6 +157,7 @@ class UNetplus(nn.Module):
         )
 
         # Daily Network --------------------------
+        self.nb_lag_day = nb_lag_day
         self.nb_input_features_daily = nb_input_features_daily
         self.nb_layer_daily = nb_layer_daily
         self.nb_hidden_features_daily = nb_hidden_features_daily
@@ -219,8 +221,8 @@ class UNetplus(nn.Module):
         out_h = self.conv_final(out_h)
 
         # Daily weather
-        doy_ = doy.repeat(1, 7).unsqueeze(1)
-        yr_ = yr.repeat(1, 7).unsqueeze(1)
+        doy_ = doy.repeat(1, self.nb_lag_day).unsqueeze(1)
+        yr_ = yr.repeat(1, self.nb_lag_day).unsqueeze(1)
         era5_daily = rearrange(era5_daily, "b f t x -> b (f x) t")
         X_d = torch.cat([era5_daily, doy_, yr_], 1)
 

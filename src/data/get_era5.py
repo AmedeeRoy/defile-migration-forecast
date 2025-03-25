@@ -94,7 +94,7 @@ def get_era5_hourly(data_dir, locations, variables, add_sun=False):
     assert isinstance(add_sun, bool), "Error: 'add_sun' must be a boolean value."
 
     era5 = None
-    print(f"Fetching hourly ERA5 data on disk for {locations}...")
+    print(f"Reading hourly ERA5 data on disk for {locations}...")
     for loc in tqdm(locations):
         # Read the CSV file for the location
         era5_loc = pd.read_csv(f"{data_dir}/era5/{loc}.csv", parse_dates=["datetime"])

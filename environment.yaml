@@ -33,8 +33,9 @@ dependencies:
   - pandas=2.*
   - matplotlib=3.*
   - xarray=2023.6.0
-  - tensorboard=2.*
   - einops
+  - tensorboard=2.*
+  - mlflow
 
   # --------- loggers --------- #
   # - wandb
