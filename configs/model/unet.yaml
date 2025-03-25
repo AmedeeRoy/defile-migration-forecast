@@ -41,3 +41,5 @@ criterion:
 
 # compile model for faster training with pytorch 2.0
 compile: false
+
+output_dir: ${paths.output_dir}
