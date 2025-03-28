@@ -36,6 +36,7 @@ dependencies:
   - einops
   - tensorboard=2.*
   - mlflow
+  - captum
 
   # --------- loggers --------- #
   # - wandb
