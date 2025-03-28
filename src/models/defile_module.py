@@ -1,20 +1,21 @@
+import datetime
 import os
+import pickle
 from typing import Any, Dict, Tuple
 
-import numpy as np
-import xarray as xr
-import datetime
 import torch
+import xarray as xr
+from captum.attr import IntegratedGradients, Saliency
 from lightning import LightningModule
+from matplotlib import pyplot as plt
+from scipy.stats import spearmanr
 from torchmetrics import MaxMetric, MeanMetric
 from torchmetrics.regression import ExplainedVariance, SpearmanCorrCoef
-from scipy.stats import spearmanr
 
-from matplotlib import pyplot as plt
-from matplotlib.patches import Rectangle
-
-import pickle
 from src.models.criterion import applyMask
+from src.plots.explanations import *
+from src.plots.save_predict import *
+from src.plots.save_test import *
 
 
 class DefileLitModule(LightningModule):
@@ -55,7 +56,7 @@ class DefileLitModule(LightningModule):
         scheduler: torch.optim.lr_scheduler,
         criterion: Any,
         compile: bool,
-        output_dir: str
+        output_dir: str,
     ) -> None:
         """Initialize a `MNISTLitModule`.
 
@@ -81,6 +82,8 @@ class DefileLitModule(LightningModule):
         # for saving predictions
         self.val_pred = {"obs": [], "mask": [], "pred": []}
         self.test_pred = {"obs": [], "mask": [], "pred": []}
+        self.test_explanation = []
+
         self.predict_pred = {"pred": []}
 
     def setup(self, stage: str) -> None:
@@ -100,9 +103,7 @@ class DefileLitModule(LightningModule):
         return self.net(yr, doy, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
-        return torch.stack(
-            [c.forward(count_pred, count, mask) for c in self.criterion]
-        ).sum()
+        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
 
     def model_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor]
@@ -143,9 +144,7 @@ class DefileLitModule(LightningModule):
 
         # update and log metrics
         self.train_loss(loss)
-        self.log(
-            "train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True
-        )
+        self.log("train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True)
         # return loss or backpropagation will fail
         return loss
 
@@ -154,10 +153,7 @@ class DefileLitModule(LightningModule):
         pass
 
     ### VALIDATION -------------------
-
-    def validation_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
-    ) -> None:
+    def validation_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single validation step on a batch of data from the validation set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -220,10 +216,22 @@ class DefileLitModule(LightningModule):
         self.val_pred = {"obs": [], "mask": [], "pred": []}
 
     ### TEST -------------------
+    def on_test_epoch_start(self) -> None:
+        # Defining Saliency interpreter
+        self.explainer = Saliency(self.explainable_model_step)
 
-    def test_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
-    ) -> None:
+    def explainable_model_step(self, yr, doy, era5_main, era5_hourly, era5_daily):
+        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
+        count_pred = torch.mean(count_pred.squeeze(), dim=1)
+        return count_pred
+
+    def explain(self, batch) -> None:
+        batch = (b.requires_grad_() for b in batch)
+        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        saliency = self.explainer.attribute((yr, doy, era5_main, era5_hourly, era5_daily))
+        return saliency
+
+    def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single test step on a batch of data from the test set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -231,26 +239,36 @@ class DefileLitModule(LightningModule):
         :param batch_idx: The index of the current batch.
         """
         loss = self.model_step(batch)
+        # /!\ work only when Trainer(inference_mode = False)
+        with torch.enable_grad():
+            saliency = self.explain(batch)
 
         # update and log metrics
         self.test_loss(loss)
-        self.log(
-            "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
-        )
+        self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        # save all predictions
+        # save all predictionsnstall
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
         self.test_pred["obs"].append(count)  # single value
         self.test_pred["mask"].append(mask)  # hourly mask
         self.test_pred["pred"].append(count_pred)  # hourly count
+        self.test_explanation.append(saliency)  # saliency
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
         # Concatenate batches
         for k in self.test_pred.keys():
             self.test_pred[k] = torch.cat(self.test_pred[k], 0).cpu()
+
+        self.test_explanation = [
+            torch.cat([exp[k] for exp in self.test_explanation], dim=0).cpu()
+            for k in range(len(self.test_explanation[0]))
+        ]
+        # filepath = os.path.join(self.output_dir, 'test_explanation.pickle')
+        # with open(filepath, 'wb') as f:
+        #     pickle.dump(self.test_explanation, f)
 
         # Get masked predictions
         obs = self.test_pred["obs"].squeeze()
@@ -284,11 +302,14 @@ class DefileLitModule(LightningModule):
 
         # Save test result to logger
         if self.trainer.logger:  # Only save if logger present (e.g., not during debug)
-            self.save_test(self.trainer.datamodule.data_test, self.test_pred)
+            self.save_test()
 
-    def save_test(self, test_dataset, test_pred):
+    def save_test(self):
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
         # Retrieve ERA5 at the main location in xarray (not tensor) and WITHOUT transformation
+        test_dataset = self.trainer.datamodule.data_test
         test_dataset.set_return_original(True)
         test = []
 
@@ -296,13 +317,13 @@ class DefileLitModule(LightningModule):
             _, _, _, era5_main, _, _, _ = test_dataset[i]
             t = era5_main.copy()
             # Add the predicted hourly count
-            t = t.assign(pred_log_hourly_count=("time", test_pred["pred"][i, 0, :]))
+            t = t.assign(pred_log_hourly_count=("time", self.test_pred["pred"][i, 0, :]))
 
             # Add the observed count
-            t = t.assign(obs_count_=("", test_pred["obs"][i]))
+            t = t.assign(obs_count_=("", self.test_pred["obs"][i]))
 
             # Add the hourly mask
-            t = t.assign(mask=("time", test_pred["mask"][i]))
+            t = t.assign(mask=("time", self.test_pred["mask"][i]))
             test.append(t)
 
         # Concatenate each data along date
@@ -324,239 +345,65 @@ class DefileLitModule(LightningModule):
                 applyMask(test["pred_log_hourly_count"].values, test["mask"].values),
             )
         )
-
         test["time"] = test.time.astype(str)
 
+        ## Save predictions ------------------
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + ".nc"
-        print(test)
         test.to_netcdf(os.path.join(self.output_dir, filename))
+        print(test)
 
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-
-        self.plt_counts_distribution(test)
-        self.plt_true_vs_prediction(test)
-        self.plt_timeseries(test)
-        self.plt_timeseries(test, log_transformed=False)
-        self.plt_doy_sum(test)
-
-    def plt_counts_distribution(self, data):
-        true_count = data.obs_count.values
-        pred_count = data.pred_count.values
-
-        bins = np.linspace(0, true_count.max(), 100)
-        plt.hist(
-            true_count,
-            label="True count",
-            alpha=0.5,
-            edgecolor="k",
-            bins=bins,
+        ## Save plots ------------------
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" ")) + "_counts_distribution.jpg"
         )
-        plt.hist(
-            pred_count,
-            label="Predicted count",
-            alpha=0.5,
-            edgecolor="k",
-            bins=bins,
+        plt_counts_distribution(
+            test.obs_count.values,
+            test.pred_count.values,
+            filepath=os.path.join(self.output_dir, filename),
         )
-        # plt.xscale("log")
-        plt.yscale("log")
-        plt.xlabel("Average hourly counts per periods")
-        plt.ylabel("Histogram")
-        plt.legend()
+
+        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_true_vs_prediction.jpg"
+        plt_true_vs_prediction(
+            test.obs_count.values,
+            test.pred_count.values,
+            filepath=os.path.join(self.output_dir, filename),
+        )
+
+        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_timeseries.jpg"
+        plt_timeseries(
+            test, log_transformed=False, filepath=os.path.join(self.output_dir, filename)
+        )
 
         filename = (
             "_".join(self.trainer.datamodule.species.split(" "))
-            + "_counts_distribution.jpg"
+            + "_timeseries_log_transformed.jpg"
         )
-        plt.savefig(os.path.join(self.output_dir, filename))
-        plt.close()
-
-    def plt_true_vs_prediction(self, data, log_transformed=True):
-        true_count = data.obs_count.values
-        pred_count = data.pred_count.values
-        if log_transformed:
-            true_count = np.log1p(true_count)
-            pred_count = np.log1p(pred_count)
-
-        x = np.linspace(min(true_count), max(true_count), 100)
-        coef = np.polyfit(true_count, pred_count, 1)
-        y = np.polyval(coef, x)
-
-        plt.scatter(true_count, pred_count, c="black", s=5, alpha=0.4)
-        plt.plot(x, y, c="red")
-        plt.plot(x, x, "--", c="black")
-        plt.xlabel(f"True count {'(log transformed)' if log_transformed else ''}")
-        plt.ylabel(f"Predicted count {'(log transformed)' if log_transformed else ''}")
-
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" "))
-            + "_true_vs_prediction.jpg"
+        plt_timeseries(
+            test, log_transformed=True, filepath=os.path.join(self.output_dir, filename)
         )
-        plt.savefig(os.path.join(self.output_dir, filename))
-        plt.close()
-
-    def plt_timeseries(self, data, log_transformed=True, global_y_lim=False):
-
-        n_rows, n_cols = 4, 4
-
-        daily_average = data.mean(dim="time")["obs_count"]
-        valid_indices = np.where(daily_average > 0)[0]
-        weights = data.pred_log_hourly_count[valid_indices].sum(dim="time").values
-        sampled_indices = np.random.choice(
-            valid_indices, size=n_rows * n_cols, p=weights / weights.sum()
-        )
-        # Sort sampled indices by date
-        sampled_indices = sampled_indices[
-            np.argsort(daily_average[sampled_indices].date)
-        ]
-
-        all_obs = []
-        all_pred = []
-        all_mask = []
-        all_pred_first = []
-
-        for d in daily_average[sampled_indices].date:
-            subs = data.sel(date=d)
-            if log_transformed:
-                obs = np.log1p(subs["obs_count"])
-                pred = subs["pred_log_hourly_count"]
-            else:
-                obs = subs["obs_count"]
-                pred = np.expm1(subs["pred_log_hourly_count"])
-
-            # If there is a single observation on that day, the structure of pred is different (no date dimension) and the plot need to be done differently.
-            if "date" in pred.dims:
-                pred_first = pred.isel(date=0)  # If date is a dimension
-                mask = subs.mask.values
-                # mask = subs.mask.sum(dim="date").values  # summing over all observations.
-                obs = obs.values
-            else:
-                pred_first = pred
-                obs = [obs.values]
-                mask = [subs.mask.values]
-
-            all_obs.append(obs)
-            all_pred.append(pred)
-            all_pred_first.append(pred_first)
-            all_mask.append(mask)
-
-        # Compute maximum y value across all subplots
-        ymax = (
-            max(
-                np.max([np.max(p.values) for p in all_pred]),
-                np.max([np.max(o) for o in all_obs]),
-            )
-            + 0.1
-        )
-
-        fig, ax = plt.subplots(
-            n_rows, n_cols, figsize=(3 * n_cols, 2 * n_rows), tight_layout=True
-        )
-        ax = ax.flatten()
-
-        for i, d in enumerate(daily_average[sampled_indices].date):
-
-            # plot the prediction (only the first prediction is show - all should be the same for the day)
-            ax[i].plot(np.arange(0, 24), all_pred_first[i])
-
-            # find the max y value for drawing the rectangle
-            if not global_y_lim:
-                ymax = max(all_pred[i].max(), max(all_obs[i])) + 0.1
-
-            # Plot the mask as yellow transparant background
-            for k, m in enumerate(np.sum(all_mask[i], axis=0)):
-                ax[i].add_patch(
-                    Rectangle((k, 0), 1, ymax, color=(1, 1, 0, min(1, m)))
-                )  # RGBA: (1, 1, 0) is yellow, 'm' controls the alpha
-
-            for u, o in enumerate(all_obs[i]):
-                first_nonzero = np.argmax(all_mask[i][u] > 0)
-                last_nonzero = (
-                    len(all_mask[i][u]) - 1 - np.argmax(np.flip(all_mask[i][u]) > 0)
-                )
-                ax[i].plot([first_nonzero, last_nonzero + 1], [o, o], c="tab:red")
-
-            ax[i].set_xticks([0, 6, 12, 18, 24])
-
-            ax[i].text(
-                0.02,
-                0.92,
-                d.date.dt.strftime("%Y-%m-%d").item(),
-                transform=ax[i].transAxes,
-                fontsize=9,
-                verticalalignment="top",
-                bbox=dict(facecolor="white", alpha=0.6, edgecolor="none"),
-            )
-
-            if (
-                global_y_lim and i % n_cols != 0
-            ):  # Hide y-axis labels except for the first column
-                ax[i].set_yticklabels([])  # Hide y-axis labels
-
-            if i < (n_rows - 1) * n_cols:  # Hide x labels except for bottom row
-                ax[i].set_xticklabels([])  # Hide x-axis labels
-
-        fig.subplots_adjust(hspace=0.3, wspace=0.3)
-
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" "))
-            + "_timeseries"
-            + ("_log_transformed" if log_transformed else "")
-            + ".jpg"
-        )
-        fig.savefig(os.path.join(self.output_dir, filename))
-        plt.close()
-
-    def plt_doy_sum(self, data):
-        # Convert data into a DataFrame with only the necessary columns
-        data_df = data[["obs_count", "pred_count", "date"]].to_dataframe().reset_index()
-
-        # Extract doy and year from date
-        data_df["doy"] = data_df["date"].dt.dayofyear
-        data_df["year"] = data_df["date"].dt.year
-
-        # Get unique years and determine layout for subplots
-        unique_years = np.unique(data_df["year"].values)
-        n_years = len(unique_years)
-
-        # Define the number of columns (2 columns if more than 4 years)
-        n_cols = 2 if n_years > 4 else 1
-        n_rows = (n_years + n_cols - 1) // n_cols  # Calculate number of rows
-
-        # Set up subplots with dynamic row/column layout
-        fig, axes = plt.subplots(
-            n_rows, n_cols, figsize=(5 * n_cols, 3 * n_rows), sharex=True
-        )
-
-        # Flatten the axes array if necessary
-        if n_years == 1:
-            axes = [axes]  # In case there's only one year, make sure axes is iterable
-        else:
-            axes = axes.flatten()
-
-        # Plot for each year
-        for ax, y in zip(axes, unique_years):
-            yearly_data = data_df[data_df["year"] == y]
-            yearly_data.groupby("doy").mean().obs_count.plot(ax=ax, label="True")
-            yearly_data.groupby("doy").mean().pred_count.plot(ax=ax, label="Prediction")
-            ax.set_ylabel(f"Average hourly count ({y})")
-            ax.legend()
-
-        # Set x-label for the last row's axes
-        for ax in axes[-n_cols:]:  # Only the last row should have x-label
-            ax.set_xlabel("Day of Year")
-
-        plt.tight_layout()
-
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_doy_sum.jpg"
-        fig.savefig(os.path.join(self.output_dir, filename))
-        plt.close()
+        plt_doy_sum(test, filepath=os.path.join(self.output_dir, filename))
+
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" ")) + "_contributions_metrics.jpg"
+        )
+        plt_explanations_metrics(
+            self.trainer.datamodule,
+            self.test_explanation,
+            filepath=os.path.join(self.output_dir, filename),
+        )
+
+        filename = (
+            "_".join(self.trainer.datamodule.species.split(" ")) + "_contributions_locations.jpg"
+        )
+        plt_explanations_locations(
+            self.trainer.datamodule,
+            self.test_explanation,
+            filepath=os.path.join(self.output_dir, filename),
+        )
 
     ### EXPORT PREDICTIONS -------------------
-    def predict_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
-    ) -> None:
+    def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single forward step on a batch of data from the predict set.
 
         :param batch: A batch of data (a tuple) containing the input tensor of images and target
@@ -577,70 +424,31 @@ class DefileLitModule(LightningModule):
         for k in self.predict_pred.keys():
             self.predict_pred[k] = torch.cat(self.predict_pred[k], 0).cpu()
 
-        self.save_predict(self.trainer.datamodule.data_predict, self.predict_pred)
+        self.save_predict()
 
-    def save_predict(self, predict_dataset, predict_pred):
+    def save_predict(self):
+        predict_dataset = self.trainer.datamodule.data_predict
         predict_dataset.set_return_original(True)
         predictions = []
 
         for i in range(len(predict_dataset)):
             _, _, era5_main, _, _ = predict_dataset[i]
             pred = era5_main.copy()
-            pred = pred.assign(
-                pred_log_hourly_count=("time", predict_pred["pred"][i, 0, :])
-            )
+            pred = pred.assign(pred_log_hourly_count=("time", self.predict_pred["pred"][i, 0, :]))
             predictions.append(pred)
 
         predictions = xr.concat(predictions, dim="date")
         # predictions["time"] = predictions.time.astype(str)
         today = datetime.date.today().strftime("%Y%m%d")
-        filename = (
-            "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
-        )
+        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
 
         if self.trainer.logger:
+            filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
             predictions.to_netcdf(os.path.join(self.output_dir, filename))
-            self.plt_predict(predictions)
 
-    def plt_predict(self, data):
-
-        pred_count = np.expm1(data.pred_log_hourly_count)
-
-        fig, ax = plt.subplots(
-            2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True
-        )
-        ax = ax.flatten()
-        for k in range(len(pred_count)):
-            subset = pred_count.isel(date=k)
-
-            ax[k].bar(np.arange(24), subset.values)
-
-            ax[k].set_title(subset.date.dt.strftime("%Y-%m-%d").item())
-            ax[k].set_xticks(
-                np.arange(0, 24, 3), [str(h) + "h" for h in np.arange(0, 24, 3)]
-            )
-
-            ax[k].text(
-                0.05,
-                0.93,
-                f"Total = {np.sum(subset.values):.0f}",
-                transform=ax[k].transAxes,
-                fontsize=10,
-                verticalalignment="top",
-                horizontalalignment="left",
-                bbox=dict(boxstyle="round,pad=0.5", facecolor="gray", alpha=0.25),
-            )
-            ax[k].set_xlim(6, 21)
-
-        ax[0].set_ylabel("Forecasted individual \ncounts (#)")
-        ax[3].set_ylabel("Forecasted individual \ncounts (#)")
-        plt.suptitle(f"Defile Bird Forecasts - {self.trainer.datamodule.species}")
-        today = datetime.date.today().strftime("%Y%m%d")
-        filename = (
-            "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".png"
-        )
-        plt.savefig(os.path.join(self.output_dir, filename))
-        plt.close()
+            filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".jpg"
+            filepath = os.path.join(self.output_dir, filename)
+            plt_predict(predictions, species=self.trainer.datamodule.species, filepath=filepath)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.
