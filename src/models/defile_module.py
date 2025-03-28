@@ -222,7 +222,7 @@ class DefileLitModule(LightningModule):
 
     def explainable_model_step(self, yr, doy, era5_main, era5_hourly, era5_daily):
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
-        count_pred = torch.mean(count_pred.squeeze(), dim=1)
+        count_pred = torch.mean(count_pred[:, 0, :], dim=1)
         return count_pred
 
     def explain(self, batch) -> None:
@@ -319,6 +319,9 @@ class DefileLitModule(LightningModule):
             # Add the predicted hourly count
             t = t.assign(pred_log_hourly_count=("time", self.test_pred["pred"][i, 0, :]))
 
+            if self.test_pred["pred"].shape[1] == 2:
+                t = t.assign(pred_log_hourly_count_std=("time", self.test_pred["pred"][i, 1, :]))
+
             # Add the observed count
             t = t.assign(obs_count_=("", self.test_pred["obs"][i]))
 
@@ -345,6 +348,30 @@ class DefileLitModule(LightningModule):
                 applyMask(test["pred_log_hourly_count"].values, test["mask"].values),
             )
         )
+        if self.test_pred["pred"].shape[1] == 2:
+            test = test.assign(
+                pred_count_down=(
+                    "date",
+                    applyMask(
+                        np.clip(
+                            test["pred_log_hourly_count"].values
+                            - test["pred_log_hourly_count_std"].values,
+                            a_min=0,
+                            a_max=None,
+                        ),
+                        test["mask"].values,
+                    ),
+                ),
+                pred_count_up=(
+                    "date",
+                    applyMask(
+                        test["pred_log_hourly_count"].values
+                        + test["pred_log_hourly_count_std"].values,
+                        test["mask"].values,
+                    ),
+                ),
+            )
+
         test["time"] = test.time.astype(str)
 
         ## Save predictions ------------------

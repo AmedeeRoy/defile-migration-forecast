@@ -70,15 +70,28 @@ def plt_timeseries(data, log_transformed=True, global_y_lim=False, filepath=None
     all_pred = []
     all_mask = []
     all_pred_first = []
+    all_pred_down = []
+    all_pred_up = []
 
     for d in daily_average[sampled_indices].date:
         subs = data.sel(date=d)
         if log_transformed:
             obs = np.log1p(subs["obs_count"])
             pred = subs["pred_log_hourly_count"]
+            if "pred_count_down" in list(data.data_vars):
+                pred_down = subs["pred_log_hourly_count"] - subs["pred_log_hourly_count_std"]
+                pred_up = subs["pred_log_hourly_count"] + subs["pred_log_hourly_count_std"]
+
         else:
             obs = subs["obs_count"]
             pred = np.expm1(subs["pred_log_hourly_count"])
+            if "pred_count_down" in list(data.data_vars):
+                pred_down = np.expm1(
+                    subs["pred_log_hourly_count"] - subs["pred_log_hourly_count_std"]
+                )
+                pred_up = np.expm1(
+                    subs["pred_log_hourly_count"] + subs["pred_log_hourly_count_std"]
+                )
 
         # If there is a single observation on that day, the structure of pred is different (no date dimension) and the plot need to be done differently.
         if "date" in pred.dims:
@@ -86,15 +99,25 @@ def plt_timeseries(data, log_transformed=True, global_y_lim=False, filepath=None
             mask = subs.mask.values
             # mask = subs.mask.sum(dim="date").values  # summing over all observations.
             obs = obs.values
+            if "pred_count_down" in list(data.data_vars):
+                pred_down = pred_down.isel(date=0)
+                pred_up = pred_up.isel(date=0)
+
         else:
             pred_first = pred
             obs = [obs.values]
             mask = [subs.mask.values]
+            if "pred_count_down" in list(data.data_vars):
+                pred_down = pred_down
+                pred_up = pred_up
 
         all_obs.append(obs)
         all_pred.append(pred)
         all_pred_first.append(pred_first)
         all_mask.append(mask)
+        if "pred_count_down" in list(data.data_vars):
+            all_pred_down.append(pred_down)
+            all_pred_up.append(pred_up)
 
     # Compute maximum y value across all subplots
     ymax = (
@@ -111,6 +134,14 @@ def plt_timeseries(data, log_transformed=True, global_y_lim=False, filepath=None
     for i, d in enumerate(daily_average[sampled_indices].date):
         # plot the prediction (only the first prediction is show - all should be the same for the day)
         ax[i].plot(np.arange(0, 24), all_pred_first[i])
+        if "pred_count_down" in list(data.data_vars):
+            ax[i].plot(
+                np.arange(0, 24),
+                np.clip(all_pred_down[i], a_min=0, a_max=None),
+                linestyle=":",
+                c="tab:blue",
+            )
+            ax[i].plot(np.arange(0, 24), all_pred_up[i], linestyle=":", c="tab:blue")
 
         # find the max y value for drawing the rectangle
         if not global_y_lim:
@@ -157,6 +188,12 @@ def plt_timeseries(data, log_transformed=True, global_y_lim=False, filepath=None
 def plt_doy_sum(data, filepath=None):
     # Convert data into a DataFrame with only the necessary columns
     data_df = data[["obs_count", "pred_count", "date"]].to_dataframe().reset_index()
+    if "pred_count_down" in list(data.data_vars):
+        data_df = (
+            data[["obs_count", "pred_count", "pred_count_down", "pred_count_up", "date"]]
+            .to_dataframe()
+            .reset_index()
+        )
 
     # Extract doy and year from date
     data_df["doy"] = data_df["date"].dt.dayofyear
@@ -182,8 +219,19 @@ def plt_doy_sum(data, filepath=None):
     # Plot for each year
     for ax, y in zip(axes, unique_years):
         yearly_data = data_df[data_df["year"] == y]
-        yearly_data.groupby("doy").mean().obs_count.plot(ax=ax, label="True")
-        yearly_data.groupby("doy").mean().pred_count.plot(ax=ax, label="Prediction")
+        yearly_data_gp = yearly_data.groupby("doy").mean()
+        yearly_data_gp.obs_count.plot(ax=ax, label="True")
+        yearly_data_gp.pred_count.plot(ax=ax, label="Prediction")
+
+        if "pred_count_down" in list(data.data_vars):
+            ax.fill_between(
+                yearly_data_gp.index,
+                yearly_data_gp.pred_count_down,
+                yearly_data_gp.pred_count_up,
+                color="tab:orange",
+                alpha=0.5,
+            )
+
         ax.set_ylabel(f"Average hourly count ({y})")
         ax.legend()
 
