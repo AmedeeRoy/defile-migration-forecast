@@ -469,13 +469,12 @@ class DefileLitModule(LightningModule):
         today = datetime.date.today().strftime("%Y%m%d")
         filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
 
-        if self.trainer.logger:
-            filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
-            predictions.to_netcdf(os.path.join(self.output_dir, filename))
+        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
+        predictions.to_netcdf(os.path.join(self.output_dir, filename))
 
-            filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".jpg"
-            filepath = os.path.join(self.output_dir, filename)
-            plt_predict(predictions, species=self.trainer.datamodule.species, filepath=filepath)
+        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".jpg"
+        filepath = os.path.join(self.output_dir, filename)
+        plt_predict(predictions, species=self.trainer.datamodule.species, filepath=filepath)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.
