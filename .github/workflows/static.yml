@@ -40,11 +40,10 @@ jobs:
           conda init bash
           source ~/.bashrc
           conda env create --file=environment.yaml
-          conda activate defile-env
-          echo "defile-env activate !"
-
+          
       - name: Run script
         run: |
+          conda activate defile-env
           python src/predict.py data.species="Common Buzzard"
 
       - name: Copy output to another folder
