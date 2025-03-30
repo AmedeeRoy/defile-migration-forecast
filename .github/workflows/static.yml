@@ -36,12 +36,12 @@ jobs:
         uses: conda-incubator/setup-miniconda@v2
 
       - name: Configure conda environment
-        shell: bash -l {0}
         run: |
           conda init bash
           source ~/.bashrc
           conda env create --file=environment.yaml
           conda activate defile-env
+          echo "defile-env activate !"
 
       - name: Run script
         run: |
