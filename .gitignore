@@ -11,15 +11,10 @@ __pycache__/
 *.csv
 
 # logs outputs
-logs/debug/runs/*
-logs/eval/runs/*
-logs/train/runs/*
-logs/train/multiruns/*
-logs/predict/runs/*
-logs/mlflow/*
+logs/*
 
-# production outputs
-prod/models/*
+# # production outputs
+# prod/models/*
 
 .DS_Store
 
