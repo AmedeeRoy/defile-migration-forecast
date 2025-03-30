@@ -36,11 +36,20 @@ jobs:
         uses: conda-incubator/setup-miniconda@v2
         with:
           auto-update-conda: true
+<<<<<<< HEAD
           python-version: '3.10'
 
       - name: Run script
         run: |
           conda env create --file=environment.yaml 
+=======
+          python-version: '3.9'
+          activate-environment: defile-env
+          environment-file: environment.yml
+
+      - name: Run script
+        run: |
+>>>>>>> 3858f0f66166e0e933270c1b9717c2f42b037fec
           conda activate defile-env
           python src/predict.py data.species="Common Buzzard"
 
