@@ -34,14 +34,15 @@ jobs:
 
       - name: Install Miniconda
         uses: conda-incubator/setup-miniconda@v2
-        with:
-          auto-update-conda: true
-          python-version: '3.10'
+
+      - name: Configure conda environment
+        run: |
+          conda env create --file=environment.yaml  
+          conda init
+          conda activate defile-env
 
       - name: Run script
         run: |
-          conda env create --file=environment.yaml  
-          conda activate defile-env
           python src/predict.py data.species="Common Buzzard"
 
       - name: Copy output to another folder
