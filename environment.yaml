@@ -23,27 +23,19 @@ channels:
 dependencies:
   - python=3.10
   - pytorch=2.*
-  - torchvision=0.*
   - lightning=2.*
-  - torchmetrics=0.*
   - hydra-core=1.*
   - rich=13.*
-  - pre-commit=3.*
-  - pytest=7.*
   - pandas=2.*
   - matplotlib=3.*
   - xarray=2023.6.0
   - einops
-  - tensorboard=2.*
-  - mlflow
-  - captum
-
-  # --------- loggers --------- #
-  # - wandb
-  # - neptune-client
+  # - torchvision=0.*
+  # - torchmetrics=0.*
+  # - pre-commit=3.*
+  # - pytest=7.*
+  # - tensorboard=2.*
   # - mlflow
-  # - comet-ml
-  # - aim>=3.16.2 # no lower than 3.16.2, see https://github.com/aimhubio/aim/issues/2550
 
   - pip>=23
   - pip:
@@ -53,3 +45,4 @@ dependencies:
       - suncalc
       - openmeteo_sdk
       - openmeteo_requests
+      - captum
