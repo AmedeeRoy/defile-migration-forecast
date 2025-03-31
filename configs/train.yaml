@@ -7,7 +7,7 @@ defaults:
   - data: defile
   - model: unet
   - callbacks: default
-  - logger: csv # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - logger: many_loggers
   - trainer: default
   - paths: default
   - extras: default
@@ -25,7 +25,7 @@ task_name: "train"
 # set False to skip model training
 train: True
 test: True
-predict: True
+predict: False
 
 # simply provide checkpoint path to resume training
 ckpt_path: null
