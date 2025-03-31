@@ -40,7 +40,7 @@ jobs:
           conda init bash
           source ~/.bashrc
           conda env create --file=environment.yaml
-          
+
       - name: Run script
         run: |
           conda activate defile-env
@@ -50,18 +50,8 @@ jobs:
         run: |
           cp -r prod/forecasts www/img
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Upload entire repository
-          path: './www/'
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-  
   deploy:
+    needs: run-predict
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -77,7 +67,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # Upload entire repository
-          path: './www/'
+          path: "./www/"
 
       - name: Deploy to GitHub Pages
         id: deployment
