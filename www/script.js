@@ -5,7 +5,7 @@ window.onload = function() {
         var displayTime = date.toLocaleTimeString();
 
         document.getElementById('datetime').innerHTML = displayDate + " " + displayTime;
-    }, 1000); // 1000 milliseconds = 1 second   
+    }, 1000); // 1000 milliseconds = 1 second
 }
 
 function findFileWithCurrentDate() {
@@ -15,7 +15,7 @@ function findFileWithCurrentDate() {
     const day = String(currentDate.getDate()).padStart(2, '0');
     const datePrefix = `${year}_${month}_${day}`;
 
-    return `img/${year}${month}${day}_Common_Buzzard.jpg`;
+    return `img/forecasts/Common Buzzard/${year}${month}${day}_Common_Buzzard.jpg`;
 }
 
 const fileFound = findFileWithCurrentDate();
@@ -25,5 +25,3 @@ document.write(`<img src="${fileFound}" alt="Common Buzzard">`);
 //     // const fileFound = findFileWithCurrentDate(files);
 //     document.getElementById('myfile').innerHTML = "fileFound";
 // }); // 1000 milliseconds = 1 second
-
-
