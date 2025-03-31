@@ -70,3 +70,4 @@ years: ${eval:"list(range(1966, 2024))"}
 doy: [196, 335]
 train_val_test: "period"
 year_used: "constant" # "constant" or "none" or "period"
+compute_transform_data: True
