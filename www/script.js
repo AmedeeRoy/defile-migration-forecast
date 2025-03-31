@@ -15,7 +15,7 @@ function findFileWithCurrentDate() {
     const day = String(currentDate.getDate()).padStart(2, '0');
     const datePrefix = `${year}_${month}_${day}`;
 
-    return `img/forecasts/Common Buzzard/${year}${month}${day}_Common_Buzzard.jpg`;
+    return `img/Common Buzzard/${year}${month}${day}_Common_Buzzard.jpg`;
 }
 
 const fileFound = findFileWithCurrentDate();
