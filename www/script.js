@@ -19,6 +19,7 @@ function findFileWithCurrentDate() {
 }
 
 const fileFound = findFileWithCurrentDate();
+document.getElementById('file').innerHTML = fileFound;
 document.write(`<img src="${fileFound}" alt="Common Buzzard">`);
 
 // fetchFile(function(){

@@ -9,6 +9,10 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+  # Runs at 3 AM every day
+  schedule:
+    - cron: "0 3 * * *"
+
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
@@ -68,6 +72,10 @@ jobs:
         with:
           # Upload entire repository
           path: "./www/"
+
+      - name: Check available files
+        run: |
+          ll -R ./www/img/forecasts/
 
       - name: Deploy to GitHub Pages
         id: deployment
