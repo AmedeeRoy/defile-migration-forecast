@@ -30,8 +30,9 @@ dependencies:
   - matplotlib=3.*
   - xarray=2023.6.0
   - einops
-  - torchvision=0.*
-  - torchmetrics=0.*
+  - cloudpickle
+  # - torchvision=0.*
+  # - torchmetrics=0.*
   # - pre-commit=3.*
   # - pytest=7.*
   # - tensorboard=2.*
