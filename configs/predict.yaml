@@ -6,10 +6,10 @@ defaults:
   - model: unet
   - trainer: cpu
   - paths: production
-  - hydra: production  
+  - hydra: production
+  - experiment: null
 
 task_name: "predict"
 
 # passing checkpoint path is necessary for evaluation
 ckpt_path_pred: prod/models/${data.species}/checkpoints/best.ckpt
-
