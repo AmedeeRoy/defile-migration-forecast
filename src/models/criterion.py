@@ -179,7 +179,7 @@ class ProbaRMSE:
         # Combine terms with alpha weighting
         loss = self.alpha * rmse_term + (1 - self.alpha) * nll_term
 
-        return self.alpha * loss
+        return loss
 
 
 # @dataclass
