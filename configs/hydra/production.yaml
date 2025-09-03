@@ -8,6 +8,10 @@ defaults:
 run:
   dir: ${paths.log_dir}/${data.species}
 
+sweep:
+  dir: ${paths.log_dir}
+  subdir: ${data.species}
+
 job_logging:
   handlers:
     file:

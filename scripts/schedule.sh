@@ -16,13 +16,23 @@ nohup python src/train.py task_name=optim data.species="Hen Harrier" hparams_sea
 nohup python src/train.py task_name=optim data.species="Merlin" hparams_search=unet trainer=gpu logger=mlflow &
 nohup python src/train.py task_name=optim data.species="Eurasian Hobby" hparams_search=unet trainer=gpu logger=mlflow &
 
-# DEFINE SPECIES-SPEFICIC EXPERIMENTS
+# TRAINING
+python src/train.py experiment=black_kite
+# All model at once:
 python src/train.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby trainer=gpu
 
-# # PREDICT
-# python src/predict.py data.species="Common Buzzard"
 
-# # PRODUCTION
-# python src/train.py --multirun experiment=production data.species="Common Buzzard","Red Kite","Black Kite","European Honey-buzzard","Western Marsh Harrier","Eurasian Sparrowhawk","Eurasian Kestrel","Osprey","Eurasian Hobby","Hen Harrier","Merlin" logger=csv
-# python src/predict.py --multirun experiment=production data.species="Common Buzzard","Red Kite","Black Kite","European Honey-buzzard","Western Marsh Harrier","Eurasian Sparrowhawk","Eurasian Kestrel","Osprey","Eurasian Hobby","Hen Harrier","Merlin" logger=csv
-python src/predict.py data.species="Common Buzzard"
+
+# MAKE PROD: Move checkpoints to prod
+python scripts/move_checkpoints_to_prod.py --dry-run --force
+# Only multirun experiments
+python scripts/move_checkpoints_to_prod.py --run-type multiruns
+# Only multirun experiments
+python scripts/move_checkpoints_to_prod.py --run-type multiruns
+
+# # PREDICT
+# python src/predict.py data.species="Black Kite"
+
+python src/predict.py experiment=black_kite
+python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby trainer=gpu
+python src/predict.py --multirun experiment=red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey trainer=gpu

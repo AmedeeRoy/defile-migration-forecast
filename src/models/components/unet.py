@@ -229,7 +229,10 @@ class UNetplus(nn.Module):
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
-        out = 8 * out_h * out_d  # exp(8)-1 = 2979
+        # out_h and out_d are both between 0 and 1
+        # Multiply by 8 to get the expected count to reach
+        # at least exp(8)-1 = 2979
+        out = 8 * out_h * out_d
         # out = out_h + out_d
 
         # Force count to be zero during the hours of day with no data
