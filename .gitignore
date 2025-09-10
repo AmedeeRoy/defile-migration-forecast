@@ -13,6 +13,9 @@ __pycache__/
 # logs outputs
 logs/*
 
+# VScode
+.vscode/
+
 # production outputs
 prod/forecasts/*
 prod
