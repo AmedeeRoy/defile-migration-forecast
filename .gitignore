@@ -18,7 +18,7 @@ logs/*
 
 # production outputs
 prod/*
-!prod/models/*best.ckpt
+!prod/models/**/checkpoints/best.ckpt
 
 .DS_Store
 
