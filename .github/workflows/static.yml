@@ -51,7 +51,7 @@ jobs:
       - name: Run script
         run: |
           conda activate defile-env
-          python src/predict.py --multirun experiment=black_kite,honey_buzzard,sparrowhawk,kestrel,hobby trainer=gpu
+          python src/predict.py --multirun experiment=black_kite,honey_buzzard,sparrowhawk,kestrel,hobby
 
 
       - name: Copy output to another folder
