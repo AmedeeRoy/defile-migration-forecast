@@ -17,8 +17,13 @@ logs/*
 .vscode/
 
 # production outputs
-prod/*
-!prod/models/*/checkpoints/best.ckpt
+prod/forecasts/*
+prod/models/**/.hydra
+prod/models/**/csv
+prod/models/**/*.log
+prod/models/**/*.jpg
+prod/models/**/*.nc
+prod/models/**/checkpoints/last.ckpt
 
 .DS_Store
 
