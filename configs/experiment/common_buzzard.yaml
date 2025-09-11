@@ -19,7 +19,7 @@ model:
 
   criterion:
     tweedie:
-      target_: src.models.criterion.TweedieLoss
+      _target_: src.models.criterion.TweedieLoss
       alpha: 8.287946511017436
       p: 1.3504277144335508
     rmse:
