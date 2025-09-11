@@ -3,7 +3,6 @@
 # to execute this experiment run:
 
 defaults:
-  - override /hydra: production
   - override /data: defile
   - override /model: unet
 
