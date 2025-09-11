@@ -1,12 +1,141 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Défilé Migration Forecast</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #eef2f3;
+            padding: 20px;
+            max-width: 800px;
+            margin: auto;
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .info-section {
+            background: #ffffff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        select {
+            padding: 10px;
+            font-size: 16px;
+            margin-top: 10px;
+            width: 100%;
+        }
+
+        #image-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        #species-label {
+            font-weight: bold;
+            margin-top: 10px;
+            font-size: 18px;
+        }
+
+        a {
+            color: #2980b9;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
 <body>
 
-<h1>Defile Migration Forecast</h1>
 
-    <p> Current time : <div id="datetime"> </div> </p>
-    <p id="file"></p>
-    <!-- Include JavaScript at the end of the body -->
-    <script src="script.js"></script>
+<h1>Défilé Migration Forecast</h1>
+
+<div class="info-section">
+    <h2>About the Site</h2>
+    <p>
+        The <strong>Défilé de l'Écluse</strong> is a renowned birdwatching site located in the Rhône-Alpes region of France. 
+        It serves as a natural bottleneck for migrating raptors and other birds, making it an ideal location for observing seasonal movements.
+    </p>
+
+    <h2>Project Aims</h2>
+    <ul>
+        <li>Forecast bird migration for upcoming days using deep learning models.</li>
+        <li>Visualize daily migration data for key raptor species.</li>
+        <li>Support ornithologists and birdwatchers with timely insights.</li>
+    </ul>
+
+    <p>
+        View the source code on <a href="https://github.com/AmedeeRoy/defile-migration-forecast"> </a>
+    </p>
+</div>
+
+<label for="species-select">Choose a species:</label>
+<select id="species-select">
+    <option value="">-- Select --</option>
+    <!-- <option>Common Buzzard</option>
+    <option>Red Kite</option> -->
+    <option>Black Kite</option>
+    <option>European Honey-buzzard</option>
+    <option>Western Marsch Harrier</option>
+    <option>Eurasian Sparrowhawk</option>
+    <option>Eurasian Kestrel</option>
+    <!-- <option>Hen Harrier</option>
+    <option>Osprey</option>
+    <option>Merlin</option>
+    <option>Eurasian Hobby</option> -->
+</select>
+
+<div id="image-container">
+    <div id="species-label"></div>
+    <img id="species-image" src="" alt="" style="display: none;">
+</div>
+
+<script>
+    const currentDate = new Date();
+    const year = currentDate.getFullYear();
+    const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+    const day = String(currentDate.getDate()).padStart(2, '0');
+    const datePrefix = `${year}${month}${day}`;
+
+    const select = document.getElementById("species-select");
+    const image = document.getElementById("species-image");
+    const label = document.getElementById("species-label");
+
+    select.addEventListener("change", () => {
+        const species = select.value;
+        if (!species) {
+            image.style.display = "none";
+            label.textContent = "";
+            return;
+        }
+
+        const folder = `img/${species}`;
+        const fileName = `${datePrefix}_${species.replace(/ /g, '_')}.jpg`;
+        const filePath = `${folder}/${fileName}`;
+
+        image.src = filePath;
+        image.alt = species;
+        image.style.display = "block";
+        label.textContent = filePath;
+    });
+</script>
+
 </body>
 </html>
