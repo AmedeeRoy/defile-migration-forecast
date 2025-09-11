@@ -17,8 +17,8 @@ logs/*
 .vscode/
 
 # production outputs
-prod/forecasts/*
-prod
+prod/*
+!prod/models/*best.ckpt
 
 .DS_Store
 
