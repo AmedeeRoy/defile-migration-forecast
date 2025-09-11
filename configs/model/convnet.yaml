@@ -24,10 +24,12 @@ net:
   dropout: False
 
 criterion:
-  - _target_: src.models.criterion.RMSE
+  rmse:
+    _target_: src.models.criterion.RMSE
     alpha: 1
     weights: False
-  - _target_: src.models.criterion.L2
+  l2:
+    _target_: src.models.criterion.L2
     alpha: .1
 
 # compile model for faster training with pytorch 2.0

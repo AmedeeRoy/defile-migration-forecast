@@ -27,10 +27,12 @@ net:
   dropout: True
 
 criterion:
-  - _target_: src.models.criterion.TweedieLoss
-    alpha: .5
+  tweedie:
+    _target_: src.models.criterion.TweedieLoss
+    alpha: 1
     p: 1.5
-  - _target_: src.models.criterion.ProbaRMSE
+  rmse:
+    _target_: src.models.criterion.ProbaRMSE
     alpha: 1
 
 # compile model for faster training with pytorch 2.0

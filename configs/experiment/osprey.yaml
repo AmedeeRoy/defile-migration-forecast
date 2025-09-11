@@ -10,86 +10,18 @@ data :
   species: "Osprey"
   # "Balbuzard pêcheur"
 
-  era5_main_location: "Defile"
-  era5_main_variables:
-    # - "temperature_2m"
-    # - "dewpoint_temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-    - "u_component_of_wind_100m"
-    - "v_component_of_wind_100m"
-    # - "instantaneous_10m_wind_gust"
-    # - "high_cloud_cover"
-    - "low_cloud_cover"
-    # - "medium_cloud_cover"
-    # - "total_cloud_cover"
-    # - "surface_solar_radiation_downwards"
-
-  era5_hourly_locations:
-    # - "MontTendre"
-    # - "Chasseral"
-    - "Basel"
-    # - "Dijon"
-    - "ColGrandSaintBernard"
-
-  era5_hourly_variables:
-    # - "temperature_2m"
-    # - "dewpoint_temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-    - "u_component_of_wind_100m"
-    - "v_component_of_wind_100m"
-    # - "instantaneous_10m_wind_gust"
-    # - "high_cloud_cover"
-    - "low_cloud_cover"
-    # - "medium_cloud_cover"
-    # - "total_cloud_cover"
-    # - "surface_solar_radiation_downwards"
-
-  era5_daily_locations:
-    - "Defile"
-    - "Schaffhausen"
-    - "Basel"
-    - "Munich"
-    - "Stuttgart"
-    - "Frankfurt"
-    - "Berlin"
-
-  era5_daily_variables:
-    - "temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-
-  lag_day: 5
-
 model:
-  net:
-    _target_: src.models.components.unet.UNetplus
-    nb_input_features_hourly: ${eval:'4+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
-    nb_layer_hourly: 2
-    nb_hidden_features_hourly: 16
-    nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
-    nb_lag_day: ${data.lag_day}
-    nb_layer_daily: 6
-    nb_hidden_features_daily: 64
-    nb_output_features: 2
-    dropout: True
-
   optimizer:
     _target_: torch.optim.Adam
     _partial_: true
-    lr: 0.001475468114109156
-    weight_decay: 0.07730537949907618
+    lr: 0.006074941355707205
+    weight_decay: 0.018510279672999983
 
   criterion:
-    - _target_: src.models.criterion.TweedieLoss
-      alpha: .5
-      p: 1.5
-    - _target_: src.models.criterion.ProbaRMSE
+    tweedie:
+      _target_: src.models.criterion.TweedieLoss
+      alpha: 6.752060626387479
+      p: 1.0473552788015152
+    rmse:
+      _target_: src.models.criterion.ProbaRMSE
       alpha: 1

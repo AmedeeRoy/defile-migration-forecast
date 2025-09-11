@@ -13,9 +13,17 @@ __pycache__/
 # logs outputs
 logs/*
 
+# VScode
+.vscode/
+
 # production outputs
 prod/forecasts/*
-prod
+prod/models/**/.hydra
+prod/models/**/csv
+prod/models/**/*.log
+prod/models/**/*.jpg
+prod/models/**/*.nc
+prod/models/**/checkpoints/last.ckpt
 
 .DS_Store
 

@@ -54,7 +54,7 @@ class DefileLitModule(LightningModule):
         net: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler,
-        criterion: Any,
+        criterion: Dict[str, Any],
         compile: bool,
         output_dir: str,
     ) -> None:
@@ -103,7 +103,7 @@ class DefileLitModule(LightningModule):
         return self.net(yr, doy, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
-        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion]).sum()
+        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion.values()]).sum()
 
     def model_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor]

@@ -9,87 +9,19 @@ defaults:
 data :
   species: "Black Kite"
   # "Milan noir"
-
-  era5_main_location: "Defile"
-  era5_main_variables:
-    # - "temperature_2m"
-    # - "dewpoint_temperature_2m"
-    - "total_precipitation"
-    # - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-    - "u_component_of_wind_100m"
-    - "v_component_of_wind_100m"
-    # - "instantaneous_10m_wind_gust"
-    - "high_cloud_cover"
-    - "low_cloud_cover"
-    - "medium_cloud_cover"
-    # - "total_cloud_cover"
-    - "surface_solar_radiation_downwards"
-
-  era5_hourly_locations:
-    - "MontTendre"
-    - "Chasseral"
-    - "Basel"
-    - "Dijon"
-    - "ColGrandSaintBernard"
-
-  era5_hourly_variables:
-    # - "temperature_2m"
-    # - "dewpoint_temperature_2m"
-    - "total_precipitation"
-    # - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-    - "u_component_of_wind_100m"
-    - "v_component_of_wind_100m"
-    # - "instantaneous_10m_wind_gust"
-    - "high_cloud_cover"
-    - "low_cloud_cover"
-    - "medium_cloud_cover"
-    # - "total_cloud_cover"
-    - "surface_solar_radiation_downwards"
-
-  era5_daily_locations:
-    - "Defile"
-    - "Schaffhausen"
-    - "Basel"
-    - "Munich"
-    - "Stuttgart"
-    - "Frankfurt"
-    - "Berlin"
-
-  era5_daily_variables:
-    - "temperature_2m"
-    - "total_precipitation"
-    - "surface_pressure"
-    - "u_component_of_wind_10m"
-    - "v_component_of_wind_10m"
-
-  lag_day: 5
-
+  
 model:
-  net:
-    _target_: src.models.components.unet.UNetplus
-    nb_input_features_hourly: ${eval:'4+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
-    nb_layer_hourly: 4
-    nb_hidden_features_hourly: 4
-    nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
-    nb_lag_day: ${data.lag_day}
-    nb_layer_daily: 2
-    nb_hidden_features_daily: 128
-    nb_output_features: 2
-    dropout: True
-
   optimizer:
     _target_: torch.optim.Adam
     _partial_: true
-    lr: 0.002042147141814313
-    weight_decay: 0.09218680681861585
+    lr: 0.005268440609667772
+    weight_decay: 0.08028188145537898
 
   criterion:
-    - _target_: src.models.criterion.TweedieLoss
-      alpha: .5
-      p: 1.5
-    - _target_: src.models.criterion.ProbaRMSE
+    tweedie:
+      _target_: src.models.criterion.TweedieLoss
+      alpha: 4.16394139825189
+      p: 1.5141599673056123
+    rmse:
+      _target_: src.models.criterion.ProbaRMSE
       alpha: 1
