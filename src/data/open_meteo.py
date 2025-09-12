@@ -3,7 +3,6 @@ import pandas as pd
 from openmeteo_requests import Client
 from openmeteo_sdk.Variable import Variable
 from suncalc import get_position
-from requests.exceptions import Timeout, RequestException
 
 from src.data.get_era5 import get_lat_lon
 
@@ -162,11 +161,8 @@ def download_forecast_hourly(
                 }
             )
             break  # Success, exit loop
-        except Timeout:
-            print(f"Attempt {attempt + 1} timed out. Retrying...")
-        except RequestException as e:
-            print(f"Request failed: {e}")
-            break  # Don't retry on other errors
+        except TimeoutError as e:
+            print(f"Attempt {attempt + 1} failed. Retrying...")
 
     # List to hold DataFrames for each location
     df_list = []
