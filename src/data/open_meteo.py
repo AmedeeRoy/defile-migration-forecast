@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 from openmeteo_requests import Client
-from openmeteo_sdk.Variable import Variable
+import requests_cache
+from retry_requests import retry
+
 from suncalc import get_position
 
 from src.data.get_era5 import get_lat_lon
@@ -142,27 +144,23 @@ def download_forecast_hourly(
     # Convert the requested variables to the format required by the API
     conv_var = convert_era5_variable(variables)
 
-    # Retry logic
-    # Initialize the Open-Meteo API client
-    om = Client()
-    max_retries = 3
+    # Setup the Open-Meteo API client with cache and retry on error
+    cache_session = requests_cache.CachedSession('.cache', expire_after = 3600)
+    retry_session = retry(cache_session, retries = 5, backoff_factor = 0.2)
+    openmeteo = Client(session = retry_session)
+
     print(f"Download ERA5 data on api.open-meteo.com for {locations}...")
-    for attempt in range(max_retries):
-        try:
-            responses = om.weather_api(
-                url="https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": lat,
-                    "longitude": lon,
-                    "hourly": conv_var[0],
-                    # "models": "ecmwf_ifs025",
-                    "past_days": lag_day,
-                    "forecast_days": forecast_day + 1,
-                }
-            )
-            break  # Success, exit loop
-        except TimeoutError as e:
-            print(f"Attempt {attempt + 1} failed. Retrying...")
+    responses = openmeteo.weather_api(
+        url="https://api.open-meteo.com/v1/forecast",
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": conv_var[0],
+            # "models": "ecmwf_ifs025",
+            "past_days": lag_day,
+            "forecast_days": forecast_day + 1,
+        }
+    )
 
     # List to hold DataFrames for each location
     df_list = []
