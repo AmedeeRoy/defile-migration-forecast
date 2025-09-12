@@ -38,7 +38,6 @@ def main(cfg: DictConfig) -> None:
     trainer.predict(model=model, datamodule=datamodule, ckpt_path=cfg.ckpt_path_pred)
     # https://www.trektellen.org/species/graph/3/2422/101/0?g=&l=&k=&jaar2=&jaar3=&graphtype1=bar&graphtype2=line&graphtype3=line&hidempbars=1&
     # https://www.trektellen.org/count/view/2422/20240919
-    time.sleep(10)
     log.info("Predicting finished!")
 
 
