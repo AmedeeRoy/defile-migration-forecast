@@ -9,109 +9,78 @@ from suncalc import get_position
 from src.data.get_era5 import get_lat_lon
 
 
-def convert_era5_variable(variables):
-    """Convert era5 hourly variable names to forecast variable names based on a predefined mapping.
+# Dictionary defining the conversion mapping
+# Source:
+# https://open-meteo.com/en/docs#api_documentation
+# Target:
+# https://developers.google.com/earth-engine/datasets/catalog/ECMWF_ERA5_LAND_HOURLY?hl=fr#bands
 
-    Parameters:
-    variables (list of str): A list of variable names to be converted.
-
-    Returns:
-    list of str: A list of converted variable names, with duplicates removed.
-    """
-
-    # Dictionary defining the conversion mapping
-    # https://www.ecmwf.int/en/forecasts/datasets/open-data
-
-    conversion_dict = {
-        "temperature_2m": {
-            "var_forecast": ["temperature_2m"],
-            "conv": lambda df: df["temperature_2m"],
-        },
-        "surface_pressure": {
-            "var_forecast": ["surface_pressure"],
-            "conv": lambda df: df["surface_pressure"],
-        },
-        "total_precipitation": {
-            "var_forecast": ["precipitation"],
-            "conv": lambda df: df["precipitation"],
-        },
-        "dewpoint_temperature_2m": {
-            "var_forecast": ["dew_point_2m"],
-            "conv": lambda df: df["dew_point_2m"],
-        },
-        "u_component_of_wind_10m": {
-            "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"]
-            * np.cos(np.radians(df["wind_direction_10m"])),
-        },
-        "v_component_of_wind_10m": {
-            "var_forecast": ["wind_speed_10m", "wind_direction_10m"],
-            "conv": lambda df: df["wind_speed_10m"]
-            * np.sin(np.radians(df["wind_direction_10m"])),
-        },
-        "u_component_of_wind_100m": {
-            "var_forecast": ["wind_speed_100m", "wind_direction_100m"],
-            "conv": lambda df: df["wind_speed_100m"]
-            * np.cos(np.radians(df["wind_direction_100m"])),
-        },
-        "v_component_of_wind_100m": {
-            "var_forecast": ["wind_speed_100m", "wind_direction_100m"],
-            "conv": lambda df: df["wind_speed_100m"]
-            * np.sin(np.radians(df["wind_direction_100m"])),
-        },
-        "high_cloud_cover": {
-            "var_forecast": ["cloud_cover"],
-            "conv": lambda df: df["cloud_cover"],
-        },
-        "low_cloud_cover": {
-            "var_forecast": ["cloud_cover_low"],
-            "conv": lambda df: df["cloud_cover_low"],
-        },
-        "medium_cloud_cover": {
-            "var_forecast": ["cloud_cover_mid"],
-            "conv": lambda df: df["cloud_cover_mid"],
-        },
-        "total_cloud_cover": {
-            "var_forecast": ["cloud_cover_high"],
-            "conv": lambda df: df["cloud_cover_high"],
-        },
-        "instantaneous_10m_wind_gust": {
-            "var_forecast": ["wind_gusts_10m"],
-            "conv": lambda df: df["wind_gusts_10m"],
-        },
-        "surface_solar_radiation_downwards": {
-            "var_forecast": ["shortwave_radiation"],
-            "conv": lambda df: df["shortwave_radiation"],
-        },
-        "convective_available_potential_energy": {
-            "var_forecast": ["cape"],
-            "conv": lambda df: df["cape"],
-        },
-    }
-
-    if isinstance(variables, str):
-        variables = [variables]
-
-    # Find all unmatched variables
-    unmatched_variables = [var for var in variables if var not in conversion_dict]
-
-    # If there are unmatched variables, raise an error with the list of unmatched variables
-    if unmatched_variables:
-        raise ValueError(
-            f"The following variables are not matched in the conversion_dict: {unmatched_variables}"
-        )
-
-    # Collect the unique var_forecast lists and conv functions
-    var_forecast_list = []
-    conv_functions = []
-
-    for var in variables:
-        var_forecast_list.extend(conversion_dict[var]["var_forecast"])
-        conv_functions.append(conversion_dict[var]["conv"])
-
-    # Return a tuple: (unique var_forecast list, list of conv functions)
-    return list(set(var_forecast_list)), conv_functions
-
+CONVERSION_DICT = {
+    "temperature_2m": {
+        "var": ["temperature_2m"],
+        "conv": lambda df: df["temperature_2m"] + 273.15, # Convert °C to K
+    },
+    "surface_pressure": {
+        "var": ["surface_pressure"],
+        "conv": lambda df: df["surface_pressure"]*100, # Convert hPa to Pa
+    },
+    "total_precipitation": {
+        "var": ["precipitation"],
+        "conv": lambda df: df["precipitation"]/1000, # Convert mm to m
+    },
+    "dewpoint_temperature_2m": {
+        "var": ["dew_point_2m"],
+        "conv": lambda df: df["dew_point_2m"] + 273.15, # Convert °C to K
+    },
+    "u_component_of_wind_10m": {
+        "var": ["wind_speed_10m", "wind_direction_10m"],
+        "conv": lambda df: df["wind_speed_10m"]
+        * np.cos(np.radians(df["wind_direction_10m"])),
+    },
+    "v_component_of_wind_10m": {
+        "var": ["wind_speed_10m", "wind_direction_10m"],
+        "conv": lambda df: df["wind_speed_10m"]
+        * np.sin(np.radians(df["wind_direction_10m"])),
+    },
+    "u_component_of_wind_100m": {
+        "var": ["wind_speed_100m", "wind_direction_100m"],
+        "conv": lambda df: df["wind_speed_100m"]
+        * np.cos(np.radians(df["wind_direction_100m"])),
+    },
+    "v_component_of_wind_100m": {
+        "var": ["wind_speed_100m", "wind_direction_100m"],
+        "conv": lambda df: df["wind_speed_100m"]
+        * np.sin(np.radians(df["wind_direction_100m"])),
+    },
+    "total_cloud_cover": {
+        "var": ["cloud_cover"],
+        "conv": lambda df: df["cloud_cover"]/100, 
+    },
+    "low_cloud_cover": {
+        "var": ["cloud_cover_low"],
+        "conv": lambda df: df["cloud_cover_low"]/100, 
+    },
+    "medium_cloud_cover": {
+        "var": ["cloud_cover_mid"],
+        "conv": lambda df: df["cloud_cover_mid"]/100, 
+    },
+    "high_cloud_cover": {
+        "var": ["cloud_cover_high"],
+        "conv": lambda df: df["cloud_cover_high"]/100, 
+    },
+    "instantaneous_10m_wind_gust": {
+        "var": ["wind_gusts_10m"],
+        "conv": lambda df: df["wind_gusts_10m"],
+    },
+    "surface_solar_radiation_downwards": {
+        "var": ["shortwave_radiation"],
+        "conv": lambda df: df["shortwave_radiation"]*3600, # Convert J/m^2 to W/m^2
+    },
+    "convective_available_potential_energy": {
+        "var": ["cape"],
+        "conv": lambda df: df["cape"],
+    },
+}
 
 def download_forecast_hourly(
     locations, variables, lag_day, forecast_day, add_sun=False
@@ -142,7 +111,15 @@ def download_forecast_hourly(
     lat, lon = get_lat_lon(locations)
 
     # Convert the requested variables to the format required by the API
-    conv_var = convert_era5_variable(variables)
+    unmatched_variables = [var for var in variables if var not in CONVERSION_DICT]
+    if unmatched_variables:
+        raise ValueError(
+            f"The following variables are not matched in the conversion_dict: {unmatched_variables}"
+        )
+    openmeteo_variables = []
+    for var in variables:
+        openmeteo_variables.extend(CONVERSION_DICT[var]['var'])
+    openmeteo_variables = sorted(list(set(openmeteo_variables)))
 
     # Setup the Open-Meteo API client with cache and retry on error
     cache_session = requests_cache.CachedSession('.cache', expire_after = 3600)
@@ -155,10 +132,10 @@ def download_forecast_hourly(
         params={
             "latitude": lat,
             "longitude": lon,
-            "hourly": conv_var[0],
+            "hourly": openmeteo_variables,
             # "models": "ecmwf_ifs025",
             "past_days": lag_day,
-            "forecast_days": forecast_day + 1,
+            "forecast_days": forecast_day + 1
         }
     )
 
@@ -172,7 +149,7 @@ def download_forecast_hourly(
         df_forcast = pd.DataFrame(
             {
                 var: hourly.Variables(j).ValuesAsNumpy()
-                for j, var in enumerate(conv_var[0])
+                for j, var in enumerate(openmeteo_variables)
             }
         )
 
@@ -190,8 +167,8 @@ def download_forecast_hourly(
         )
 
         # Add variable based on the function defined in the conversion variable table
-        for j, fx in enumerate(conv_var[1]):
-            df[variables[j]] = fx(df_forcast)
+        for var in variables:
+            df[var] = CONVERSION_DICT[var]['conv'](df_forcast)
 
         # Get sun position (altitude, azimuth)
         if add_sun:
@@ -213,7 +190,6 @@ def download_forecast_hourly(
 
     # Create data xarray (better to handle multi-indexing)
     era5 = era5.set_index(["date", "time", "location"]).to_xarray()
-
     return era5
 
 
