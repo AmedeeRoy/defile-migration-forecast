@@ -28,8 +28,4 @@ python src/train.py --multirun experiment=common_buzzard,red_kite,black_kite,hon
 # python scripts/move_checkpoints_to_prod.py --run-type multiruns
 
 # # PREDICT
-# python src/predict.py data.species="Black Kite"
-
-python src/predict.py experiment=honey_buzzard
 python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby trainer=gpu
-python src/predict.py --multirun experiment=black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey trainer=gpu
