@@ -9,6 +9,7 @@ __pycache__/
 # data
 *.xlsx
 *.csv
+*.sqlite
 
 # logs outputs
 logs/*
