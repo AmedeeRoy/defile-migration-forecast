@@ -58,17 +58,6 @@ jobs:
         run: |
           cp -r prod/forecasts www/img
 
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H ${{ secrets.GCE_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Copy files
-        run: |
-          scp -r prod/forecasts ${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:/home/defile/
-
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
@@ -84,3 +73,23 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+
+  ssh-copy:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: success()  # Only run if deploy job succeeds
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.GCE_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy files
+        run: |
+          scp -r prod/forecasts ${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:/home/defile/
