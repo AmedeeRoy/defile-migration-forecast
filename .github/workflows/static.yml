@@ -58,15 +58,16 @@ jobs:
         run: |
           cp -r prod/forecasts www/img
 
-  # deploy:
-  #   needs: run-predict
-  #   environment:
-  #     name: github-pages
-  #     url: ${{ steps.deployment.outputs.page_url }}
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.GCE_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy files
+        run: |
+          scp -r prod/forecasts ${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:/home/defile/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
