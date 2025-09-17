@@ -6,11 +6,11 @@ defaults:
   - override job_logging: colorlog
 
 run:
-  dir: ${paths.log_dir}/${data.species}
+  dir: ${paths.log_dir}/${underscore:'${data.species}'}
 
 sweep:
   dir: ${paths.log_dir}
-  subdir: ${data.species}
+  subdir: ${underscore:'${data.species}'}
 
 job_logging:
   handlers:

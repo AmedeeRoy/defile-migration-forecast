@@ -10,6 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 OmegaConf.register_new_resolver("len", len)
 OmegaConf.register_new_resolver("eval", eval)
+OmegaConf.register_new_resolver("underscore", lambda x: x.replace(" ", "_"))
 
 from src.utils import RankedLogger
 
