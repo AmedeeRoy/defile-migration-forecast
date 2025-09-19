@@ -126,7 +126,7 @@
             return;
         }
 
-        const folder = `img/${species}`;
+        const folder = `img/${species.replace(/ /g, '_')}`;
         const fileName = `${datePrefix}_${species.replace(/ /g, '_')}.jpg`;
         const filePath = `${folder}/${fileName}`;
 
