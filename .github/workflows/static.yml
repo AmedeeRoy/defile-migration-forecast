@@ -90,19 +90,19 @@ jobs:
           echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
         env:
-          GCE_SSH_KEY: ${{ vars.GCE_SSH_KEY }}
+          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
       
       - name: SSH keyscan
         run: |
           echo "$GCE_HOST"
           ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
         env:
-          GCE_HOST: ${{ vars.GCE_HOST }}
+          GCE_HOST: ${{ secrets.GCE_HOST }}
 
       - name: Copy files
         run: |
           echo "$GCE_USER"
           scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/defile/
         env:
-          GCE_USER: ${{ vars.GCE_USER }}
-          GCE_HOST: ${{ vars.GCE_HOST }}
+          GCE_USER: ${{ secrets.GCE_USER }}
+          GCE_HOST: ${{ secrets.GCE_HOST }}
