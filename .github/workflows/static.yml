@@ -89,6 +89,9 @@ jobs:
           echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
       
+      - name: Debug host value
+        run: echo "Host: ${{ secrets.GCE_HOST }}"
+
       - name: SSH keyscan
         run: |
           ssh-keyscan -H ${{ secrets.GCE_HOST }} >> ~/.ssh/known_hosts
