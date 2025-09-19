@@ -95,7 +95,7 @@ jobs:
         run: |
           ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
         env:
-          GCE_SSH_KEY: ${{ secrets.GCE_HOST }}
+          GCE_HOST: ${{ secrets.GCE_HOST }}
 
       - name: Copy files
         run: |
