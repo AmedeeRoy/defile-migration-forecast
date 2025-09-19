@@ -74,14 +74,14 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Export forecasts via SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
-          scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/defile/
-        env:
-          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
-          GCE_USER: ${{ secrets.GCE_USER }}
-          GCE_HOST: ${{ secrets.GCE_HOST }}
+      # - name: Export forecasts via SSH
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
+      #     chmod 600 ~/.ssh/id_ed25519
+      #     ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
+      #     scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/defile/
+      #   env:
+      #     GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
+      #     GCE_USER: ${{ secrets.GCE_USER }}
+      #     GCE_HOST: ${{ secrets.GCE_HOST }}
