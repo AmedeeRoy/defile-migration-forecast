@@ -79,7 +79,7 @@ jobs:
           echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
-          scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/defile/
+          scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/github-actions/
         env:
           GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
           GCE_USER: ${{ secrets.GCE_USER }}
