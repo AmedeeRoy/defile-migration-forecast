@@ -18,7 +18,7 @@ jobs:
         with:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
-          password: ${{ secrets.GCE_SSH_KEY }}
+          key: ${{ secrets.GCE_SSH_KEY }}
           port: 22
           source: "test.txt"
           target: "/home/github-actions/"
