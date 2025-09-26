@@ -26,12 +26,12 @@ jobs:
         shell: bash -l {0}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: Cache conda environment
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.conda/envs/defile-env
           key: ${{ runner.os }}-conda-defile-env-${{ hashFiles('environment.yaml') }}
@@ -39,7 +39,7 @@ jobs:
             ${{ runner.os }}-conda-defile-env-
 
       - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v2
+        uses: conda-incubator/setup-miniconda@v3
 
       - name: Create conda environment
         run: |
@@ -57,7 +57,7 @@ jobs:
         run: echo "path=prod/forecasts" >> $GITHUB_OUTPUT
 
       - name: Upload forecasts artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: forecasts
           path: prod/forecasts/
@@ -67,12 +67,12 @@ jobs:
     needs: predict
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: Download forecasts artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v5
         with:
           name: forecasts
           path: www/img
@@ -81,7 +81,7 @@ jobs:
         uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: "./www/"
 
@@ -94,7 +94,7 @@ jobs:
     needs: predict
     steps:
       - name: Download forecasts artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v5
         with:
           name: forecasts
           path: prod/forecasts
