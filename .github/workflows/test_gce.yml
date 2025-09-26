@@ -14,11 +14,11 @@ jobs:
         run: echo "Hello from GitHub Actions!" > test.txt
 
       - name: Upload artifact to GCE via scp
-        env:
-          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
-          GCE_USER: ${{ secrets.GCE_USER }}
-          GCE_HOST: ${{ secrets.GCE_HOST }}
-        run: |
-          echo "$GCE_SSH_KEY" > gce_key
-          chmod 600 gce_key
-          scp -i gce_key -o StrictHostKeyChecking=no test.txt $GCE_USER@$GCE_HOST:/home/github-actions/
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.GCE_HOST }}
+          username: ${{ secrets.GCE_USER }}
+          password: ${{ secrets.GCE_SSH_KEY }}
+          port: 22
+          source: "test.txt"
+          target: "/home/github-actions/"
