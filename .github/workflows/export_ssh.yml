@@ -1,0 +1,38 @@
+# .github/workflows/export_forecasts.yml
+name: Export forecasts via SSH
+
+on:
+  workflow_run:
+    workflows: ["Run predictions and deploy to GitHub Pages"]
+    types:
+      - completed
+
+jobs:
+  export:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -l {0}
+
+    steps:
+      - name: Download forecasts artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: forecasts
+          path: ./artifact
+
+      - name: List files in artifact
+        run: ls -R ./artifact
+
+      - name: Export forecasts via SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
+          scp -r ./artifact "$GCE_USER"@"$GCE_HOST":/home/github-actions/
+        env:
+          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
+          GCE_USER: ${{ secrets.GCE_USER }}
+          GCE_HOST: ${{ secrets.GCE_HOST }}

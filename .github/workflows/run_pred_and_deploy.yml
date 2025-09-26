@@ -1,5 +1,5 @@
 # Simple workflow for deploying static content to GitHub Pages
-name: Deploy static content to Pages
+name: Run predictions and deploy to GitHub Pages
 
 on:
   # Runs on pushes targeting the default branch
@@ -63,24 +63,17 @@ jobs:
       - name: List files in www directory
         run: ls -R ./www
 
-      - name: Upload artifact
+      - name: Upload www artifact (for Pages)
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
           path: "./www/"
+
+      - name: Upload forecasts artifact (for SSH export)
+        uses: actions/upload-artifact@v3
+        with:
+          name: forecasts
+          path: prod/forecasts
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Export forecasts via SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "$GCE_SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$GCE_HOST" >> ~/.ssh/known_hosts
-          scp -r prod/forecasts "$GCE_USER"@"$GCE_HOST":/home/github-actions/
-        env:
-          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
-          GCE_USER: ${{ secrets.GCE_USER }}
-          GCE_HOST: ${{ secrets.GCE_HOST }}
