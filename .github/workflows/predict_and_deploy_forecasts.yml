@@ -97,7 +97,7 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: forecasts
-          path: prod/forecasts
+          path: forecasts
 
       - name: Upload forecasts to GCE
         uses: appleboy/scp-action@v1
@@ -106,5 +106,5 @@ jobs:
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
           port: 22
-          source: "prod/forecasts/*"
-          target: "/home/github-actions/forecasts"
+          source: "forecasts"
+          target: "/home/github-actions"
