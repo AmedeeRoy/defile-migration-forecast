@@ -1,0 +1,24 @@
+name: Test GCS Artifact Upload/Download
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload-to-gcs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create test file
+        run: echo "Hello from GitHub Actions!" > test.txt
+
+      - name: Upload artifact to GCE via scp
+        env:
+          GCE_SSH_KEY: ${{ secrets.GCE_SSH_KEY }}
+          GCE_USER: ${{ secrets.GCE_USER }}
+          GCE_HOST: ${{ secrets.GCE_HOST }}
+        run: |
+          echo "$GCE_SSH_KEY" > gce_key
+          chmod 600 gce_key
+          scp -i gce_key -o StrictHostKeyChecking=no test.txt $GCE_USER@$GCE_HOST:/home/github-actions/
