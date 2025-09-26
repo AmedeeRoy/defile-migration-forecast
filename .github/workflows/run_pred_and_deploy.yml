@@ -63,17 +63,22 @@ jobs:
       - name: List files in www directory
         run: ls -R ./www
 
-      - name: Upload www artifact (for Pages)
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          # Upload entire repository
           path: "./www/"
-
-      - name: Upload forecasts artifact (for SSH export)
-        uses: actions/upload-artifact@v4
-        with:
-          name: forecasts
-          path: prod/forecasts
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Upload artifact to GCE via scp
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.GCE_HOST }}
+          username: ${{ secrets.GCE_USER }}
+          key: ${{ secrets.GCE_SSH_KEY }}
+          port: 22
+          source: "prod/forecasts"
+          target: "/home/github-actions/"
