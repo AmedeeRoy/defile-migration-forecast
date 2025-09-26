@@ -2,6 +2,7 @@
 name: Export forecasts via SSH
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["Run predictions and deploy to GitHub Pages"]
     types:
@@ -17,7 +18,7 @@ jobs:
 
     steps:
       - name: Download forecasts artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v5
         with:
           name: forecasts
           path: ./artifact
