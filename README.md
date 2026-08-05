@@ -17,7 +17,6 @@ The directory structure of new project looks like this:
 │   ├── data                     <- Data configs
 │   ├── debug                    <- Debugging configs
 │   ├── experiment               <- Experiment configs
-|   ├── export                   <- Export configs
 │   ├── extras                   <- Extra utilities configs
 │   ├── hparams_search           <- Hyperparameter search configs
 │   ├── hydra                    <- Hydra configs
@@ -48,7 +47,6 @@ The directory structure of new project looks like this:
 │
 ├── src                    <- Source code
 │   ├── data                     <- Data scripts
-│   ├── export                   <- Export scripts
 │   ├── models                   <- Model scripts
 │   ├── utils                    <- Utility scripts
 │   │
