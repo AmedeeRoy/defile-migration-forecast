@@ -159,11 +159,18 @@ class ProbaRMSE:
         epsilon = 1e-8
         pi = torch.acos(torch.zeros(1)).item() * 2
 
+        # Average over the hours actually covered by the survey.
+        # NB: this must divide by mask.sum(), not by the 24 hours of the day. Dividing by
+        # 24 (as torch.mean does) scales the implied target by survey_hours / 24, which
+        # varies from row to row, so a 3-hour and a 12-hour survey imply targets differing
+        # by a factor of 4 for the same true hourly rate.
+        mask_hours = torch.sum(mask, dim=1).clamp(min=epsilon)
+
         # Compute masked mean predictions (log-transformed)
-        y_masked = torch.mean(y_pred[:, 0, :] * mask, dim=1)
+        y_masked = torch.sum(y_pred[:, 0, :] * mask, dim=1) / mask_hours
 
         # Compute masked standard deviation with scaling and epsilon for stability
-        y_std_masked = epsilon + torch.mean(y_pred[:, 1, :] * mask, dim=1) / 4
+        y_std_masked = epsilon + torch.sum(y_pred[:, 1, :] * mask, dim=1) / mask_hours / 4
 
         # RMSE term: squared difference between log-transformed target and prediction
         rmse_term = torch.mean((torch.log1p(y.squeeze()) - y_masked) ** 2)
