@@ -32,25 +32,29 @@ CONVERSION_DICT = {
         "var": ["dew_point_2m"],
         "conv": lambda df: df["dew_point_2m"] + 273.15, # Convert °C to K
     },
+    # Wind direction follows the meteorological convention: the direction the wind blows
+    # FROM, in degrees clockwise from north. The components of the wind vector are
+    # therefore u = -V*sin(theta) (eastward) and v = -V*cos(theta) (northward).
+    # Sanity check: a 10 m/s wind from due north (theta=0) gives u=0, v=-10.
     "u_component_of_wind_10m": {
         "var": ["wind_speed_10m", "wind_direction_10m"],
-        "conv": lambda df: df["wind_speed_10m"]
-        * np.cos(np.radians(df["wind_direction_10m"])),
+        "conv": lambda df: -df["wind_speed_10m"]
+        * np.sin(np.radians(df["wind_direction_10m"])),
     },
     "v_component_of_wind_10m": {
         "var": ["wind_speed_10m", "wind_direction_10m"],
-        "conv": lambda df: df["wind_speed_10m"]
-        * np.sin(np.radians(df["wind_direction_10m"])),
+        "conv": lambda df: -df["wind_speed_10m"]
+        * np.cos(np.radians(df["wind_direction_10m"])),
     },
     "u_component_of_wind_100m": {
         "var": ["wind_speed_100m", "wind_direction_100m"],
-        "conv": lambda df: df["wind_speed_100m"]
-        * np.cos(np.radians(df["wind_direction_100m"])),
+        "conv": lambda df: -df["wind_speed_100m"]
+        * np.sin(np.radians(df["wind_direction_100m"])),
     },
     "v_component_of_wind_100m": {
         "var": ["wind_speed_100m", "wind_direction_100m"],
-        "conv": lambda df: df["wind_speed_100m"]
-        * np.sin(np.radians(df["wind_direction_100m"])),
+        "conv": lambda df: -df["wind_speed_100m"]
+        * np.cos(np.radians(df["wind_direction_100m"])),
     },
     "total_cloud_cover": {
         "var": ["cloud_cover"],
@@ -74,7 +78,9 @@ CONVERSION_DICT = {
     },
     "surface_solar_radiation_downwards": {
         "var": ["shortwave_radiation"],
-        "conv": lambda df: df["shortwave_radiation"]*3600, # Convert J/m^2 to W/m^2
+        # Open-Meteo returns W/m^2 averaged over the preceding hour; ERA5 accumulates
+        # J/m^2 over the hour. W/m^2 * 3600 s = J/m^2.
+        "conv": lambda df: df["shortwave_radiation"]*3600, # Convert W/m^2 to J/m^2
     },
     "convective_available_potential_energy": {
         "var": ["cape"],
@@ -135,7 +141,16 @@ def download_forecast_hourly(
             "hourly": openmeteo_variables,
             # "models": "ecmwf_ifs025",
             "past_days": lag_day,
-            "forecast_days": forecast_day + 1
+            "forecast_days": forecast_day + 1,
+            # Open-Meteo defaults to km/h for all wind variables, while ERA5 uses m/s.
+            # Without this the wind speeds, gusts and derived u/v components would be
+            # inflated by a factor of 3.6 relative to the training data.
+            "wind_speed_unit": "ms",
+            # Defaults, stated explicitly so a change upstream cannot silently break the
+            # unit conversions in CONVERSION_DICT above.
+            "temperature_unit": "celsius",
+            "precipitation_unit": "mm",
+            "timezone": "GMT",
         }
     )
 
@@ -171,9 +186,11 @@ def download_forecast_hourly(
             df[var] = CONVERSION_DICT[var]['conv'](df_forcast)
 
         # Get sun position (altitude, azimuth)
+        # NB: use distinct names so the `lat`/`lon` lists used for the API request above
+        # are not shadowed inside this loop.
         if add_sun:
-            lat, lon = get_lat_lon(locations[i])
-            sun_position = get_position(df["datetime"], lon[0], lat[0])
+            loc_lat, loc_lon = get_lat_lon(locations[i])
+            sun_position = get_position(df["datetime"], loc_lon[0], loc_lat[0])
             df["sun_altitude"] = sun_position["altitude"]
             df["sun_azimuth"] = sun_position["azimuth"]
 
