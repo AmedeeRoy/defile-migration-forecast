@@ -10,8 +10,7 @@ from lightning import LightningDataModule
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 
 from src.data.data_transformer import DataTransformer
-from src.data.get_era5 import *  # All function to load the csv era5 data
-from src.data.open_meteo import *  # All function related to the forecast
+from src.data.weather import CACHE_SUBDIR, get_weather
 from src.utils import (
     RankedLogger,
     extras,
@@ -156,28 +155,34 @@ class ForecastDataset(Dataset):
         self.return_original = return_original
         self.year_used = year_used
 
-        # MAIN ERA-5 DATA ----------------------------
-        self.era5_main = download_forecast_hourly(
+        # WEATHER DATA ----------------------------
+        # Same `get_weather` entry point, same conversions and same daily aggregation as
+        # training; only `source` differs. See src/data/weather.py.
+        self.era5_main = get_weather(
             locations=era5_main_location,
             variables=era5_main_variables,
+            source="forecast",
+            resolution="hourly",
             lag_day=0,
             forecast_day=forecast_day,
             add_sun=True,
         )
 
-        # HOURLY ERA-5 DATA ----------------------------
-        self.era5_hourly = download_forecast_hourly(
+        self.era5_hourly = get_weather(
             locations=era5_hourly_locations,
             variables=era5_hourly_variables,
+            source="forecast",
+            resolution="hourly",
             lag_day=0,
             forecast_day=forecast_day,
             add_sun=False,
         )
 
-        # DAILY ERA-5 DATA ----------------------------
-        self.era5_daily = download_forecast_daily(
+        self.era5_daily = get_weather(
             locations=era5_daily_locations,
             variables=era5_daily_variables,
+            source="forecast",
+            resolution="daily",
             lag_day=lag_day,
             forecast_day=forecast_day,
         )
@@ -427,45 +432,50 @@ class DefileDataModule(LightningDataModule):
 
     def setup(self, stage: str):
         if (stage == "fit") | (stage == "validate") | (stage == "test"):
-            # READ ERA5 DATA ----------------------------
+            # READ WEATHER DATA ----------------------------
+            # Read from the local Parquet cache built by scripts/build_weather_cache.py.
+            # `get_weather` pushes the year and day-of-year filters down into the read, so
+            # only the migration season is ever materialised, and applies the same unit
+            # conversions and daily aggregation that the forecast path uses.
             if not self.read_era5:
+                cache_dir = os.path.join(self.data_dir, CACHE_SUBDIR)
+
                 # main dataset
-                era5_main = get_era5_hourly(
-                    self.data_dir,
+                self.era5_main = get_weather(
                     locations=self.era5_main_location,
                     variables=self.era5_main_variables,
+                    source="cache",
+                    resolution="hourly",
+                    cache_dir=cache_dir,
+                    years=self.years,
+                    doy=self.doy,
                     add_sun=True,
                 )
 
                 # hourly remote dataset
-                era5_hourly = get_era5_hourly(
-                    self.data_dir,
+                self.era5_hourly = get_weather(
                     locations=self.era5_hourly_locations,
                     variables=self.era5_hourly_variables,
+                    source="cache",
+                    resolution="hourly",
+                    cache_dir=cache_dir,
+                    years=self.years,
+                    doy=self.doy,
                     add_sun=False,
                 )
 
                 # daily remote dataset
-                era5_daily = get_era5_daily(
-                    self.data_dir,
+                self.era5_daily = get_weather(
                     locations=self.era5_daily_locations,
                     variables=self.era5_daily_variables,
+                    source="cache",
+                    resolution="daily",
+                    cache_dir=cache_dir,
+                    years=self.years,
+                    doy=self.doy,
                     lag_day=self.lag_day,
                 )
 
-                # Filter data by years and day of year
-                def filter_by_date(xr):
-                    return xr.sel(
-                        date=(
-                            (xr.date.dt.year.isin(self.years))
-                            & (xr.date.dt.dayofyear >= self.doy[0])
-                            & (xr.date.dt.dayofyear <= self.doy[1])
-                        )
-                    )
-
-                self.era5_main = filter_by_date(era5_main)
-                self.era5_hourly = filter_by_date(era5_hourly)
-                self.era5_daily = filter_by_date(era5_daily)
                 self.read_era5 = True
 
             # COUNT DATA ----------------------------

@@ -2,7 +2,18 @@
 
 Status: draft, August 2026. Written after a full read of `src/`, `configs/`, `scripts/`,
 `.github/workflows/`, and the contents of `data/`. Line references are to the code as it
-stands today. Nothing in this document has been changed in the code yet.
+stands today.
+
+**Update, 5 August 2026:** fixes for defects 4.1–4.4, 4.6, 4.7, 4.10, 4.12, 4.13, 4.14, and
+part of 4.18 have merged as pull requests #26, #29–#35 against this repo. Separately, the
+provider unification from section 5.2 is implemented on branch `centralize-weather`
+(rebased onto `main` post-merge), which supersedes PRs #27 and #28 — both left open,
+unmerged — see the status note in section 4 and the decision record in 5.2.
+
+None of the checkpoints in `prod/models/` have been retrained against any of this yet, so
+the "until that is fixed" caveats in section 3 and the sequencing in section 6 still apply
+until `centralize-weather` also merges and retrain happens. Per-defect status is noted
+inline in section 4.
 
 ## 1. What we are building
 
@@ -30,8 +41,9 @@ liability, not a feature.
 
 The training path reads counts from `data/count/all_count_processed.csv` (one row per
 species per survey period, 1966–2025, with `start`/`end` timestamps in UTC) and weather
-from per-location CSVs in `data/era5/` that were exported from Google Earth Engine
-(`data/era5/gee_code.js`). `DefileDataModule` (`src/data/defile_datamodule.py`) converts
+from the local Parquet cache in `data/weather/`, built from the Open-Meteo ERA5 archive by
+`scripts/build_weather_cache.py`. (Until August 2026 the weather came from per-location CSV
+exports from Google Earth Engine in `data/era5/`; see 5.2.) `DefileDataModule` (`src/data/defile_datamodule.py`) converts
 counts to an hourly rate by dividing by survey duration, builds a 24-hour `mask` giving
 the fraction of each hour covered by the survey, assembles three weather tensors (a
 "main" hourly stack at Défilé including sun position, an hourly stack at five nearby
@@ -48,9 +60,9 @@ to zero by a hard-coded mask. Loss is a sum of a Tweedie term and a "probabilist
 term (`src/models/criterion.py`), with per-species weights tuned by Optuna and stored in
 `configs/experiment/*.yaml`.
 
-The forecast path (`ForecastDataset` in the same datamodule, plus
-`src/data/open_meteo.py`) does *not* read the CSVs. It calls the Open-Meteo forecast API,
-converts each Open-Meteo variable into its ERA5 equivalent through `CONVERSION_DICT`,
+The forecast path (`ForecastDataset` in the same datamodule) does *not* read the cache. It
+calls the Open-Meteo forecast API through the same `src/data/weather.py` entry point, so it
+shares the training path's variable names, unit conversions and daily aggregation. It
 applies the normalisation parameters pickled during training
 (`data/transform_data.pickle`, which is committed to git), and runs the checkpoint stored
 in `prod/models/<Species_Name>/checkpoints/best.ckpt`.
@@ -78,13 +90,36 @@ currently either constant, mis-scaled by a factor of 3.6 or 24, or geometrically
 scrambled at forecast time. Until that is fixed, model architecture work is measuring
 noise.
 
-There are also no tests of any kind in the repository, and no monitoring of the daily job.
+*Update, August 2026:* the two implementations are now one (5.2), and the weather layer has
+tests. The rest of the codebase still has none, and the daily job still has no monitoring
+(5.4). Model quality remains unassessable until `centralize-weather` also merges and the
+models are retrained against every fix landed so far.
 
 ## 4. Defects found
 
 Ordered by how much they cost us. Each has a file reference and a suggested fix. I have
 not verified these by running the code — the environment is not installed here — so treat
 each as "read carefully and confirm", though most are unambiguous from the source.
+
+> **Status, August 2026.** The weather-provider migration described in 5.2 has been
+> implemented on branch `centralize-weather`. Both paths now go through
+> `src/data/weather.py`, the ERA5 CSV exports and `src/data/get_era5.py` /
+> `src/data/open_meteo.py` are gone, and `tests/test_weather.py` covers the conventions and
+> the train/serve contract.
+>
+> That branch closes **4.2, 4.5, 4.16** and the `years` half of **4.18**, and it supersedes
+> two PRs that stayed unmerged: **#27** (it patched `open_meteo.py`, which no longer exists —
+> the wind fixes live on in `weather.py`, now with tests) and **#28** (it dropped the
+> far-field daily locations to avoid 4.5; with 4.5 fixed properly they are back). It also
+> turned up four defects the audit had missed, recorded in section 4.19 — including 4.19d, a
+> resolution mismatch in the wind field that provider unification does *not* fix and that
+> may matter more than anything else on this list.
+>
+> The other defects were addressed by PRs #26, #29–#35, all now merged to `main`, and
+> annotated inline below. Still unowned: **4.9** and the remainder of **4.18**. The
+> sequencing in section 6 is otherwise unchanged, and the tuned hyperparameters in
+> `configs/experiment/*.yaml` remain void — they were tuned against features that were both
+> corrupted and, per 4.19, systematically offset from what production serves.
 
 ### P0 — actively corrupting the model
 
@@ -100,6 +135,11 @@ gusts are, in effect, constant inputs. The model cannot see rain.** For soaring 
 this is likely the single most damaging defect in the codebase. Fix: apply
 `(log(clip(x)) - mean) / std`, and name the stored params so this cannot recur.
 
+**Fixed in [PR #26](https://github.com/AmedeeRoy/defile-migration-forecast/pull/26)**
+(`fix/log-transform`, merged). The stored `transform_data.pickle` parameters
+remain valid; the checkpoints in `prod/models/` were trained against the broken transform
+and must be retrained before this is deployed.
+
 **4.2 The default data config cannot be loaded.** `configs/data/defile.yaml` lists
 `total_precipitation` in `era5_daily_variables`, and `era5_daily_locations` includes
 Munich, Stuttgart, Frankfurt and Berlin. Those four CSVs come from
@@ -111,6 +151,19 @@ comments those locations and variables out, which is consistent with recent work
 been done on the small config only. Fix: decide whether the far-field daily locations are
 wanted, and if so give them their own variable list and rename the column at read time.
 
+*Resolved on `centralize-weather`, by dissolution.* Open-Meteo serves hourly data for
+every location from one dataset, so there is no longer a class of location that only has
+daily aggregates. Munich, Stuttgart, Frankfurt and Berlin are back in
+`era5_daily_locations`, and the assertion that used to fire is gone along with the CSV
+reader. This supersedes PR #28, which avoided the problem by dropping those locations.
+
+**Fixed in [PR #28](https://github.com/AmedeeRoy/defile-migration-forecast/pull/28)**
+(`fix/daily-locations-consistency`, open, not merged): removes Munich, Stuttgart,
+Frankfurt and Berlin from `era5_daily_locations` rather than giving them a separate
+variable list, so the config loads again. This also changes `nb_input_features_daily`
+from 37 to 17 and requires retraining. See 4.5 below — the same PR addresses part of that
+defect too.
+
 **4.3 Wind speeds are 3.6× too large at forecast time.** Open-Meteo's default
 `wind_speed_unit` is km/h (confirmed in their docs), and no unit is requested in the API
 call (`src/data/open_meteo.py:130–140`). ERA5 `u/v_component_of_wind_*` and
@@ -119,6 +172,9 @@ call (`src/data/open_meteo.py:130–140`). ERA5 `u/v_component_of_wind_*` and
 five wind features are inflated by 3.6 relative to what the model was trained on, which
 after min-max normalisation puts them far outside [0, 1]. Fix: pass
 `"wind_speed_unit": "ms"` in the request params.
+
+**Fixed, together with 4.4, in [PR #27](https://github.com/AmedeeRoy/defile-migration-forecast/pull/27)**
+(`fix/openmeteo-wind`, open, not merged).
 
 **4.4 The wind direction → u/v conversion is geometrically wrong.**
 `src/data/open_meteo.py:35–54` computes `u = V·cos(θ)` and `v = V·sin(θ)`. Meteorological
@@ -130,6 +186,10 @@ one of the strongest drivers of raptor passage, and this affects only the foreca
 so the model is being served a systematically wrong wind field at exactly the moment it
 matters. Fix the two formulas (all four u/v entries) and add a unit test with a known
 case, e.g. a 10 m/s wind from due north (θ=0) must give u=0, v=-10.
+
+**Fixed in [PR #27](https://github.com/AmedeeRoy/defile-migration-forecast/pull/27)**
+(`fix/openmeteo-wind`, open, not merged), together with 4.3. Verified against all four
+cardinal directions; a 10 m/s wind from due north now gives u=0, v=-10 as expected.
 
 **4.5 Daily aggregation means three different things.** In training,
 `get_era5_daily` (`src/data/get_era5.py:141–169`) calls the hourly reader and takes
@@ -144,6 +204,22 @@ have different semantics in training than in inference, on top of the sum-versus
 problem. Fix: make daily aggregation explicit and identical on both paths, per variable
 (mean for state variables, sum for accumulations).
 
+*Resolved on `centralize-weather`.* `DAILY_AGGREGATION` in `src/data/weather.py` states
+the rule per variable — `total_precipitation` and `surface_solar_radiation_downwards` sum,
+everything else averages — and `to_daily` is called by both the training and the forecast
+path, so the two cannot disagree.
+`test_accumulations_sum_and_state_variables_average` guards it. Gust is averaged; a daily
+maximum is arguably the better summary, but that is a modelling change rather than a bug
+fix, so it was left alone deliberately.
+
+**Partially addressed in [PR #28](https://github.com/AmedeeRoy/defile-migration-forecast/pull/28)**
+(`fix/daily-locations-consistency`, open, not merged): drops the four far-field locations
+whose daily CSVs had mismatched semantics (Munich, Stuttgart, Frankfurt, Berlin), so every
+remaining daily location is hourly-ERA5-backed and the 24-hour mean means the same thing
+everywhere. This sidesteps the defect rather than fixing the general case — if far-field
+locations are ever re-added, they still need their own variable list and an explicit
+per-variable aggregation rule, as described above.
+
 ### P1 — silently wrong results and operational hazards
 
 **4.6 The test set is re-drawn after training.** `setup()`
@@ -155,6 +231,13 @@ during fit. Reported test metrics are therefore computed partly on years the mod
 trained on. Fix: compute the split once (guard it like `self.read_era5`), and seed it
 explicitly from `cfg.seed` rather than relying on global RNG state.
 
+**Fixed in [PR #29](https://github.com/AmedeeRoy/defile-migration-forecast/pull/29)**
+(`fix/test-split-reproducibility`, merged): draws the split from a generator
+seeded by a new `split_seed` datamodule parameter instead of the global RNG, so fit and
+test agree regardless of how much randomness training consumed. 4.9 (normalisation
+statistics fitted on all years) is explicitly called out in that PR as a follow-up not
+included.
+
 **4.7 `ProbaRMSE` normalises by 24 instead of by the survey length.**
 `src/models/criterion.py:163–166` computes `mean(y_pred[:,0,:] * mask, dim=1)`, i.e.
 `sum(pred·mask)/24`, and compares it to `log1p(observed hourly rate)`. The correct
@@ -163,6 +246,11 @@ denominator is `sum(mask)`. As written the implied target is scaled by
 survey imply targets that differ by a factor of four for the same true rate. Fix: divide
 by `mask.sum(dim=1)`. Note the Tweedie term does this correctly via `applyMask`, so the
 two loss terms currently disagree about what quantity they are fitting.
+
+**Fixed in [PR #30](https://github.com/AmedeeRoy/defile-migration-forecast/pull/30)**
+(`fix/probarmse-denominator`, merged): uses a clamped `mask.sum(dim=1)` for both
+the mean and std channel. The per-species criterion weights in `configs/experiment/*.yaml`
+were tuned against the old, inconsistent denominator and should be re-tuned.
 
 **4.8 The uncertainty output channel is untrained.** `configs/model/unet.yaml` sets
 `nb_output_features: 2`, and `ProbaRMSE.alpha` is 1 in the base config and in every
@@ -189,6 +277,13 @@ run lands in `prod/models/Black Kite/` while prediction reads `prod/models/Black
 Both directory spellings exist on disk today, which is the fingerprint of this bug. Fix:
 use `${underscore:...}` in `run.dir` too, and delete the space-named directories.
 
+**Fixed for new runs in [PR #33](https://github.com/AmedeeRoy/defile-migration-forecast/pull/33)**
+(`fix/checkpoint-promotion-path`, merged): aligns `run.dir` with `sweep.subdir`
+via the `underscore` resolver, and registers that resolver in `src/eval.py` too (it was
+missing there, so `python src/eval.py --multirun` failed outright). The orphaned
+space-named directories already on disk under `prod/models/` still need manual deletion —
+this PR only stops new ones being created.
+
 **4.11 There is no season guard.** The cron runs every day of the year, but training is
 restricted to `doy` 196–335 (mid-July to end of November) by `configs/data/defile.yaml`.
 For roughly seven months a year the job publishes confident extrapolations from a model
@@ -201,11 +296,19 @@ drop the trailing location axis, but a batch of size 1 — which happens wheneve
 training batch has one sample — also loses the batch axis and corrupts the subsequent
 `cat`. Fix: `squeeze(-1)`.
 
+**Fixed in [PR #32](https://github.com/AmedeeRoy/defile-migration-forecast/pull/32)**
+(`fix/unet-squeeze-and-mask-buffer`, merged). Numerically identical output on
+batches larger than 1; no retraining needed.
+
 **4.13 `predict_step` computes a meaningless loss and divides by zero.**
 `src/models/defile_module.py:440` calls `model_step`, which evaluates the criterion
 against the dummy `count` and length-1 `mask` that `ForecastDataset` supplies
 (`defile_datamodule.py:206`). `applyMask` then divides by `mask.sum() = 0`, producing NaN,
 and a whole forward pass is wasted. Fix: drop the `model_step` call from `predict_step`.
+
+**Fixed, together with 4.14, in [PR #31](https://github.com/AmedeeRoy/defile-migration-forecast/pull/31)**
+(`fix/predict-step-nan-and-double-forward`, merged): `predict_step` no longer
+calls `model_step`.
 
 ### P2 — efficiency
 
@@ -214,6 +317,12 @@ performs a forward pass and returns only the loss, then each step method calls
 `self.forward(...)` again on the same batch (`defile_module.py:164/172`, `241/252`,
 `440/444`). Returning `(loss, count_pred)` from `model_step` roughly halves
 validation and test time.
+
+**Fixed, together with 4.13, in [PR #31](https://github.com/AmedeeRoy/defile-migration-forecast/pull/31)**
+(`fix/predict-step-nan-and-double-forward`, merged): `model_step` now returns
+`(loss, count_pred)` and `validation_step`/`test_step`/`predict_step` reuse it instead of
+calling `self.forward(...)` again. No change to reported numbers — the second forward pass
+was computing the same thing (dropout/batch-norm are in eval mode during val/test).
 
 **4.15 Per-sample xarray label lookups dominate data loading.**
 `DefileDataset.__getitem__` (`defile_datamodule.py:69–94`) performs three `.sel(date=...)`
@@ -233,21 +342,108 @@ per run. The full 1966–2025 range is then unstacked into a dense
 location, read only the requested years and days, and memoise per-location reads within a
 run.
 
+*Resolved on `centralize-weather`.* The CSVs are replaced by a Parquet store partitioned
+by location (`data/weather/`), built once by `scripts/build_weather_cache.py`. `load_cache`
+pushes the location, year and day-of-year filters down into the read, so unrequested
+locations are never opened and the dense `(date, time, location)` array is built only from
+rows that survive filtering. Reading one location-season now takes about 2 s rather than
+parsing roughly 1 GB of CSV per run.
+
 **4.17 Saliency is computed on every test batch and kept in memory.**
 `defile_module.py:219–257` builds a `Saliency` attribution for each batch and accumulates
 it, which also forces `inference_mode: False` globally in `configs/trainer/default.yaml`.
 Fix: gate this behind a config flag and compute it on a subsample.
 
 **4.18 Small things.** `pred_mask` is rebuilt as a numpy array and moved to device on
-every forward pass (`unet.py:239–243`) — make it a `register_buffer`. The criterion
+every forward pass (`unet.py:239–243`) — make it a `register_buffer`.
+**Fixed in [PR #32](https://github.com/AmedeeRoy/defile-migration-forecast/pull/32)**
+(`fix/unet-squeeze-and-mask-buffer`, merged): now a non-persistent
+`register_buffer`, so it follows the module's device without being rebuilt every forward
+pass and without breaking existing checkpoints. The rest of this item is still open. The criterion
 dataclasses annotate fields as `alpha: 1`, using the value as a type annotation so there
 is no default (`criterion.py:69–70`, 135, 219, 254) — should be `alpha: float = 1.0`.
 `plt_predict` hard-codes a 2×3 subplot grid and breaks if `forecast_day != 5`
 (`src/plots/save_predict.py:8`). `configs/data/defile.yaml` sets
 `years: range(1966, 2024)`, silently excluding the 2024 and 2025 seasons that are already
-in the CSVs. `src/export/` contains only a stale `__pycache__` — the source module is
+in the CSVs. **Resolved on `centralize-weather`:** the range is now
+`range(1966, 2026)`. `src/export/` contains only a stale `__pycache__` — the source module is
 gone, and the README still documents `src/export` and a `configs/export` that does not
 exist.
+
+### 4.19 Found while migrating the weather provider
+
+These three were not in the original audit. All were confirmed by running code against the
+live APIs, not read off the source.
+
+**4.19a Production has been serving temperature and pressure about 260 m of elevation away
+from what the model trained on.** Open-Meteo corrects `temperature_2m` and
+`surface_pressure` to the DEM elevation of the requested coordinate — 417 m at Défilé — while
+the GEE export returned the raw ERA5 cell value, which sits near 750 m. Measured over 8832
+hours (August–October of 1970, 1995, 2015 and 2024), Open-Meteo runs **+1.84 K** warmer and
+**+3151 Pa** higher than `data/era5/Defile.csv`. The two biases are mutually consistent:
+3151 Pa is about 260 m, and 260 m at a 6.5 K/km lapse rate is 1.7 K. So this was a genuine
+train/serve mismatch in production, on top of the unit and convention defects, and it
+affected every species. *Resolved on `centralize-weather`:* both endpoints report the same
+elevation, so training and serving now agree by construction. It is also a reason the
+existing checkpoints cannot simply be carried over.
+
+**4.19b The forecast path had no HTTP timeout.** `src/data/open_meteo.py` passed a
+`requests_cache.CachedSession` into `retry_requests.retry()`. That function only applies its
+5-second default timeout to a session it creates itself, so the supplied session kept
+`requests`' default of waiting indefinitely. A hung Open-Meteo request would therefore stall
+the 03:00 job forever rather than failing and alerting. *Resolved on `centralize-weather`:*
+`_client` sets an explicit timeout on both paths (300 s for archive requests, 60 s for
+forecast requests). Note the flip side, which bit during the backfill: `retry()` *does*
+apply a 5-second timeout when it creates the session, which is far too short for a
+multi-year archive request.
+
+**4.19c CAPE does not exist in the ERA5 archive.**
+`convective_available_potential_energy` is in `data/era5/Defile.csv` and in
+`CONVERSION_DICT`, but the Open-Meteo archive returns all-null for `cape` with unit
+`undefined`. No committed config currently requests it, so nothing is broken today.
+*Handled on `centralize-weather`:* it is marked forecast-only and requesting it for training
+raises instead of silently producing a NaN feature.
+
+**4.19d The model trains on 25 km wind and is served ~2 km wind, and at Défilé those are
+substantially different fields.** This is the most consequential of the four, and unifying the
+provider does *not* fix it. The ERA5 archive is a 0.25° (~25 km) grid; the Open-Meteo forecast
+endpoint serves high-resolution NWP. Measured over 61 days against the forecast path:
+
+| | Défilé (gorge) | Frankfurt (flat) |
+|---|---|---|
+| `u_component_of_wind_10m` corr | **0.27** | 0.90 |
+| `v_component_of_wind_10m` corr | 0.66 | 0.81 |
+| `u_component_of_wind_100m` corr | 0.50 | 0.92 |
+| `temperature_2m` corr | 0.97 | 0.97 |
+| `surface_pressure` corr | 0.98 | 0.99 |
+| `u_wind_10m` std ratio (fcst/ERA5) | **1.73** | 0.71 |
+
+Temperature and pressure agree everywhere, so this is not a mapping error — it is resolution.
+ERA5's cell cannot resolve the gorge that makes Défilé a bottleneck in the first place, while
+the forecast model can, and produces 73% more variance in the along-valley component. So the
+model learns wind–passage relationships from a field that does not contain the channelling
+effect, then at 03:00 is handed a field that does.
+
+Wind direction is one of the strongest drivers of raptor passage, which makes this a strong
+candidate for why forecast skill might disappoint even after every defect above is fixed. It
+also gives the Historical Forecast API proposal in 5.2 a concrete quantitative motivation
+rather than a theoretical one: training on archived *forecasts* at matching lead times would
+put both sides of the contract on the same model at the same resolution. A cheaper partial
+mitigation is to pin the forecast endpoint to a coarse global model (`models=ecmwf_ifs025`)
+so it matches ERA5's scale — note that line exists, commented out, in the retired
+`open_meteo.py`, so someone had already considered it. That trades forecast sharpness for
+train/serve consistency and should be measured, not assumed.
+
+`tests/test_weather.py::test_wind_over_complex_terrain_is_documented_as_divergent` records the
+effect so it cannot be quietly forgotten, and the parity tests deliberately assert scale
+everywhere but correlation only where the two products genuinely track each other.
+
+Two of the open questions in section 7 were also settled empirically. The radiation
+conversion (W/m² × 3600 → J/m²) is **correct**: it agrees with the GEE export to 0.1% over
+the same 8832 hours, so ERA5's hourly `surface_solar_radiation_downwards` is indeed an
+hourly accumulation. And the space-named `prod/models/<species with spaces>/` directories
+were **genuinely orphaned** — they contained only the gitignored `last.ckpt`, never the
+tracked `best.ckpt` — confirming 4.10 and making them safe to delete.
 
 ## 5. The four open questions
 
@@ -298,6 +494,33 @@ the committed configs; a smooth year term or a per-year offset would be better t
 constant or three buckets. Worth including in the ladder sweep.
 
 ### 5.2 How do we keep training features and forecast features comparable?
+
+> **Decided and implemented, August 2026 (branch `centralize-weather`).** Unify on
+> Open-Meteo for both paths, as recommended below. What was built:
+>
+> - `src/data/weather.py` — one `get_weather(locations, variables, source=...)` entry point
+>   over three sources (`"cache"` for training, `"archive"` to build that cache, `"forecast"`
+>   for the daily job), sharing one `CONVERSION_DICT`, one set of pinned units, and one
+>   `DAILY_AGGREGATION` rule per variable.
+> - The archive is pinned to `models=era5` (0.25°, 1940-present), the same product the GEE
+>   export used. Left unset, Open-Meteo would silently switch between ERA5, ERA5-Land, IFS
+>   and CERRA depending on the date, changing dataset and resolution mid-history.
+> - `scripts/build_weather_cache.py` writes a Parquet store under `data/weather/`, so
+>   training never touches the network. Resumable at chunk granularity, because a full
+>   1966-present backfill of all locations costs about 28 000 weighted API calls against a
+>   free-tier allowance of 10 000/day and therefore takes roughly three days. (Open-Meteo
+>   weights a call by variables × days, not per HTTP request.)
+> - `tests/test_weather.py` — the parity check proposed at the end of this section, plus unit
+>   tests for the wind convention, the unit conversions and the aggregation rules.
+>
+> Validated against the retired CSVs over 8832 hours: correlations 0.95–0.999 on every
+> variable, confirming it is the same underlying ERA5. The one substantive difference found
+> was the elevation correction, now recorded as defect 4.19a. `src/data/get_era5.py`,
+> `src/data/open_meteo.py`, `data/era5/*.csv` and `data/era5/gee_code.js` are deleted.
+>
+> **Not fixed by this, and still open:** the reanalysis-versus-forecast distribution shift
+> discussed below, and skill reporting by lead day. Those remain the substance of this
+> question.
 
 Right now we do not, and the mechanism is structural: there are two independent
 implementations of "get the weather", one reading GEE ERA5 CSVs and one calling
@@ -394,10 +617,21 @@ guard from 4.11 belongs here too.
 `train.py debug=default` end to end. Nothing about model quality can be assessed before
 this is done, and the previously tuned hyperparameters in `configs/experiment/*.yaml`
 should be considered void afterwards, since they were tuned against corrupted features.
+*Update: 4.1 (PR #26), 4.6 (PR #29) and 4.7 (PR #30) are merged. 4.2, 4.3, 4.4 and 4.5 are
+fixed on `centralize-weather`, superseding PRs #27 and #28 (both left open, unmerged). The
+train/serve parity check exists as networked tests in `tests/test_weather.py`; a
+`train.py debug=default` smoke test does not yet exist as a committed test, though it has
+been run manually to confirm the migration trains end to end. None of the
+`prod/models/` checkpoints have been retrained against any of this, so no model-quality
+comparison should happen until `centralize-weather` merges and retrain happens.*
 
 **Second, make it fast enough to experiment.** Fix 4.14 (double forward) and 4.15
 (per-sample xarray lookups), and cache the ERA5 reads (4.16). The point is to make the
 year-subset ladder and the Optuna sweeps cheap enough to run often.
+*Update: all three are done. 4.14 merged as PR #31 (bundled with the unrelated 4.13 fix).
+4.15 merged as PR #35 (materialises the transformed stacks into contiguous arrays once per
+split instead of per-sample `.sel(date=...)` calls). 4.16 is resolved on
+`centralize-weather` via the Parquet cache.*
 
 **Third, answer 5.1.** Chronological split, year-subset ladder, year-representation
 comparison. Re-tune hyperparameters on the winning configuration. Report skill by lead
@@ -418,7 +652,10 @@ The environment is not installed in this session, so the following are reasoned 
 source rather than observed, and should be checked before acting:
 
 Whether `python src/train.py` with the committed `data=defile` config does in fact raise
-the assertion described in 4.2, or whether some local state avoids it.
+the assertion described in 4.2, or whether some local state avoids it. *Update: confirmed
+moot on `centralize-weather` — `get_era5_hourly` and its assertion are gone, `train.py`
+was run end to end against the current `defile.yaml` (including the restored far-field
+daily locations) with no error.*
 
 The exact accumulation semantics of `total_precipitation` and
 `surface_solar_radiation_downwards` in the `ECMWF/ERA5/HOURLY` GEE collection used for the

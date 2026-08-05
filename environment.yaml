@@ -31,6 +31,10 @@ dependencies:
   - xarray=2023.6.0
   - einops
   - cloudpickle
+  # Parquet engine for the local weather cache (data/weather/), written and read by
+  # scripts/build_weather_cache.py and src/data/weather.py.
+  - pyarrow
+  - pytest=8.*
   # - torchvision=0.*
   # - torchmetrics=0.*
   # - pre-commit=3.*

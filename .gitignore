@@ -6,10 +6,17 @@ __pycache__/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# pytest
+.pytest_cache/
+
 # data
 *.xlsx
 *.csv
 *.sqlite
+
+# weather cache, rebuilt with scripts/build_weather_cache.py
+data/weather/
+.cache.sqlite
 
 # logs outputs
 logs/*
@@ -29,3 +36,4 @@ prod/models/**/checkpoints/last.ckpt
 .DS_Store
 
 TODO.md
+.secrets.env

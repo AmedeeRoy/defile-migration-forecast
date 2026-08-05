@@ -132,15 +132,32 @@ Feature-count expressions in `configs/model/unet.yaml` are derived from the data
 Hydra resolvers (`${len:...}`, `${eval:...}`) — if you change the variable/location lists
 in `configs/data/*.yaml`, the input dimensions follow automatically. Don't hardcode them.
 
-## Two separate weather paths (important)
+## One weather path (important)
 
-Training reads ERA5 from CSVs in `data/era5/` (exported from Google Earth Engine — the
-export script is `data/era5/gee_code.js`). Forecasting does **not**: `ForecastDataset`
-calls the Open-Meteo API and maps its variables onto ERA5 names/units via
-`CONVERSION_DICT` in `src/data/open_meteo.py`. These two paths are independent
-implementations of the same feature contract and there is no automated check that they
-agree. Any change to variables, units, or aggregation must be made on **both** sides.
-Several known mismatches are documented in `DEVELOPMENT.md`.
+All weather goes through `src.data.weather.get_weather`, which takes a `source`:
+
+- `source="cache"` — the local Parquet store in `data/weather/`, built by
+  `scripts/build_weather_cache.py`. This is what training reads; no network access.
+- `source="archive"` — the Open-Meteo ERA5 archive API, pinned to `models=era5`. Used only
+  to build the cache.
+- `source="forecast"` — the Open-Meteo forecast API. Used by the daily prediction job.
+
+All three share one `CONVERSION_DICT`, one set of pinned request units, and one
+`DAILY_AGGREGATION` rule per variable, so a change to variables, units or aggregation is
+made **once**. This replaced two independent implementations (GEE CSVs for training,
+Open-Meteo for serving) that had silently drifted apart; see `DEVELOPMENT.md` 5.2.
+
+When touching this module, keep that single-path property: add a variable to
+`CONVERSION_DICT`, not to a caller, and never special-case one `source` in a way that
+changes the resulting values. `tests/test_weather.py` enforces the conventions and the
+train/serve contract — run `pytest tests/` and, for API changes, `pytest tests/ -m network`.
+
+The cache is gitignored and takes about three days to backfill fully (Open-Meteo weights
+API calls by variables x days, and a full 1966-present fetch of all locations costs roughly
+28 000 against a 10 000/day free allowance). The build script is resumable at chunk
+granularity — re-run it, it skips what it already has. If the cache is only partially built,
+`load_cache` warns about the requested years it cannot supply rather than silently training
+on fewer.
 
 Normalisation parameters are fitted at training time and pickled to
 `data/transform_data.pickle` (committed to git); `predict.py` loads that file. It must
@@ -156,11 +173,14 @@ daily-aggregation mismatches). **Read it before trusting any model metric or tun
 hyperparameters** — the values currently in `configs/experiment/*.yaml` were tuned against
 corrupted features.
 
-Also note: `python src/train.py` with the committed default `data=defile` config is
-expected to fail on a missing `total_precipitation` column for the far-field daily
-locations. `data=defile-small` avoids this.
+Most of those defects have open PRs (#26–#35) or are fixed on the `centralize-weather`
+branch; section 4 records per-defect status. Note in particular 4.19d: Défilé sits in a gorge
+that ERA5's 25 km cell cannot resolve, so 10 m wind correlates only ~0.27 between the
+training and serving products there (~0.90 over flat terrain). That is a genuine train/serve
+distribution shift which unifying the provider did **not** fix, and it is plausibly the
+biggest remaining limit on forecast skill.
 
-There are currently **no tests** in the repo.
+Tests live in `tests/` and cover the weather layer only. The rest of the codebase has none.
 
 ## Species / experiment pattern
 
@@ -178,10 +198,10 @@ rather than editing `configs/data/defile.yaml` directly.
   1966–2025, `start`/`end` in UTC. Survey protocol and recording granularity changed
   repeatedly over that span — `data/count/readme.md` documents the history and is
   essential reading before making modelling decisions about which years to use.
-- Weather: hourly ERA5 CSVs for Défilé + 6 nearby locations (~136 MB each) and daily
-  ERA5-Land aggregates for 6 far-field locations (~2.5 MB each). Note the two groups have
-  **different columns** (`total_precipitation` vs `total_precipitation_sum`) and different
-  aggregation semantics.
+- Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
+  partitioned by location, at ~3.5 MB per location per decade. Every location has the same
+  columns and the same semantics — the old split between hourly CSVs and daily far-field
+  aggregates is gone.
 - `lag_day` / `forecast_day` in `configs/data/defile.yaml` control how many days of
   history feed the model and how many days ahead it forecasts.
 - `doy: [196, 335]` restricts training to the migration season (mid-July to end of
@@ -191,7 +211,7 @@ rather than editing `configs/data/defile.yaml` directly.
 - `data/`, `logs/`, and `prod/forecasts/` are gitignored, generated artifacts. Don't
   hand-edit them or assume they're committed — regenerate via the commands above.
   Exceptions that *are* committed: `data/transform_data.pickle`,
-  `data/count/readme.md`, `data/era5/gee_code.js`, and
+  `data/count/readme.md`, `data/count/species_doy_statistics.json`, and
   `prod/models/*/checkpoints/best.ckpt`.
 
 ## Known environment gotcha: OneDrive sync
