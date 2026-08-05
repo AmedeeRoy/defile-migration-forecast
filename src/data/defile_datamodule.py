@@ -531,12 +531,23 @@ class DefileDataModule(LightningDataModule):
             # Compute transformation
             # Create a DataTransformers for each era5 data. This class does not store the data, only the transformation and the parameters of the transformation
             if self.compute_transform_data:
+                # Fit on training dates only. Fitting on the full (train+val+test) range
+                # leaks val/test distribution into the normalisation stats -- mild, but
+                # min/max normalisation is outlier-sensitive on top of it (DEVELOPMENT.md
+                # 4.9). Restricted by `count["date"]` rather than `count["year"]`, since the
+                # non-"period" split assigns individual rows, not whole years, so a given
+                # year can straddle train and test.
+                train_dates = count.loc[count["tvt"] == "train", "date"]
+
+                def _train_only(era5):
+                    return era5.sel(date=np.isin(era5["date"], train_dates))
+
                 transform_data = {
                     "year_used": lambda x: (x - 2000) / 100,
                     "doy": lambda x: (x - 183) / 366,
-                    "main": DataTransformer(dataset=self.era5_main),
-                    "hourly": DataTransformer(dataset=self.era5_hourly),
-                    "daily": DataTransformer(dataset=self.era5_daily),
+                    "main": DataTransformer(dataset=_train_only(self.era5_main)),
+                    "hourly": DataTransformer(dataset=_train_only(self.era5_hourly)),
+                    "daily": DataTransformer(dataset=_train_only(self.era5_daily)),
                 }
                 with open(os.path.join(self.data_dir, "transform_data.pickle"), "wb") as f:
                     cloudpickle.dump(transform_data, f)
