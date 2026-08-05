@@ -66,8 +66,8 @@ class TweedieLoss:
                   Controls the variance-mean relationship: Var(Y) = φ * μ^p
     """
 
-    alpha: 1
-    p: 1.5
+    alpha: float = 1.0
+    p: float = 1.5
 
     def forward(self, y_pred, y, mask):
         """
@@ -132,7 +132,7 @@ class ProbaRMSE:
                       Values between 0 and 1 combine both terms.
     """
 
-    alpha: 1
+    alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
         """
@@ -216,7 +216,7 @@ class ProbaRMSE:
 
 @dataclass
 class L2:
-    alpha: 1
+    alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
         loss = torch.mean((torch.sum(y_pred.squeeze(), dim=1)) ** 2)
@@ -225,7 +225,7 @@ class L2:
 
 @dataclass
 class DiffL2:
-    alpha: 1
+    alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
         loss = torch.mean(torch.diff(y_pred, 1) ** 2)
@@ -251,7 +251,7 @@ class Poisson:
 class RMSE:
     """Home-made Loss function criterion."""
 
-    alpha: 1
+    alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
         y_masked = applyMask(y_pred, mask)
