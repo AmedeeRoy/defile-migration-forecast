@@ -4,10 +4,24 @@ from matplotlib import pyplot as plt
 
 def plt_predict(data, species=None, filepath=None):
     pred_count = np.expm1(data.pred_log_hourly_count)
+    n = len(pred_count)
 
-    fig, ax = plt.subplots(2, 3, figsize=(10, 5), tight_layout=True, sharex=True, sharey=True)
-    ax = ax.flatten()
-    for k in range(len(pred_count)):
+    # Grid sized to the actual number of forecast days rather than a hard-coded 2x3, which
+    # only matched forecast_day=5 and otherwise either raised an IndexError (more days) or
+    # left blank panels with a broken ylabel placement (fewer days) -- DEVELOPMENT.md 4.18.
+    ncols = min(3, n)
+    nrows = -(-n // ncols)  # ceil division
+    fig, ax = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(10 / 3 * ncols, 5 / 2 * nrows),
+        tight_layout=True,
+        sharex=True,
+        sharey=True,
+    )
+    ax = np.atleast_1d(ax).flatten()
+
+    for k in range(n):
         subset = pred_count.isel(date=k)
 
         ax[k].bar(np.arange(24), subset.values)
@@ -27,8 +41,12 @@ def plt_predict(data, species=None, filepath=None):
         )
         ax[k].set_xlim(6, 21)
 
-    ax[0].set_ylabel("Forecasted individual \ncounts (#)")
-    ax[3].set_ylabel("Forecasted individual \ncounts (#)")
+    for row_start in range(0, n, ncols):
+        ax[row_start].set_ylabel("Forecasted individual \ncounts (#)")
+
+    for k in range(n, nrows * ncols):
+        ax[k].set_visible(False)
+
     plt.suptitle(f"Defile Bird Forecasts - {species}")
 
     if filepath is not None:
