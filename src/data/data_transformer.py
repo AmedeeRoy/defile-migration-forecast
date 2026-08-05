@@ -29,20 +29,27 @@ class Transformer:
     def __repr__(self):
         return f"Transformer(type:{self.type}, params:{self.params})"
 
+    # Minimum value used to clip data before taking the logarithm. Must be identical in
+    # `compute_param` and `apply`, otherwise fitted and applied transforms disagree.
+    LOG_CLIP_MIN = 1e-9
+
     def compute_param(self, data):
         if self.type == "standardization":
+            # params = (mean, std) of the raw data
             mean = data.mean().item()
             std = data.std().item()
             self.params = mean, std
 
         elif self.type == "log_transform":
-            clipped_data = data.clip(min=1e-9)  # Ensure no non-positive values
+            # params = (mean, std) of log(data), NOT (min, max)
+            clipped_data = data.clip(min=self.LOG_CLIP_MIN)  # Ensure no non-positive values
             log_data = np.log(clipped_data)
             mean = log_data.mean().item()
             std = log_data.std().item()
             self.params = mean, std
 
         elif self.type == "minmax_normalization":
+            # params = (min, max) of the raw data
             data_min = data.min().item()
             data_max = data.max().item()
             self.params = data_min, data_max
@@ -53,8 +60,11 @@ class Transformer:
             return (data - mean) / std
 
         elif self.type == "log_transform":
-            data_min, data_max = self.params
-            return (data - data_min) / (data_max - data_min)
+            # Take the log first, then standardise using the mean/std of the log-data
+            # computed in `compute_param`.
+            log_mean, log_std = self.params
+            log_data = np.log(data.clip(min=self.LOG_CLIP_MIN))
+            return (log_data - log_mean) / log_std
 
         elif self.type == "minmax_normalization":
             data_min, data_max = self.params
