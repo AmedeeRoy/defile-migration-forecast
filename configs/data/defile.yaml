@@ -47,6 +47,14 @@ era5_hourly_variables:
   - "total_cloud_cover"
   - "surface_solar_radiation_downwards"
 
+# The far-field locations are back. They used to be excluded because their GEE export came
+# from ECMWF/ERA5_LAND/DAILY_AGGR: the CSVs were already daily, named precipitation
+# `total_precipitation_sum` (a daily total rather than an hourly rate), and had no hourly
+# values to average, so including them crashed the CSV reader and, once past that, would
+# have trained on daily sums while serving 24-hour means. Open-Meteo serves hourly data for
+# every location from one dataset, and src/data/weather.py applies one explicit aggregation
+# rule per variable to both the training and the forecast path, so the mismatch that forced
+# them out no longer exists.
 era5_daily_locations:
   - "Defile"
   - "Schaffhausen"

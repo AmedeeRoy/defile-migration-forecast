@@ -42,6 +42,6 @@ output_dir: ${paths.output_dir}
 
 # Saliency needs Trainer(inference_mode=False) and a backward-style pass per attributed
 # sample; capping it to a subsample of test batches keeps that cost bounded regardless of
-# test-set size (DEVELOPMENT.md 4.17).
+# test-set size.
 compute_saliency: true
 saliency_max_batches: 20
