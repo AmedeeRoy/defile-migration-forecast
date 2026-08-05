@@ -57,12 +57,22 @@ class DefileLitModule(LightningModule):
         criterion: Dict[str, Any],
         compile: bool,
         output_dir: str,
+        compute_saliency: bool = True,
+        saliency_max_batches: int = 20,
     ) -> None:
         """Initialize a `MNISTLitModule`.
 
         :param net: The model to train.
         :param optimizer: The optimizer to use for training.
         :param scheduler: The learning rate scheduler to use for training.
+        :param compute_saliency: Whether to compute Captum Saliency attributions during
+            testing for the contribution plots. Requires `trainer.inference_mode: False`.
+            Set to False to skip it entirely. Defaults to `True`.
+        :param saliency_max_batches: Saliency is computed on at most this many leading test
+            batches rather than the whole test set -- attributions are only ever consumed as
+            an average over samples (see `plt_explanations_*`), so a subsample is enough, and
+            it avoids paying the backward-pass cost and memory for every batch
+            (DEVELOPMENT.md 4.17). Ignored when `compute_saliency` is False.
         """
         super().__init__()
 
@@ -73,6 +83,8 @@ class DefileLitModule(LightningModule):
         self.net = net
         self.criterion = criterion
         self.output_dir = output_dir
+        self.compute_saliency = compute_saliency
+        self.saliency_max_batches = saliency_max_batches
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -216,7 +228,8 @@ class DefileLitModule(LightningModule):
     ### TEST -------------------
     def on_test_epoch_start(self) -> None:
         # Defining Saliency interpreter
-        self.explainer = Saliency(self.explainable_model_step)
+        if self.compute_saliency:
+            self.explainer = Saliency(self.explainable_model_step)
 
     def explainable_model_step(self, yr, doy, era5_main, era5_hourly, era5_daily):
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
@@ -237,9 +250,16 @@ class DefileLitModule(LightningModule):
         :param batch_idx: The index of the current batch.
         """
         loss, count_pred = self.model_step(batch)
-        # /!\ work only when Trainer(inference_mode = False)
-        with torch.enable_grad():
-            saliency = self.explain(batch)
+
+        # Saliency needs grad-tracking on the batch tensors (only possible with
+        # Trainer(inference_mode=False)) and a full backward-style pass per attributed
+        # sample, so it is capped to the first `saliency_max_batches` test batches rather
+        # than run on every one (DEVELOPMENT.md 4.17). The contribution plots only ever
+        # consume the mean attribution across samples, so a subsample is representative.
+        if self.compute_saliency and batch_idx < self.saliency_max_batches:
+            with torch.enable_grad():
+                saliency = self.explain(batch)
+            self.test_explanation.append(saliency)
 
         # update and log metrics
         self.test_loss(loss)
@@ -251,7 +271,6 @@ class DefileLitModule(LightningModule):
         self.test_pred["obs"].append(count)  # single value
         self.test_pred["mask"].append(mask)  # hourly mask
         self.test_pred["pred"].append(count_pred)  # hourly count
-        self.test_explanation.append(saliency)  # saliency
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
@@ -259,10 +278,13 @@ class DefileLitModule(LightningModule):
         for k in self.test_pred.keys():
             self.test_pred[k] = torch.cat(self.test_pred[k], 0).cpu()
 
-        self.test_explanation = [
-            torch.cat([exp[k] for exp in self.test_explanation], dim=0).cpu()
-            for k in range(len(self.test_explanation[0]))
-        ]
+        if self.test_explanation:
+            self.test_explanation = [
+                torch.cat([exp[k] for exp in self.test_explanation], dim=0).cpu()
+                for k in range(len(self.test_explanation[0]))
+            ]
+        else:
+            self.test_explanation = None
         # filepath = os.path.join(self.output_dir, 'test_explanation.pickle')
         # with open(filepath, 'wb') as f:
         #     pickle.dump(self.test_explanation, f)
@@ -408,23 +430,26 @@ class DefileLitModule(LightningModule):
         filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_doy_sum.jpg"
         plt_doy_sum(test, filepath=os.path.join(self.output_dir, filename))
 
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" ")) + "_contributions_metrics.jpg"
-        )
-        plt_explanations_metrics(
-            self.trainer.datamodule,
-            self.test_explanation,
-            filepath=os.path.join(self.output_dir, filename),
-        )
+        if self.test_explanation is not None:
+            filename = (
+                "_".join(self.trainer.datamodule.species.split(" "))
+                + "_contributions_metrics.jpg"
+            )
+            plt_explanations_metrics(
+                self.trainer.datamodule,
+                self.test_explanation,
+                filepath=os.path.join(self.output_dir, filename),
+            )
 
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" ")) + "_contributions_locations.jpg"
-        )
-        plt_explanations_locations(
-            self.trainer.datamodule,
-            self.test_explanation,
-            filepath=os.path.join(self.output_dir, filename),
-        )
+            filename = (
+                "_".join(self.trainer.datamodule.species.split(" "))
+                + "_contributions_locations.jpg"
+            )
+            plt_explanations_locations(
+                self.trainer.datamodule,
+                self.test_explanation,
+                filepath=os.path.join(self.output_dir, filename),
+            )
 
     ### EXPORT PREDICTIONS -------------------
     def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:

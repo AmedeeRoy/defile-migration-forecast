@@ -63,6 +63,40 @@ class DefileDataset(Dataset):
         self.mask = mask
         self.return_original = return_original
 
+        # `.sel(date=...)` on a full xarray Dataset costs on the order of hundreds of
+        # microseconds per call; with three stacks looked up per sample this dominates data
+        # loading at batch_size=1024, num_workers=0 (DEVELOPMENT.md 4.15). Materialise the
+        # *transformed* stacks -- the ones read on every training/validation/test step --
+        # into contiguous float32 arrays with the date axis first, and look each row's
+        # position up once per split instead of per item. The untransformed stacks are only
+        # read via return_original, once over the whole test/predict set at the end of a
+        # run (save_test/save_predict), where the xarray labels themselves are used by the
+        # caller -- left untouched.
+        self._main_trans_arr, main_dates = self._materialize(era5_main_trans)
+        self._hourly_trans_arr, hourly_dates = self._materialize(era5_hourly_trans)
+        self._daily_trans_arr, daily_dates = self._materialize(era5_daily_trans)
+
+        dates = count["date"]
+        self._main_idx = self._date_positions(main_dates, dates)
+        self._hourly_idx = self._date_positions(hourly_dates, dates)
+        self._daily_idx = self._date_positions(daily_dates, dates)
+
+    @staticmethod
+    def _materialize(ds):
+        """Stack every variable of an ERA5 xarray Dataset into one float32 array ordered
+        (variable, date, ...), so a single sample is a plain `arr[:, position]` instead of
+        an xarray `.sel(date=...)` call."""
+        da = ds.to_array()
+        rest = [d for d in da.dims if d not in ("variable", "date")]
+        arr = da.transpose("variable", "date", *rest).values.astype(np.float32, copy=False)
+        return arr, pd.DatetimeIndex(da["date"].values)
+
+    @staticmethod
+    def _date_positions(date_index, dates):
+        pos = date_index.get_indexer(dates)
+        assert (pos != -1).all(), "a count date is missing from its materialised ERA5 stack"
+        return pos
+
     def __len__(self):
         return len(self.count)
 
@@ -85,9 +119,9 @@ class DefileDataset(Dataset):
                 count["count"],
                 count["year_used_trans"],
                 count["doy_trans"],
-                self.era5_main_trans.sel(date=count["date"]),
-                self.era5_hourly_trans.sel(date=count["date"]),
-                self.era5_daily_trans.sel(date=count["date"]),
+                self._main_trans_arr[:, self._main_idx[idx]],
+                self._hourly_trans_arr[:, self._hourly_idx[idx]],
+                self._daily_trans_arr[:, self._daily_idx[idx]],
                 self.mask[:, idx],
             )
             sample = sample2tensor(sample)
