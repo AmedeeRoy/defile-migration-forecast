@@ -47,14 +47,20 @@ era5_hourly_variables:
   - "total_cloud_cover"
   - "surface_solar_radiation_downwards"
 
+# Only locations backed by hourly ERA5 CSVs are listed here, so that the daily
+# aggregation below (a 24-hour mean) means the same thing for every location, and matches
+# what `download_forecast_daily` computes at forecast time.
+# The far-field locations (Munich, Stuttgart, Frankfurt, Berlin, Prague, Warsaw) were
+# exported from ECMWF/ERA5_LAND/DAILY_AGGR instead: their CSVs are already daily, use the
+# column name `total_precipitation_sum` (a daily total, not an hourly rate), and have no
+# hourly values to average. Including them raised an AssertionError in `get_era5_hourly`
+# and, once past that, would have fed the model daily sums in training against
+# 24-hour means at forecast time. Re-adding them requires a separate variable list and an
+# explicit per-variable aggregation rule. See DEVELOPMENT.md sections 4.2 and 4.5.
 era5_daily_locations:
   - "Defile"
   - "Schaffhausen"
   - "Basel"
-  - "Munich"
-  - "Stuttgart"
-  - "Frankfurt"
-  - "Berlin"
 
 era5_daily_variables:
   - "temperature_2m"
