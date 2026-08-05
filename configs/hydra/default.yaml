@@ -7,7 +7,12 @@ defaults:
 
 # output directory, generated dynamically on each run
 run:
-  dir: ${paths.log_dir}/${task_name}/runs/${now:%Y-%m-%d}_${now:%H-%M-%S}/${data.species}
+  # Use the underscored species name, matching `sweep.subdir` below and the checkpoint
+  # path that configs/predict.yaml reads
+  # (prod/models/${underscore:'${data.species}'}/checkpoints/best.ckpt). With the raw name
+  # here, scripts/move_checkpoints_to_prod.py promoted single-species runs to
+  # "prod/models/Black Kite/" while prediction looked in "prod/models/Black_Kite/".
+  dir: ${paths.log_dir}/${task_name}/runs/${now:%Y-%m-%d}_${now:%H-%M-%S}/${underscore:'${data.species}'}
 sweep:
   dir: ${paths.log_dir}/${task_name}/multiruns/${now:%Y-%m-%d}_${now:%H-%M-%S}
   subdir: ${underscore:'${data.species}'}
