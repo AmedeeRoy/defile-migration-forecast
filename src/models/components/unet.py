@@ -198,6 +198,15 @@ class UNetplus(nn.Module):
             # nn.ReLU(),  # force output >= 0
         )
 
+        # Force the count to be zero during the hours of the day with no observation.
+        # Registered as a non-persistent buffer so it follows the module's device without
+        # being rebuilt on every forward pass, and without appearing in state_dict (which
+        # would break loading of existing checkpoints).
+        pred_mask = torch.ones(24)
+        pred_mask[:5] = 0
+        pred_mask[19:] = 0
+        self.register_buffer("pred_mask", pred_mask.view(1, 1, 24), persistent=False)
+
     def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
         # ---------------------------
@@ -206,7 +215,10 @@ class UNetplus(nn.Module):
         doy_ = doy.repeat(1, 24).unsqueeze(1)
         yr_ = yr.repeat(1, 24).unsqueeze(1)
         era5_hourly = rearrange(era5_hourly, "b f t x -> b (f x) t")
-        era5_main = era5_main.squeeze()
+        # squeeze(-1) drops the single-location axis only. A bare squeeze() would also
+        # drop the batch axis whenever the batch holds a single sample (e.g. a trailing
+        # batch of size 1), corrupting the concatenation below.
+        era5_main = era5_main.squeeze(-1)
         out_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
 
         encoder_outs = []
@@ -236,10 +248,6 @@ class UNetplus(nn.Module):
         # out = out_h + out_d
 
         # Force count to be zero during the hours of day with no data
-        pred_mask = np.array([1 for i in range(24)])
-        pred_mask[:5] = 0
-        pred_mask[19:] = 0
-        pred_mask = torch.FloatTensor(pred_mask).repeat(out.shape[0], 1).unsqueeze(1)
-        out = out * pred_mask.to(out.device)
+        out = out * self.pred_mask
 
         return out  # (batch, 1, 24)
