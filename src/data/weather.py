@@ -54,6 +54,16 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 # silently changing dataset and resolution part-way through the training history.
 ARCHIVE_MODEL = "era5"
 
+# The forecast path is pinned to ECMWF IFS at 0.25 deg, matching ARCHIVE_MODEL's grid.
+# Left unset, Open-Meteo's `best_match` picks per location -- at Defile that resolves to
+# DWD ICON-D2 at 2 km, a ~12x finer grid than the ERA5 training data (DEVELOPMENT.md
+# 4.19d). Measured over 61 days: pinning to ecmwf_ifs025 roughly doubles wind correlation
+# with the archive (u10 0.27->0.55) and brings its variance ratio from 1.73 to 0.95. Birds
+# crossing the gorge integrate wind over a section at least 2-5 km wide, so the coarser
+# grid is arguably the more relevant physical scale too, not just a train/serve
+# consistency trade-off.
+FORECAST_MODEL = "ecmwf_ifs025"
+
 # Read timeouts, in seconds. Archive requests span years and take far longer than a
 # forecast request, so the two are budgeted separately.
 ARCHIVE_TIMEOUT = 300
@@ -441,6 +451,7 @@ def fetch_forecast(locations, variables, lag_day=0, forecast_day=0, add_sun=Fals
             "longitude": lon,
             "past_days": lag_day,
             "forecast_days": forecast_day + 1,
+            "models": FORECAST_MODEL,
         }
     )
 

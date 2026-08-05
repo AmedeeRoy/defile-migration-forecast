@@ -335,10 +335,11 @@ SYNOPTIC_MIN_CORR = {
 }
 
 # Wind correlation is asserted over flat terrain only, where the two products do track each
-# other (measured 0.81-0.92). This is what would catch a flipped or swapped wind convention:
-# it would drive these correlations to roughly zero or negative.
+# other (measured 0.88-0.94 with the forecast path pinned to ecmwf_ifs025). This is what
+# would catch a flipped or swapped wind convention: it would drive these correlations to
+# roughly zero or negative.
 FLAT_REFERENCE_LOCATION = "Frankfurt"
-FLAT_WIND_MIN_CORR = 0.65
+FLAT_WIND_MIN_CORR = 0.75
 
 PARITY_PAST_DAYS = 60
 
@@ -459,13 +460,18 @@ def test_wind_convention_holds_against_the_live_api_over_flat_terrain():
 
 @pytest.mark.network
 def test_wind_over_complex_terrain_is_documented_as_divergent():
-    """Records the resolution gap at Defile rather than asserting it away.
+    """Records the resolution gap at Defile that persists even after resolution-matching.
 
-    ERA5's 25 km cell cannot resolve the gorge; the forecast endpoint's high-resolution models
-    can. Measured over 61 days, 10 m wind correlates about 0.90 between the two products at
-    flat Frankfurt but only about 0.27 at Defile, with 1.7x the variance. Wind direction at a
-    bottleneck is one of the strongest drivers of raptor passage, so this is a real train/serve
-    distribution shift that unifying the provider did not remove. See DEVELOPMENT.md 4.19d.
+    The forecast path is pinned to ecmwf_ifs025 (0.25 deg, matching the ERA5 archive's grid),
+    which closed most of the original gap: before the pin, 10 m wind correlated only about
+    0.27 at Defile against 0.90 at flat Frankfurt (DWD ICON-D2's 2 km grid resolving the gorge
+    that ERA5's 25 km cell cannot). After the pin, both paths use the same 0.25 deg product,
+    and correlation at Defile rises to about 0.55 -- but Frankfurt rises further, to about
+    0.93. So terrain still drives a real, if smaller, disagreement between the two paths even
+    at matched resolution: ERA5 is a reanalysis that assimilates observations and IFS-025 is a
+    raw forecast, and that distinction still bites harder in complex terrain than over flat
+    ground. Wind direction at a bottleneck is one of the strongest drivers of raptor passage,
+    so this residual gap is still worth tracking. See DEVELOPMENT.md 4.19d.
 
     This test asserts only the direction of the effect, so it fails if the gap ever closes -
     which would mean the products, or this understanding of them, have changed.
