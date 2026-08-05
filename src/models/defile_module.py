@@ -115,12 +115,11 @@ class DefileLitModule(LightningModule):
         :return: A tuple containing (in order):
             - A tensor of losses.
             - A tensor of predictions.
-            - A tensor of target labels.
         """
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
-        return loss
+        return loss, count_pred
 
     ### TRAIN -------------------
 
@@ -140,7 +139,7 @@ class DefileLitModule(LightningModule):
         :param batch_idx: The index of the current batch.
         :return: A tensor of losses between model predictions and targets.
         """
-        loss = self.model_step(batch)
+        loss, _ = self.model_step(batch)
 
         # update and log metrics
         self.train_loss(loss)
@@ -161,15 +160,14 @@ class DefileLitModule(LightningModule):
         :param batch_idx: The index of the current batch.
         """
 
-        loss = self.model_step(batch)
+        loss, count_pred = self.model_step(batch)
 
         # update and log metrics
         self.val_loss(loss)
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        # save all predictions
+        # save all predictions (reuse the forward pass from model_step)
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
         self.val_pred["obs"].append(count)
         self.val_pred["mask"].append(mask)
@@ -238,7 +236,7 @@ class DefileLitModule(LightningModule):
             labels.
         :param batch_idx: The index of the current batch.
         """
-        loss = self.model_step(batch)
+        loss, count_pred = self.model_step(batch)
         # /!\ work only when Trainer(inference_mode = False)
         with torch.enable_grad():
             saliency = self.explain(batch)
@@ -247,9 +245,8 @@ class DefileLitModule(LightningModule):
         self.test_loss(loss)
         self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        # save all predictionsnstall
+        # save all predictions (reuse the forward pass from model_step)
         count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
         self.test_pred["obs"].append(count)  # single value
         self.test_pred["mask"].append(mask)  # hourly mask
@@ -437,9 +434,9 @@ class DefileLitModule(LightningModule):
             labels.
         :param batch_idx: The index of the current batch.
         """
-        loss = self.model_step(batch)
-
-        # save all predictions
+        # No loss is computed here: ForecastDataset supplies a dummy zero `count` and a
+        # length-1 zero `mask`, so evaluating the criterion would divide by
+        # mask.sum() == 0 and yield NaN, on top of costing an extra forward pass.
         _, yr, doy, era5_main, era5_hourly, era5_daily, _ = batch
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
 
