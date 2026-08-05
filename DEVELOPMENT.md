@@ -21,80 +21,76 @@ the model learns to depend on that isn't available then is a liability.
 
 ## Status
 
-`centralize-weather` is rebased onto current `main`, tested, and not yet merged — see
-Phase 0 below. Everything else identified in the last full audit (August 2026) has merged
-or is resolved on that branch, **except** the four items in the next section. None of the
-`prod/models/` checkpoints have been retrained against any of it yet.
+Phases 0 and 1 are merged: `centralize-weather` (one `get_weather()` for training and
+forecasting), the season guard (4.11), and the uncertainty-channel drop (4.8). 4.9
+(normalisation leakage) was fixed and then reverted — Raphaël's call, fitting on the full
+dataset isn't a real problem for this use case, so it's closed as won't-fix rather than
+carried as an open item. None of the `prod/models/` checkpoints have been retrained against
+any of this yet (Phase 2, below).
 
 ## Open defects
 
-**4.8 The uncertainty output channel is untrained.** `configs/model/unet.yaml` sets
-`nb_output_features: 2`, and `ProbaRMSE.alpha` is 1 everywhere (`model.criterion.rmse.alpha`
-is still commented out of the `hparams_search` sweep). With `alpha = 1` the loss is
-`1·rmse_term + 0·nll_term`, so channel 1 never receives gradient and stays essentially
-random, even though `save_test` exports `pred_count_up`/`pred_count_down` from it. The
-app's uncertainty bands come from climatological quantiles, not the model, so nothing
-user-facing is wrong today — but the exported bands should not be trusted. Fix: drop to one
-output channel, or tune `alpha` in (0, 1).
+**4.19d The model trains on 25 km wind and is served ~2 km wind, and at Défilé those are
+substantially different fields.** Root cause now confirmed, not just suspected: the
+forecast path (`source="forecast"` in `src/data/weather.py`) doesn't set `models=`, so
+Open-Meteo's `best_match` picks a model per location. At Défilé that resolves to **DWD
+ICON-D2 at 2 km** — confirmed by comparing the returned grid coordinates (`lat=46.12,
+lon=5.92`) against an explicit `models=dwd_icon_d2` request, which snaps to the identical
+point. Training uses ERA5 pinned to `models=era5`, a 0.25° (~25-28 km) grid. So the
+mismatch is a ~12x difference in grid spacing between the two paths, not a subtlety.
 
-**4.9 Normalisation statistics are fitted on train + val + test.** `DataTransformer` is
-built from the full filtered weather arrays in `defile_datamodule.py` before the split is
-used. Mild leakage, worse for being min/max normalisation (outlier-sensitive). Fix: fit on
-training years only.
+Measured over 61 days at Défilé, switching the forecast path from the default (ICON-D2) to
+`ecmwf_ifs025` — a real, working parameter value, confirmed against the live API, that
+resolves to the same 0.25° grid as `era5` (`lat=46.0, lon=6.0`):
 
-**4.11 There is no season guard.** The cron runs every day of the year, but training is
-restricted to `doy` 196–335 (mid-July to end of November). For roughly seven months a year
-the job would publish confident extrapolations from a model that has never seen that part
-of the year. Fix: skip or clearly flag out-of-season runs, and have the app render them as
-unavailable rather than as a forecast.
-
-**4.19d The model trains on 25 km wind and would be served ~2 km wind, and at Défilé those
-are substantially different fields.** Unifying the weather provider (below) does *not* fix
-this. The ERA5 archive is a 0.25° (~25 km) grid; the Open-Meteo forecast endpoint serves
-high-resolution NWP. Measured over 61 days:
-
-| | Défilé (gorge) | Frankfurt (flat) |
+| vs ERA5 archive | default (ICON-D2, 2 km) | `ecmwf_ifs025` (0.25°) |
 |---|---|---|
-| `u_component_of_wind_10m` corr | **0.27** | 0.90 |
-| `v_component_of_wind_10m` corr | 0.66 | 0.81 |
-| `u_component_of_wind_100m` corr | 0.50 | 0.92 |
-| `temperature_2m` corr | 0.97 | 0.97 |
-| `surface_pressure` corr | 0.98 | 0.99 |
-| `u_wind_10m` std ratio (fcst/ERA5) | **1.73** | 0.71 |
+| `u_component_of_wind_10m` corr | 0.27 | **0.55** |
+| `v_component_of_wind_10m` corr | 0.66 | **0.80** |
+| `u_component_of_wind_100m` corr | 0.50 | **0.65** |
+| `v_component_of_wind_100m` corr | 0.69 | **0.83** |
+| `u_wind_10m` std ratio (fcst/ERA5) | 1.73 | **0.95** |
+| `temperature_2m` corr / std ratio | 0.97 / 0.94 | 0.97 / **1.01** |
 
-Temperature and pressure agree everywhere, so this is resolution, not a mapping error.
-ERA5's cell cannot resolve the gorge that makes Défilé a bottleneck, while the forecast
-model can, and produces 73% more variance in the along-valley component. The model would
-learn wind–passage relationships from a field without the channelling effect, then get
-served one with it at inference time. Wind direction is one of the strongest drivers of
-raptor passage, so this is a strong candidate for why forecast skill might disappoint even
-after every other fix lands.
+Pinning to `ecmwf_ifs025` roughly doubles wind agreement and brings the variance ratio to
+near 1. It doesn't reach 1.0 corr — ERA5 is a reanalysis that assimilates observations,
+IFS-025 is a raw forecast, so some residual disagreement is expected even at matching
+resolution — but the improvement is large and real, not marginal.
 
-Two candidate mitigations, neither implemented: pin the forecast endpoint to a coarse
-global model (`models=ecmwf_ifs025`) so it matches ERA5's scale — cheap to try, trades
-forecast sharpness for train/serve consistency, should be measured not assumed; or train on
-Open-Meteo's Historical Forecast API (past forecasts at known lead times) so both sides of
-the contract are the same product at the same resolution — the more principled fix, more
-work. `tests/test_weather.py::test_wind_over_complex_terrain_is_documented_as_divergent`
-records the effect so it can't be quietly forgotten.
+There's also a domain reason to prefer the coarser product on its own merits, independent
+of train/serve consistency: birds crossing Défilé integrate wind over a section of the
+gorge at least 2-5 km wide. ICON-D2's 2 km detail is finer than what's biologically
+relevant to a bird making a crossing decision over that width; a 25 km field is arguably
+closer to the right physical scale for the phenomenon, not just a compromise for
+consistency's sake.
+
+**Historical Forecast API, checked and corrected:** covers `2016-01-01` through a rolling
+window to roughly two weeks ahead of today (`2026-08-20` as of this check), not "since
+2024" as assumed going in. It carries the same `models=` catalog, including
+`ecmwf_ifs025`. About 10 years of archived past-forecast data at matching lead times — not
+long enough to replace the 60-year ERA5 training history, but plenty for the lead-day
+skill measurement in Phase 3, and for a fine-tune experiment at matching lead times if that
+turns out to be worth doing after the simpler `ecmwf_ifs025` pin is measured in production.
+
+**Recommended next step, not yet implemented:** pin the forecast path to `models=ecmwf_ifs025`
+in `src/data/weather.py`. Cheap (one parameter), well-supported by the numbers above, and
+the domain argument suggests it's not merely a stopgap. `tests/test_weather.py::test_wind_over_complex_terrain_is_documented_as_divergent`
+records the current (default-model) numbers so the effect can't be quietly forgotten;
+its tolerances would need loosening once the default model changes.
 
 ## Plan
 
-**Phase 0 — land the structural piece.** Merge `centralize-weather`: one `get_weather()`
-entry point (`src/data/weather.py`) for both training and forecasting, replacing the GEE
-CSV export and the independent Open-Meteo forecast client that used to drift apart from it.
-Blocks everything below — 4.19d's mitigations need the new weather module to exist, and
-retraining needs this merged first.
+**Phase 0 — done.** `centralize-weather` merged: one `get_weather()` entry point
+(`src/data/weather.py`) for both training and forecasting, replacing the GEE CSV export
+and the independent Open-Meteo forecast client that used to drift apart from it.
 
-**Phase 1 — three independent, mechanical fixes**, same size as the batch already merged.
-Can run in parallel; none touch the same files as each other or as Phase 0.
-- `fix/uncertainty-channel` (4.8)
-- `fix/normalization-leakage` (4.9)
-- `feat/season-guard` (4.11)
+**Phase 1 — done.** `fix/uncertainty-channel` (4.8) and `feat/season-guard` (4.11) merged.
+`fix/normalization-leakage` (4.9) was merged, then reverted — see Status above.
 
-**Phase 2 — retrain all 11 species checkpoints**, once Phase 0 + 1 are merged. This is the
-actual gate for trusting any model-quality number; nothing before this point should be
-judged on accuracy.
+**Phase 2 — retrain all 11 species checkpoints**, next. This is the actual gate for
+trusting any model-quality number; nothing before this point should be judged on accuracy.
+Worth doing once, after the `ecmwf_ifs025` pin below lands too, rather than retraining
+twice.
 
 **Phase 3 — two research spikes**, branch per experiment, not urgent to land quickly:
 - **Year selection.** `data/count/readme.md` documents real protocol changes: sporadic
@@ -108,7 +104,9 @@ judged on accuracy.
   available and untested; include it in the sweep. Bigger structural idea worth a follow-up:
   predict the *share* of the season's total per day/hour and forecast the annual total
   separately, removing most year-to-year variance from the hard part of the problem.
-- **Wind resolution** (4.19d's two mitigations, above) — measure before committing to either.
+- **Wind resolution** (4.19d, above) — pin `models=ecmwf_ifs025` on the forecast path, then
+  measure the effect on forecast skill (not just feature correlation) before deciding
+  whether the lead-day fine-tune on the Historical Forecast API is worth the extra work.
 
 **Phase 4 — Trektellen counts as model input.** Plumbing already exists: a working proxy at
 `https://defile.raphaelnussbaumer.com/trektellen/{siteId}/{yyyymmdd}` and a 47 MB NW-Europe
