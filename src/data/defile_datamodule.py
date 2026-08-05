@@ -266,6 +266,7 @@ class DefileDataModule(LightningDataModule):
         train_val_test: str = "period",
         year_used: str = "none",
         compute_transform_data: bool = True,
+        split_seed: int = 0,
         batch_size: int = 64,
         num_workers: int = 0,
         pin_memory: bool = False,
@@ -281,6 +282,9 @@ class DefileDataModule(LightningDataModule):
         :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
         :param train_val_test: The type of train, validation and test split. Defaults to `"period"`.
         :param year_used: The type of year variable used in the model. Defaults to `"none"`.  "constant" for no information of year included in the model, "none" for the exact year or "period" where only a broad category of year period is included
+        :param split_seed: Seed for the train/val/test split. The split is drawn from a
+            dedicated generator seeded with this value, so it is identical on every call
+            to `setup()` regardless of global RNG state. Defaults to `0`.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -312,6 +316,7 @@ class DefileDataModule(LightningDataModule):
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.year_used = year_used
         self.compute_transform_data = compute_transform_data
+        self.split_seed = split_seed
         self.batch_size_per_device = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
@@ -434,6 +439,14 @@ class DefileDataModule(LightningDataModule):
             count = self.read_counts()
 
             # Splitting Training, Validation and Test
+            # `setup()` is called again by Lightning for each stage ("fit", then "test"),
+            # so the split MUST be reproducible across calls: otherwise the years held
+            # out during fit are not the years evaluated by trainer.test(), and the
+            # reported test metrics are computed partly on years seen during training.
+            # Using a generator seeded from `split_seed` (rather than the global numpy
+            # RNG, whose state advances during training) makes every call identical.
+            rng = np.random.default_rng(self.split_seed)
+
             # OPTION 1: split dataset years based on type of data collected
             if self.train_val_test == "period":
                 # Get unique years for each period
@@ -442,9 +455,9 @@ class DefileDataModule(LightningDataModule):
                     for period in [2000, 2100, 2200]
                 }
 
-                # Shuffle order of the year in each group
-                # np.random.seed(self.seed)
-                [np.random.shuffle(y) for y in yr_grp.values()]
+                # Shuffle order of the year in each group (np.unique returns sorted
+                # years, so a freshly seeded generator gives a deterministic result)
+                [rng.shuffle(y) for y in yr_grp.values()]
 
                 # Assign years to each group according to the cumulative ratio defined
                 for period, y in yr_grp.items():
@@ -465,7 +478,7 @@ class DefileDataModule(LightningDataModule):
                 )
             else:
                 # Assign each row in count["tvt"] randomly based on proportions
-                count["tvt"] = np.random.choice(
+                count["tvt"] = rng.choice(
                     ["train", "val", "test"],
                     size=len(count),
                     p=np.diff(np.concatenate(([0], self.train_val_test_cum_ratio, [1]))),
