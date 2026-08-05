@@ -115,49 +115,42 @@ class TweedieLoss:
 @dataclass
 class ProbaRMSE:
     """
-    Probabilistic Root Mean Square Error Loss Function.
+    Masked RMSE loss on log1p-transformed counts.
 
-    This loss function combines a standard RMSE term with a negative log-likelihood term
-    for uncertainty quantification. It's designed for models that predict both mean and
-    standard deviation (uncertainty) values.
-
-    The loss consists of two components:
-    1. A weighted RMSE term between log-transformed predictions and targets
-    2. A negative log-likelihood term that penalizes poor uncertainty estimates
+    Used to combine a negative log-likelihood term against a second, model-predicted
+    "uncertainty" channel, weighted against the RMSE term by `alpha`. That channel was
+    never trained -- with `alpha` fixed at 1 in every config, the NLL term's contribution
+    to the loss was always multiplied by `(1 - alpha) = 0`, so it received no gradient
+    (DEVELOPMENT.md 4.8). The model has since dropped to a single output channel, and this
+    class dropped the NLL term along with it. `alpha` remains as this criterion's weight in
+    the combined loss, the same role `TweedieLoss.alpha` plays.
 
     Attributes:
-        alpha (float): Weighting factor for the combined loss. Default is 1.
-                      When alpha=1, only RMSE is used.
-                      When alpha=0, only negative log-likelihood is used.
-                      Values between 0 and 1 combine both terms.
+        alpha (float): Weight of this term in the combined loss. Default is 1.
     """
 
     alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
         """
-        Compute the probabilistic RMSE loss.
+        Compute the masked RMSE loss.
 
         Args:
-            y_pred (torch.Tensor): Predicted values with shape [batch_size, 2, time_steps].
-                                  Channel 0 contains mean predictions (log-transformed).
-                                  Channel 1 contains standard deviation predictions.
+            y_pred (torch.Tensor): Predicted values with shape [batch_size, 1, time_steps],
+                                  log-transformed.
             y (torch.Tensor): Ground truth target values with shape [batch_size, 1] or [batch_size].
                              Expected to be in original scale (not log-transformed).
             mask (torch.Tensor): Binary mask with shape [batch_size, time_steps].
                                 Indicates which time steps to include in the calculation.
 
         Returns:
-            torch.Tensor: Scalar loss value combining RMSE and negative log-likelihood terms.
+            torch.Tensor: Scalar RMSE loss value, scaled by alpha.
 
         Notes:
             - The function applies log1p transformation to targets for numerical stability
-            - Standard deviation is scaled by dividing by 4 (empirical scaling factor)
-            - Epsilon is added to prevent division by zero and log(0) issues
-            - The final loss is scaled by alpha, making it effectively alpha² * (weighted combination)
+            - Epsilon is added to prevent division by zero
         """
         epsilon = 1e-8
-        pi = torch.acos(torch.zeros(1)).item() * 2
 
         # Average over the hours actually covered by the survey.
         # NB: this must divide by mask.sum(), not by the 24 hours of the day. Dividing by
@@ -169,24 +162,10 @@ class ProbaRMSE:
         # Compute masked mean predictions (log-transformed)
         y_masked = torch.sum(y_pred[:, 0, :] * mask, dim=1) / mask_hours
 
-        # Compute masked standard deviation with scaling and epsilon for stability
-        y_std_masked = epsilon + torch.sum(y_pred[:, 1, :] * mask, dim=1) / mask_hours / 4
-
         # RMSE term: squared difference between log-transformed target and prediction
         rmse_term = torch.mean((torch.log1p(y.squeeze()) - y_masked) ** 2)
 
-        # Negative log-likelihood term: penalizes poor uncertainty estimates
-        nll_term = torch.mean(
-            (
-                (torch.log1p(y.squeeze()) - y_masked) ** 2 / (2 * y_std_masked)
-                + torch.log(2 * pi * y_std_masked) / 2
-            )
-        )
-
-        # Combine terms with alpha weighting
-        loss = self.alpha * rmse_term + (1 - self.alpha) * nll_term
-
-        return loss
+        return self.alpha * rmse_term
 
 
 # @dataclass

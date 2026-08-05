@@ -23,7 +23,10 @@ net:
   nb_lag_day: ${data.lag_day}
   nb_layer_daily: 6
   nb_hidden_features_daily: 128
-  nb_output_features: 2
+  # A second channel used to feed an uncertainty (NLL) term that never received gradient,
+  # since alpha=1 everywhere zeroed out its contribution to the loss (DEVELOPMENT.md 4.8).
+  # `ProbaRMSE` now only reads channel 0.
+  nb_output_features: 1
   dropout: True
 
 criterion:
