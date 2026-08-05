@@ -145,7 +145,7 @@ All weather goes through `src.data.weather.get_weather`, which takes a `source`:
 All three share one `CONVERSION_DICT`, one set of pinned request units, and one
 `DAILY_AGGREGATION` rule per variable, so a change to variables, units or aggregation is
 made **once**. This replaced two independent implementations (GEE CSVs for training,
-Open-Meteo for serving) that had silently drifted apart; see `DEVELOPMENT.md` 5.2.
+Open-Meteo for serving) that had silently drifted apart.
 
 When touching this module, keep that single-path property: add a variable to
 `CONVERSION_DICT`, not to a caller, and never special-case one `source` in a way that
@@ -165,20 +165,17 @@ correspond to the checkpoints in `prod/models/`, and retraining overwrites it.
 
 ## Known defects — read before making changes
 
-`DEVELOPMENT.md` at the repo root is the current state-of-the-project and roadmap
-document. It lists confirmed defects with file references, including several that
-corrupt features silently (a broken log transform that makes precipitation and wind gusts
-constant, wind unit and convention errors on the forecast path, a re-drawn test split, and
-daily-aggregation mismatches). **Read it before trusting any model metric or tuning
-hyperparameters** — the values currently in `configs/experiment/*.yaml` were tuned against
-corrupted features.
+`DEVELOPMENT.md` at the repo root is the live roadmap: open defects and the phased plan to
+close them, nothing archived. **Read it before trusting any model metric or tuning
+hyperparameters** — the values currently in `configs/experiment/*.yaml` were tuned before
+several of these fixes landed and before this migration, so they should be considered void
+until retrained.
 
-Most of those defects have open PRs (#26–#35) or are fixed on the `centralize-weather`
-branch; section 4 records per-defect status. Note in particular 4.19d: Défilé sits in a gorge
-that ERA5's 25 km cell cannot resolve, so 10 m wind correlates only ~0.27 between the
-training and serving products there (~0.90 over flat terrain). That is a genuine train/serve
+The one worth knowing about even without opening the file: Défilé sits in a gorge that
+ERA5's 25 km cell cannot resolve, so 10 m wind correlates only ~0.27 between the training
+and serving products there (~0.90 over flat terrain). That's a genuine train/serve
 distribution shift which unifying the provider did **not** fix, and it is plausibly the
-biggest remaining limit on forecast skill.
+biggest remaining limit on forecast skill (`DEVELOPMENT.md` 4.19d).
 
 Tests live in `tests/` and cover the weather layer only. The rest of the codebase has none.
 

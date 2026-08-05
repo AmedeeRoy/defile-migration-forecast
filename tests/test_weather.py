@@ -392,8 +392,9 @@ def test_archive_and_forecast_paths_agree_on_scale():
 
     Builds every feature for the same recent days through both paths and compares mean offset
     and spread. A renamed variable, a changed Open-Meteo default or a unit slip shows up here
-    immediately; this is what would have caught DEVELOPMENT.md 4.3 (wind in km/h, a factor of
-    3.6) and 4.5 (daily sums against 24-hour means, a factor of 24).
+    immediately; this is what would have caught the historical wind-unit bug (km/h read as
+    m/s, a factor of 3.6) and the historical daily-aggregation bug (daily sums compared
+    against 24-hour means, a factor of 24).
     """
     stats = compare_paths("Defile", PARITY_VARIABLES)
 

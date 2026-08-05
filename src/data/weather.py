@@ -197,9 +197,8 @@ CONVERSION_DICT = {
 }
 
 # How each variable collapses from hourly to daily. Accumulations sum, state variables
-# average. This is applied identically to the cache/archive and forecast paths, which is
-# what stops the three-way disagreement described in DEVELOPMENT.md section 4.5 from
-# recurring.
+# average. This is applied identically to the cache/archive and forecast paths, so training
+# and serving cannot disagree about what "daily" means for a given variable.
 #
 # Gust is treated as a state variable and averaged. A daily *maximum* is arguably the more
 # meteorologically meaningful summary; that is a modelling change rather than a bug fix, so

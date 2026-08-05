@@ -71,8 +71,8 @@ class DefileLitModule(LightningModule):
         :param saliency_max_batches: Saliency is computed on at most this many leading test
             batches rather than the whole test set -- attributions are only ever consumed as
             an average over samples (see `plt_explanations_*`), so a subsample is enough, and
-            it avoids paying the backward-pass cost and memory for every batch
-            (DEVELOPMENT.md 4.17). Ignored when `compute_saliency` is False.
+            it avoids paying the backward-pass cost and memory for every batch.
+            Ignored when `compute_saliency` is False.
         """
         super().__init__()
 
@@ -254,7 +254,7 @@ class DefileLitModule(LightningModule):
         # Saliency needs grad-tracking on the batch tensors (only possible with
         # Trainer(inference_mode=False)) and a full backward-style pass per attributed
         # sample, so it is capped to the first `saliency_max_batches` test batches rather
-        # than run on every one (DEVELOPMENT.md 4.17). The contribution plots only ever
+        # than run on every one. The contribution plots only ever
         # consume the mean attribution across samples, so a subsample is representative.
         if self.compute_saliency and batch_idx < self.saliency_max_batches:
             with torch.enable_grad():

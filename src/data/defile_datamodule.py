@@ -64,7 +64,7 @@ class DefileDataset(Dataset):
 
         # `.sel(date=...)` on a full xarray Dataset costs on the order of hundreds of
         # microseconds per call; with three stacks looked up per sample this dominates data
-        # loading at batch_size=1024, num_workers=0 (DEVELOPMENT.md 4.15). Materialise the
+        # loading at batch_size=1024, num_workers=0. Materialise the
         # *transformed* stacks -- the ones read on every training/validation/test step --
         # into contiguous float32 arrays with the date axis first, and look each row's
         # position up once per split instead of per item. The untransformed stacks are only

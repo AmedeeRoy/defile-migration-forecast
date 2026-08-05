@@ -8,7 +8,7 @@ def plt_predict(data, species=None, filepath=None):
 
     # Grid sized to the actual number of forecast days rather than a hard-coded 2x3, which
     # only matched forecast_day=5 and otherwise either raised an IndexError (more days) or
-    # left blank panels with a broken ylabel placement (fewer days) -- DEVELOPMENT.md 4.18.
+    # left blank panels with a broken ylabel placement (fewer days).
     ncols = min(3, n)
     nrows = -(-n // ncols)  # ceil division
     fig, ax = plt.subplots(

@@ -13,10 +13,10 @@ days, and the results are displayed by the companion
 
 This work is based on the [lightning-hydra-template](https://github.com/ashleve/lightning-hydra-template/).
 
-> **Project status:** see [DEVELOPMENT.md](./DEVELOPMENT.md) for the current
-> state-of-the-project assessment, a prioritised list of known defects, and the
-> development roadmap. Model metrics and the tuned hyperparameters in
-> `configs/experiment/` should not be trusted until the P0 items there are resolved.
+> **Project status:** see [DEVELOPMENT.md](./DEVELOPMENT.md) for open defects and the
+> phased plan to close them. Model metrics and the tuned hyperparameters in
+> `configs/experiment/` should not be trusted until the checkpoints are retrained against
+> the fixes that have already landed.
 
 ## Project Structure
 
