@@ -64,10 +64,28 @@ and the independent Open-Meteo forecast client that used to drift apart from it.
 **Phase 1 — done.** `fix/uncertainty-channel` (4.8) and `feat/season-guard` (4.11) merged.
 `fix/normalization-leakage` (4.9) was merged, then reverted — see Status above.
 
-**Phase 2 — retrain all 11 species checkpoints**, next. This is the actual gate for
-trusting any model-quality number; nothing before this point — including the `ecmwf_ifs025`
-pin's actual effect on forecast skill, not just feature correlation — should be judged on
-accuracy.
+**Phase 2 — retrain all 11 species checkpoints, and fix what "model quality" means while
+doing it.** Retraining is the actual gate for trusting any model-quality number; nothing
+before this point — including the `ecmwf_ifs025` pin's actual effect on forecast skill, not
+just feature correlation — should be judged on accuracy. But the two metrics currently
+reported (`test/r2_score`, `test/spearman_coeff` in `defile_module.py`) pool every test-set
+hour into one number, which can't tell a model that gets the *average* right from one that
+gets the *shape* right. Add metrics for the three things that actually matter for this
+forecast and are invisible in a pooled r2:
+- **Peak reproduction** — error in predicted peak day-of-year and peak magnitude, per year
+  per species, not just average error across all days.
+- **Intra-day shape** — correlation or RMSE between predicted and true *diurnal* pattern
+  within a survey day (normalise out the daily magnitude first, so this isolates shape from
+  total count). This is the metric this project's whole hourly-rate framing has been missing.
+- **Inter-annual variation** — does the model track which years had more or less passage,
+  not just perform well on average across years pooled together.
+
+Package these, plus the existing per-year diagnostic plots (`plt_doy_sum` already plots
+true-vs-predicted daily curves per test year; `plt_timeseries`, `plt_true_vs_prediction`,
+`plt_counts_distribution` in `src/plots/save_test.py`), into **one consolidated PDF/PNG
+report per species per run** rather than the current scattered plot files — this becomes the
+tool used to judge every Phase 3 experiment (year ladder, location/variable ablation)
+against, so it needs to exist before those comparisons are meaningful, not after.
 
 **Phase 3 — general modelling research, branch per experiment, not urgent to land quickly.**
 The main one: **location and variable selection.** `era5_main_variables`,
