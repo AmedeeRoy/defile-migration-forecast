@@ -67,25 +67,99 @@ and the independent Open-Meteo forecast client that used to drift apart from it.
 **Phase 2 — retrain all 11 species checkpoints, and fix what "model quality" means while
 doing it.** Retraining is the actual gate for trusting any model-quality number; nothing
 before this point — including the `ecmwf_ifs025` pin's actual effect on forecast skill, not
-just feature correlation — should be judged on accuracy. But the two metrics currently
-reported (`test/r2_score`, `test/spearman_coeff` in `defile_module.py`) pool every test-set
-hour into one number, which can't tell a model that gets the *average* right from one that
-gets the *shape* right. Add metrics for the three things that actually matter for this
-forecast and are invisible in a pooled r2:
-- **Peak reproduction** — error in predicted peak day-of-year and peak magnitude, per year
-  per species, not just average error across all days.
-- **Intra-day shape** — correlation or RMSE between predicted and true *diurnal* pattern
-  within a survey day (normalise out the daily magnitude first, so this isolates shape from
-  total count). This is the metric this project's whole hourly-rate framing has been missing.
-- **Inter-annual variation** — does the model track which years had more or less passage,
-  not just perform well on average across years pooled together.
+just feature correlation — should be judged on accuracy. The data is highly skewed
+(61–95% zero survey rows depending on species; the top 1% of rows hold 27–70% of all birds
+counted) and the survey unit itself changed shape over the project's history (mean survey
+duration ~9.7 h in 2013 vs. ~1.0 h from 2022 on, rows/year up ~12x over the same span), so
+both what the loss fits and what gets reported need to account for that, not just retrain
+against the two metrics that exist today.
 
-Package these, plus the existing per-year diagnostic plots (`plt_doy_sum` already plots
-true-vs-predicted daily curves per test year; `plt_timeseries`, `plt_true_vs_prediction`,
-`plt_counts_distribution` in `src/plots/save_test.py`), into **one consolidated PDF/PNG
-report per species per run** rather than the current scattered plot files — this becomes the
-tool used to judge every Phase 3 experiment (year ladder, location/variable ablation)
-against, so it needs to exist before those comparisons are meaningful, not after.
+#### Loss function
+
+`TweedieLoss` and `ProbaRMSE` currently fit the *same* target (`y`, the survey's average
+hourly rate) two inconsistent ways: Tweedie averages the prediction across hours in **count
+space** (`expm1` first, then mean), ProbaRMSE averages in **log space** (mean first, no
+`expm1`). By Jensen's inequality these agree only when the day is perfectly flat, and
+diverge more the more peaked the true diurnal shape is — measured at ~11% (mild peak) to
+~17% (sharp peak) apart in log units. Concretely, whenever the model's own `out_h`
+sub-network correctly develops a real peak, `ProbaRMSE`'s gradient pulls that peak back
+down, purely as an artifact of the two loss terms disagreeing about what "the model's
+predicted average" means — not because a lower peak is a better fit. This is not a
+deliberate multi-objective design (that would mean two terms targeting genuinely different
+quantities); it's the same quantity computed inconsistently, and it works directly against
+peak reproduction.
+
+- **Fix, one line:** make `ProbaRMSE` reuse `applyMask` (the same aggregation `TweedieLoss`
+  already uses) instead of averaging in log space directly, so the two terms can't diverge:
+  `y_masked = torch.log1p(applyMask(y_pred[:, 0, :], mask, return_hourly=True))`.
+- **Then ablate, don't assume:** default to Tweedie alone (already a proper scoring rule
+  for zero-inflated skewed counts, per-species-tuned `p`) as the baseline, and test
+  Tweedie + fixed-`ProbaRMSE` against it — specifically on the sparsest species (Merlin,
+  Osprey: 90–95% zero rows), where a smoother log-space term might stabilise gradients where
+  Tweedie alone has little signal. Decide from the metrics below, not by assumption.
+- **Row weighting — a config flag (`data.loss_weighting`), not a fixed choice**, since the
+  right answer isn't obvious: a 6am–7pm survey and a 10am–2pm survey get very different
+  weight under raw-duration weighting even though most of the long survey's extra hours may
+  be near-zero activity, and the model's `pred_mask` already hard-zeroes predictions outside
+  05–19 UTC regardless. Three options to test: `"none"` (status quo, baseline); `"duration"`
+  (weight = `mask.sum()`, the simple fix for the ~12x reweighting toward the
+  hourly-recording era); `"active_overlap"` (weight = overlap between the survey mask and
+  the model's fixed 05–19 UTC window, so a short midday survey inside the active window
+  isn't penalised relative to a long dawn-to-dusk one, and no row is penalised for hours the
+  model is structurally forbidden from predicting). A fourth option — weighting by expected
+  activity from an *hourly* climatology — is the most faithful to the underlying question
+  but needs an hourly climatology built first (`species_doy_statistics.json` is daily-only
+  today); not one of the first ones to try.
+- **Later, bigger change:** the architecture already factorises `out = 8 · out_h · out_d`
+  (shape × magnitude), but neither sub-network is ever directly supervised — both only see
+  gradient through the single combined scalar. Dates recorded as ~12 one-hour blocks (common
+  since 2014, near-universal since 2021) are an empirical hourly profile already sitting in
+  the data, currently only used as an accidental reweighting mechanism (§5.1). Add a direct
+  auxiliary loss on `out_h` (cross-entropy or KL against the normalised true hourly counts,
+  on dates where that resolution exists) — this *is* genuine multi-objective, since it
+  supervises a different sub-output with different, finer-grained ground truth, rather than
+  the same scalar target measured twice inconsistently. Sequence after the ablation above.
+
+#### Reporting and metrics
+
+Report one, at most two, complementary metrics per level — no redundant variants, though
+extra diagnostics can be computed without being shown. All of them reported **per species
+and per era, never pooled** (Merlin at 95% zero and Common Buzzard at 65% zero are different
+problems), and all with a **skill score against day-of-year climatology**
+(`1 − score_model / score_climatology`, using the just-restored
+`data/count/species_doy_statistics.json`) and against **persistence** (yesterday's count) as
+naive baselines — if the model doesn't beat climatology, the weather features aren't
+contributing anything, and no raw metric value alone will show that. This is purely an
+evaluation-time comparison, not a training input: it's a second scoring pass over the same
+predictions. Cheap enough to also log every validation epoch (`val/skill_vs_climatology`),
+not just at final test time. Caveat: the climatology file has no `year` field — it's pooled
+across all years including whatever ends up in the test split, a mild leakage risk on the
+baseline side; worth rebuilding per-split if a skill score ever looks suspiciously good, not
+blocking to start with. (It's also already live in production as defileViz's stand-in
+uncertainty band, since 4.8 removed the model's own untrained uncertainty channel — this
+reuses something that already has a job in the running system.)
+
+| level | headline metric(s) | computed, not headlined |
+|---|---|---|
+| 1. Row | **MAE** + **Bias**, birds/hr | Tweedie deviance itself (it's the loss; redundant as a metric) |
+| 2. Day (event) | **CSI** vs. a per-species-doy climatology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts, for when CSI looks wrong and you need to know why |
+| 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (catches shape distortion even when the peak hour is right; keep computing it, don't headline two shape numbers) |
+| 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates (only worth surfacing if the median error is large and you need to know whether early- or late-season passage is driving it) |
+
+Package all of this — the table above, skill scores, and the existing per-year diagnostic
+plots (`plt_doy_sum` already plots true-vs-predicted daily curves per test year;
+`plt_timeseries`, `plt_true_vs_prediction`, `plt_counts_distribution` in
+`src/plots/save_test.py`) — into **one consolidated PDF/PNG report per species per run**,
+replacing the current scattered plot files. This is the tool every Phase 3 experiment (year
+ladder, location/variable ablation) gets judged against, so it needs to exist before those
+comparisons are meaningful, not after.
+
+One thing this phase cannot deliver on its own: **inter-annual skill needs more than the
+current split can give it.** The random-period split yields ~3 test years, which is not
+enough for a year-tracking correlation to mean anything. Getting the season-level metrics
+above to be trustworthy across years requires leave-one-year-out or rolling-origin
+cross-validation — a real change to the eval harness, not just a metric addition. Worth
+knowing before promising that number works from day one.
 
 **Phase 3 — general modelling research, branch per experiment, not urgent to land quickly.**
 The main one: **location and variable selection.** `era5_main_variables`,
