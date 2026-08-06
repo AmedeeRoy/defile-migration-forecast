@@ -124,6 +124,22 @@ def chunk_path(cache_dir, location, block_year):
     return os.path.join(cache_dir, f"location={location}", f"part-{block_year}.parquet")
 
 
+def chunk_is_up_to_date(path, hi):
+    """Whether an already-cached trailing chunk already covers through `hi`.
+
+    The trailing (current) chunk is deliberately marked incomplete by `date_chunks` so a
+    later run can extend it as ERA5 catches up -- but "incomplete" only means there is
+    something new to fetch if the requested end date has actually moved past what is
+    already on disk. Without this check, running the script twice within the same
+    ARCHIVE_LAG_DAYS window re-downloads the exact same range for no benefit, since
+    `default_end_date()` only changes once a day.
+    """
+    if not os.path.exists(path):
+        return False
+    existing_max = pd.read_parquet(path, columns=["datetime"])["datetime"].max()
+    return existing_max >= pd.Timestamp(hi)
+
+
 def write_chunk(path, df):
     """Writes one (location, chunk) frame to Parquet."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -226,13 +242,16 @@ def main(argv=None):
     ]
     if not args.overwrite:
         n_all = len(jobs)
-        # A cached chunk is only skippable if it was written complete. The trailing chunk
-        # that `end` truncated is refetched so the cache extends as ERA5 catches up.
-        jobs = [
-            job
-            for job in jobs
-            if not (job[4] and os.path.exists(chunk_path(cache_dir, job[0], job[3])))
-        ]
+
+        def already_cached(job):
+            location, lo, hi, block, complete = job
+            path = chunk_path(cache_dir, location, block)
+            # A complete chunk is skippable once its file exists -- it will never change.
+            # A trailing (incomplete) chunk is only skippable if its file already reaches
+            # the requested end date; otherwise there is genuinely new data to fetch.
+            return chunk_is_up_to_date(path, hi) if not complete else os.path.exists(path)
+
+        jobs = [job for job in jobs if not already_cached(job)]
         if n_all != len(jobs):
             print(
                 f"{n_all - len(jobs)} of {n_all} chunk(s) already cached and will be "
