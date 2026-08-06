@@ -30,13 +30,15 @@ net:
   dropout: True
 
 criterion:
+  # Tweedie alone is the default: it's already a proper scoring rule for zero-inflated
+  # skewed counts, with a per-species-tuned p. `ProbaRMSE` (src/models/criterion.py) used to
+  # be added on top, but it targeted the same quantity as Tweedie in a way that silently
+  # disagreed on peaked days -- now fixed, but its actual benefit here (if any) is untested,
+  # so it's left out until an ablation against this baseline says otherwise.
   tweedie:
     _target_: src.models.criterion.TweedieLoss
     alpha: 1
     p: 1.5
-  rmse:
-    _target_: src.models.criterion.ProbaRMSE
-    alpha: 1
 
 # compile model for faster training with pytorch 2.0
 compile: false

@@ -22,6 +22,3 @@ model:
       _target_: src.models.criterion.TweedieLoss
       alpha: 9.820227367804325
       p: 1.451648408260859
-    rmse:
-      _target_: src.models.criterion.ProbaRMSE
-      alpha: 1

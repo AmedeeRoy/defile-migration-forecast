@@ -53,7 +53,8 @@ hydra:
       model.optimizer.weight_decay: interval(0.0001, 0.1)
       model.criterion.tweedie.p: interval(1, 2)
       model.criterion.tweedie.alpha: interval(.01, 10)
-      # `rmse.alpha` used to mix an RMSE term against an untrained NLL term (DEVELOPMENT.md
-      # 4.8); that NLL term is gone, so `rmse.alpha` is now just this criterion's weight in
-      # the combined loss, like `tweedie.alpha` above. Uncomment to tune it the same way:
+      # `ProbaRMSE` (src/models/criterion.py) is no longer part of the default combined
+      # criterion -- Tweedie alone is the baseline (configs/model/unet.yaml). If an ablation
+      # decides to add it back in, its alpha is this criterion's weight in the combined
+      # loss, the same role tweedie.alpha plays above; tune it the same way:
       # model.criterion.rmse.alpha: interval(.01, 10)
