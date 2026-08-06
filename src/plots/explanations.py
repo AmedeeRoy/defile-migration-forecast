@@ -12,7 +12,7 @@ test set is a candidate for removal, though attribution is a hint, not the ablat
 import numpy as np
 import torch
 
-C_ATTR = "#0072B2"
+from src.plots.panels import C_PRED as C_ATTR
 
 
 def _mean_attribution(tensor: torch.Tensor, dims) -> np.ndarray:

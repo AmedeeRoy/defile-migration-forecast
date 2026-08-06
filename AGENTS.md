@@ -36,6 +36,7 @@ prod/            Production artifacts (gitignored, generated):
 scripts/
   schedule.sh                    cron entrypoint for scheduled predict+deploy runs
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
+  build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
@@ -169,6 +170,44 @@ Normalisation parameters are fitted at training time and pickled to
 `data/transform_data.pickle` (committed to git); `predict.py` loads that file. It must
 correspond to the checkpoints in `prod/models/`, and retraining overwrites it.
 
+## Constants: one owner, import elsewhere
+
+Every fixed value that isn't a Hydra-swept hyperparameter — API endpoints, era
+boundaries, plot colours, quantile levels, timeouts — is a module-level
+`UPPER_SNAKE_CASE` constant, defined once in the module that owns the concept, and
+imported by anything else that needs it. `src/data/weather.py`'s `LOCATIONS`,
+`CONVERSION_DICT`, `ARCHIVE_MODEL`/`FORECAST_MODEL` are the model to follow — see "One
+weather path" above for why that file exists at all: the previous version of this
+project had two independent implementations of the same conversions, and they silently
+drifted apart. The same failure mode is exactly what a second, independently-typed copy
+of a constant recreates at any size, not just at the scale of a whole module.
+
+Concretely:
+
+- **Before writing a literal, grep for it.** `1993`, `"#0072B2"`, `range(6, 18)` each
+  already have an owner somewhere in this codebase — a repeated literal is the signal
+  to import the existing constant, not retype it. `src/metrics.py`'s `ERA_EDGES`
+  (`(1993, 2014)`) is the one definition of the era boundaries; `DefileDataModule`'s
+  `year_period` encoding and `era_of`-based split logging both derive from it rather
+  than hardcoding `1993`/`2013` a second and third time. `src/phenology.py`'s
+  `RATIO_HOURS` is the one definition of the hourly-ratio grid; the notebook that used
+  to hardcode a second copy of it drifted a day out of sync with the file it was
+  generating (`scripts/build_phenology_stats.py`'s module docstring has the full story)
+  — that bug is exactly what this rule exists to prevent.
+- **Hydra config vs. Python constant.** A value becomes a `configs/` entry only if a
+  user might reasonably want to override it per run — `data.doy`, `data.lag_day`,
+  `model.compute_saliency` are all things someone plausibly sweeps or overrides from
+  the CLI. A fixed evaluation-protocol or implementation constant (era boundaries,
+  quantile levels, plot colours, API timeouts) stays a plain Python constant near its
+  usage instead: sweeping it isn't a real use case, and routing it through Hydra would
+  only add indirection between the value and the code that depends on its exact
+  meaning. `src/metrics.py`'s `ERA_EDGES`/`ERA_LABELS`, `src/phenology.py`'s
+  `RATIO_HOURS`, and `src/plots/panels.py`'s `C_OBS`/`C_PRED`/`C_PHEN`/`C_PERS` are all
+  deliberately not Hydra-configurable for this reason.
+- **Cross-module reuse goes through the owning module's public name**, not a copy —
+  `from src.phenology import RATIO_HOURS`, `from src.plots.panels import C_PRED`, not a
+  second `RATIO_HOURS = np.arange(6, 18)` or `C_ATTR = "#0072B2"` a few files away.
+
 ## Known defects — read before making changes
 
 `DEVELOPMENT.md` at the repo root is the live roadmap: open defects and the phased plan to
@@ -240,6 +279,20 @@ This repo currently lives inside a OneDrive-synced folder. Two things to watch f
    folder — a prime candidate for the placeholder/deadlock issue in (1), and there is no
    reason to sync it at all (it's gitignored and fully reproducible from `uv.lock`). If
    `uv sync`/`uv run` hang or error strangely, that's the first thing to suspect.
+
+## Managing command output (training runs are verbose)
+
+Training/predict/hparams-search runs produce long, noisy logs (Lightning progress bars,
+Hydra chatter, per-epoch metrics). Dumping all of it into context wastes tokens for no
+benefit:
+
+- Redirect long-running commands to a log file (`... > logs/run.log 2>&1`) instead of
+  letting raw stdout flow back; run them in the background and poll the file with
+  `tail -n 50` or `grep` for the lines that matter (`epoch`, `loss`, `error`, `Exception`).
+- Never `cat` a full log file or notebook output into context — grep/tail for the
+  specific thing being checked.
+- For a quick pipeline sanity check, prefer `debug=default` (or another `debug=` variant)
+  over a full run — it's fast and still exercises the whole path.
 
 ## Things not to do
 

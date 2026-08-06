@@ -33,19 +33,57 @@ from src.phenology import Phenology
 # Eras
 # --------------------------------------------------------------------------------------
 
-# Boundaries match `year_period` in src/data/defile_datamodule.py, which is also what the
-# "period" train/val/test split balances across -- so an era here is exactly one of the
-# strata the split was built from. See data/count/readme.md for the protocol history that
-# motivates the cuts: sporadic pigeon-focused coverage before 1993, daily volunteer
-# monitoring from 1993, and the shift to hourly recording forms from 2014.
+# These boundaries are the one definition used everywhere an era matters: the "period"
+# train/val/test split in `DefileDataModule` stratifies across exactly these three
+# groups, and `era_of`/`year_period` below are the two encodings (label vs. pseudo-year)
+# every other module derives from them rather than retyping `1993`/`2014` a second time.
+# See data/count/readme.md for the protocol history that motivates the cuts: sporadic
+# pigeon-focused coverage before 1993, daily volunteer monitoring from 1993, and the
+# shift to hourly recording forms from 2014.
 ERA_EDGES: Tuple[int, int] = (1993, 2014)
 ERA_LABELS: Tuple[str, str, str] = ("pre-1993", "1993-2013", "2014+")
 
+# Placeholder "year" values `DefileDataModule` feeds the model as `year` when
+# `year_used="period"`, one representative pseudo-year per era in `ERA_LABELS`, in the
+# same order. Spaced a century apart so `(year_used - 2000) / 100`
+# (`DefileDataModule`'s `year_used_trans`) lands on a distinct, well-separated value per
+# era regardless of which real years happen to populate it.
+PERIOD_YEARS: Tuple[int, int, int] = (2000, 2100, 2200)
+
 
 def era_of(year: "int | np.ndarray") -> "str | np.ndarray":
-    """Map a year (or array of years) to its era label."""
+    """Map a year (or array of years) to its era label (`ERA_LABELS`)."""
     lo, hi = ERA_EDGES
     return np.where(year < lo, ERA_LABELS[0], np.where(year < hi, ERA_LABELS[1], ERA_LABELS[2]))
+
+
+def year_period(year: "int | np.ndarray") -> "int | np.ndarray":
+    """Map a year (or array of years) to its era's representative pseudo-year (`PERIOD_YEARS`).
+
+    Same boundaries as `era_of`, just encoded as a numeric placeholder year instead of a
+    string label -- this is what feeds `DefileDataModule`'s `year_used` column when
+    `year_used="period"`, so the model sees which era a sample is from without seeing the
+    specific year (which it never observed during those decades for most of the season
+    at hourly resolution anyway).
+    """
+    lo, hi = ERA_EDGES
+    return np.where(
+        year < lo, PERIOD_YEARS[0], np.where(year < hi, PERIOD_YEARS[1], PERIOD_YEARS[2])
+    )
+
+
+def year_used_trans(year_used):
+    """Scale a `year_used` column value (a real year, or one of `PERIOD_YEARS`) for model input.
+
+    `PERIOD_YEARS` are spaced 100 apart specifically so this maps the three eras to
+    0, 1, 2; a real year like 2019 (`year_used="none"`, the actual-year case) lands on
+    0.19 under the same formula, since it is the same column, just not bucketed. Used
+    both as `DefileDataModule`'s pickled `transform_data["year_used"]` and by
+    `ForecastDataset`, which computes it directly rather than through that pickle (the
+    forecast path has no fitted transform to load beyond the ERA5 stacks).
+    """
+    lo, hi = PERIOD_YEARS[0], PERIOD_YEARS[1]
+    return (year_used - lo) / (hi - lo)
 
 
 # --------------------------------------------------------------------------------------

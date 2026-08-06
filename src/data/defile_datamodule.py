@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
-from src.metrics import era_of
+from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
 from src.utils import RankedLogger
 
 log = RankedLogger(__name__, rank_zero_only=True)
@@ -192,16 +192,15 @@ class ForecastDataset(Dataset):
 
         count["doy"] = count["date"].dt.day_of_year
         count["year"] = count["date"].dt.year
-        # This value are determine to become 0,1,2 when transformed.
-        count["year_period"] = np.where(
-            count["year"] < 1993, 2000, np.where(count["year"] <= 2013, 2100, 2200)
-        )
+        # `year_period` becomes 0, 1, 2 once `year_used_trans` below divides it by 100 --
+        # see PERIOD_YEARS in src/metrics.py, the one definition of these boundaries.
+        count["year_period"] = year_period(count["year"])
         count["year_used"] = np.where(
             self.year_used == "constant",
-            2000,
+            PERIOD_YEARS[0],
             np.where(self.year_used == "period", count["year_period"], count["year"]),
         )
-        count["year_used_trans"] = (count["year_used"] - 2000) / 100
+        count["year_used_trans"] = year_used_trans(count["year_used"])
         count["doy_trans"] = (count["doy"] - 183) / 366
 
         self.count = count
@@ -401,13 +400,11 @@ class DefileDataModule(LightningDataModule):
         # Add pre-cumputed variable
         count["doy"] = count["date"].dt.day_of_year
         count["year"] = count["date"].dt.year
-        # This value are determine to become 0,1,2 when transformed.
-        count["year_period"] = np.where(
-            count["year"] < 1993, 2000, np.where(count["year"] <= 2013, 2100, 2200)
-        )
+        # Same encoding as DefileDataModule.read_counts -- see PERIOD_YEARS in src/metrics.py.
+        count["year_period"] = year_period(count["year"])
         count["year_used"] = np.where(
             self.year_used == "constant",
-            2000,
+            PERIOD_YEARS[0],
             np.where(self.year_used == "period", count["year_period"], count["year"]),
         )
 
@@ -488,7 +485,7 @@ class DefileDataModule(LightningDataModule):
                 # Get unique years for each period
                 yr_grp = {
                     period: np.unique(count.loc[count["year_period"] == period, "year"])
-                    for period in [2000, 2100, 2200]
+                    for period in PERIOD_YEARS
                 }
 
                 # Shuffle order of the year in each group (np.unique returns sorted
@@ -524,7 +521,7 @@ class DefileDataModule(LightningDataModule):
             # Create a DataTransformers for each era5 data. This class does not store the data, only the transformation and the parameters of the transformation
             if self.compute_transform_data:
                 transform_data = {
-                    "year_used": lambda x: (x - 2000) / 100,
+                    "year_used": year_used_trans,
                     "doy": lambda x: (x - 183) / 366,
                     "main": DataTransformer(dataset=self.era5_main),
                     "hourly": DataTransformer(dataset=self.era5_hourly),
