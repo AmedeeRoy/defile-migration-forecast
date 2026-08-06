@@ -89,36 +89,31 @@ deliberate multi-objective design (that would mean two terms targeting genuinely
 quantities); it's the same quantity computed inconsistently, and it works directly against
 peak reproduction.
 
-- **Fix, one line:** make `ProbaRMSE` reuse `applyMask` (the same aggregation `TweedieLoss`
-  already uses) instead of averaging in log space directly, so the two terms can't diverge:
-  `y_masked = torch.log1p(applyMask(y_pred[:, 0, :], mask, return_hourly=True))`.
-- **Then ablate, don't assume:** default to Tweedie alone (already a proper scoring rule
-  for zero-inflated skewed counts, per-species-tuned `p`) as the baseline, and test
-  Tweedie + fixed-`ProbaRMSE` against it — specifically on the sparsest species (Merlin,
-  Osprey: 90–95% zero rows), where a smoother log-space term might stabilise gradients where
-  Tweedie alone has little signal. Decide from the metrics below, not by assumption.
+- **Done.** `ProbaRMSE` now reuses `applyMask` (the same aggregation `TweedieLoss` already
+  uses) instead of averaging in log space directly, so the two terms can no longer diverge.
+- **Done.** Tweedie alone is now the default and standard loss — `ProbaRMSE` dropped from
+  `configs/model/unet.yaml` and all 11 `configs/experiment/*.yaml`, which each re-declared
+  it and would otherwise have kept it via config merge regardless of the base default. The
+  class itself is untouched in `src/models/criterion.py`, so the Tweedie-alone-vs-
+  Tweedie+fixed-RMSE ablation (specifically worth checking on the sparsest species — Merlin,
+  Osprey: 90–95% zero rows, where a smoother log-space term might stabilise gradients where
+  Tweedie alone has little signal) remains available later, on the metrics in the section
+  below, but no longer blocks anything.
 - **Row weighting — a config flag (`data.loss_weighting`), not a fixed choice**, since the
   right answer isn't obvious: a 6am–7pm survey and a 10am–2pm survey get very different
   weight under raw-duration weighting even though most of the long survey's extra hours may
   be near-zero activity, and the model's `pred_mask` already hard-zeroes predictions outside
-  05–19 UTC regardless. Three options to test: `"none"` (status quo, baseline); `"duration"`
-  (weight = `mask.sum()`, the simple fix for the ~12x reweighting toward the
-  hourly-recording era); `"active_overlap"` (weight = overlap between the survey mask and
-  the model's fixed 05–19 UTC window, so a short midday survey inside the active window
-  isn't penalised relative to a long dawn-to-dusk one, and no row is penalised for hours the
-  model is structurally forbidden from predicting). A fourth option — weighting by expected
-  activity from an *hourly* climatology — is the most faithful to the underlying question
-  but needs an hourly climatology built first (`species_doy_statistics.json` is daily-only
-  today); not one of the first ones to try.
-- **Later, bigger change:** the architecture already factorises `out = 8 · out_h · out_d`
-  (shape × magnitude), but neither sub-network is ever directly supervised — both only see
-  gradient through the single combined scalar. Dates recorded as ~12 one-hour blocks (common
-  since 2014, near-universal since 2021) are an empirical hourly profile already sitting in
-  the data, currently only used as an accidental reweighting mechanism (§5.1). Add a direct
-  auxiliary loss on `out_h` (cross-entropy or KL against the normalised true hourly counts,
-  on dates where that resolution exists) — this *is* genuine multi-objective, since it
-  supervises a different sub-output with different, finer-grained ground truth, rather than
-  the same scalar target measured twice inconsistently. Sequence after the ablation above.
+  05–19 UTC regardless. Three options to test:
+  - `"none"` (status quo) — baseline for comparison.
+  - `"active_overlap"` — weight = overlap between the survey mask and the model's fixed
+    05–19 UTC window, so a short midday survey inside the active window isn't penalised
+    relative to a long dawn-to-dusk one, and no row is penalised for hours the model is
+    structurally forbidden from predicting.
+  - `"climatology"` — weight by expected activity from an **hourly** climatology, so a
+    midday hour during peak season counts for more than a midday hour in the off-peak
+    fringe. The most faithful option to what actually matters, but needs an hourly
+    climatology built first — `species_doy_statistics.json` is daily-only today, so this
+    is a data-prep task before it's a config flag.
 
 #### Reporting and metrics
 
@@ -185,6 +180,23 @@ Also in scope for this phase:
   predict the *share* of the season's total per day/hour and forecast the annual total
   separately, removing most year-to-year variance from the hard part of the problem.
 
+- **Direct shape supervision for `out_h`.** The architecture already splits into two
+  pieces multiplied together: `out_h` (24 values, the *relative shape* of the day) and
+  `out_d` (one value, the *overall size* of the day) — `out = 8 · out_h · out_d`. Training
+  today only ever checks the *combined* prediction against the survey's total count; nothing
+  ever directly checks whether `out_h`'s shape resembles the true shape of the day. But for
+  dates recorded as several one-hour blocks (common since 2014, near-universal since 2021),
+  the true hourly counts for that date already exist in the data — e.g. 12 one-hour survey
+  rows on one date *are* an hour-by-hour count, currently only used as 12 near-duplicate
+  training rows (the accidental reweighting §5.1 already flags), never as a shape. Idea:
+  on those dates, normalise the true hourly counts to sum to 1 (so they describe shape only,
+  not magnitude) and add a direct loss term comparing that to `out_h`, similarly normalised —
+  teaching the shape sub-network directly, rather than only indirectly through the combined
+  total. This is a different kind of fix from the `ProbaRMSE` one above: that was two loss
+  terms disagreeing about *the same* number; this is a genuinely new term, using different,
+  finer-grained data, to supervise a specific piece of the model nothing currently teaches
+  on its own. Exploratory — worth a small experiment before committing to it further.
+
 For later, lower priority: **a probability envelope from the Tweedie loss itself**, rather
 than a second model-predicted output channel (the approach 4.8 removed for being
 untrained). The Tweedie distribution already has a defined variance-mean relationship
@@ -217,11 +229,45 @@ that kills the daily run.
   silently rewriting it. Saving transform parameters inside the checkpoint removes the
   coupling entirely.
 
-## Unverified
+## New defect — DST-unaware night mask clips real dawn coverage in `unet.py`
 
-The count timezone handling looks correct —
-`notebooks/processing_count_data.ipynb` uses `tz_localize("Europe/Paris", ...)` then
-`tz_convert`, and stored survey start hours peak at 06–07 UTC (08–09 local), consistent
-with post-sunrise starts — but this has not been explicitly confirmed. Worth doing once: a
-silent one- or two-hour shift between the count mask and the weather time axis would
-distort the whole diurnal curve and be nearly invisible in aggregate metrics.
+The timezone audit that resolved the "Unverified" item below (see README's new *Time
+conventions* section) turned up a real, separate bug while checking every place an hour
+index gets interpreted. `UNetplus.__init__` (`src/models/components/unet.py:205-208`) hardcodes:
+
+```python
+pred_mask = torch.ones(24)
+pred_mask[:5] = 0
+pred_mask[19:] = 0
+```
+
+zeroing the network's own output at UTC hours 0-4 and 19-23, applied *inside* `forward`
+before the real per-sample coverage `mask` (built from actual survey start/end times, see
+README) is used in the loss. This is redundant with that mask on a normal day, but not on
+one where the survey genuinely started before 05:00 UTC — mid-summer dawn, when CEST pulls
+sunrise earliest in UTC terms. Checked against the full processed dataset: **145 of 4,900
+survey days (3%), concentrated in July–August**, have real coverage starting before 05:00
+UTC; on those days the loss's coverage mask correctly says "count this hour" but the
+network is architecturally forced to output zero there regardless, biasing the
+survey-averaged prediction down for exactly those samples. `unet` is the only model
+actually used (`configs/train.yaml`, `configs/predict.yaml`, every `configs/experiment/*`);
+`convnet.py:76-79,210-213` and `transformer.py:173-177` carry the same kind of fixed-hour
+mask (a different, wider UTC window, 6-20) but aren't wired into any config, so they're
+inert rather than double-affected.
+
+Suggested fix: drop the hardcoded `pred_mask` and rely solely on the per-sample data mask
+already applied in `applyMask`/the loss criteria (`src/models/criterion.py`) — that mask is
+already correct and per-sample, so the network-level one is pure downside. If a hard prior
+against night-time output is wanted for regularization, widen it to bracket the full
+observed range (00:00 UTC coverage never occurs; the true bound from the data is
+04:00-19:30 UTC) rather than a value that clips 3% of real summer coverage. Worth fixing
+before Phase 2's retraining, since it directly affects the intra-day shape metric that
+phase is adding.
+
+## Resolved — count/weather timezone alignment
+
+Confirmed, not just plausible: `notebooks/processing_count_data.ipynb`'s
+`tz_localize("Europe/Paris", ambiguous="NaT")` → `tz_convert("UTC")` is correct, and the
+count coverage mask lines up with the weather hourly axis by construction (both UTC-hour
+indexed). See README's *Time conventions* section for the convention and the verification
+detail.
