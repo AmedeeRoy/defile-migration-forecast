@@ -148,19 +148,19 @@ class ProbaRMSE:
 
         Notes:
             - The function applies log1p transformation to targets for numerical stability
-            - Epsilon is added to prevent division by zero
+            - `y_masked` is aggregated via `applyMask`, the same helper `TweedieLoss` uses:
+              average the prediction in count space (`expm1` first) over the covered hours,
+              then take `log1p` of that. Averaging in log space directly, without the
+              `expm1`/`log1p` round trip, would target a systematically smaller value
+              whenever the true diurnal shape has a real peak within the covered hours (by
+              Jensen's inequality: `mean(log(x)) <= log(mean(x))`, strictly, unless `x` is
+              constant) -- i.e. it would disagree with `TweedieLoss` about what the "right"
+              average prediction is, worse the more peaked the day, and that disagreement
+              would pull the model's predicted peaks down for no reason grounded in the
+              data. Routing through `applyMask` keeps the two loss terms answering the same
+              question about the same prediction.
         """
-        epsilon = 1e-8
-
-        # Average over the hours actually covered by the survey.
-        # NB: this must divide by mask.sum(), not by the 24 hours of the day. Dividing by
-        # 24 (as torch.mean does) scales the implied target by survey_hours / 24, which
-        # varies from row to row, so a 3-hour and a 12-hour survey imply targets differing
-        # by a factor of 4 for the same true hourly rate.
-        mask_hours = torch.sum(mask, dim=1).clamp(min=epsilon)
-
-        # Compute masked mean predictions (log-transformed)
-        y_masked = torch.sum(y_pred[:, 0, :] * mask, dim=1) / mask_hours
+        y_masked = torch.log1p(applyMask(y_pred[:, 0, :], mask, return_hourly=True))
 
         # RMSE term: squared difference between log-transformed target and prediction
         rmse_term = torch.mean((torch.log1p(y.squeeze()) - y_masked) ** 2)
