@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# uv-managed virtual environment
+.venv/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

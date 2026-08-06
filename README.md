@@ -70,26 +70,44 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 ├── .gitignore                <- List of files ignored by git
 ├── .pre-commit-config.yaml   <- Configuration of pre-commit hooks for code formatting
 ├── .project-root             <- File for inferring the position of project root directory
-├── environment.yaml          <- File for installing conda environment
+├── .python-version           <- Python version uv provisions (3.10)
+├── pyproject.toml            <- Project metadata and pinned dependencies (uv)
+├── uv.lock                   <- Exact resolved dependency versions (uv), commit this
 └── README.md
 ```
 
 ## Quickstart
+
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). Install uv itself once
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`, or see uv's docs for other platforms) --
+uv then provisions the pinned Python version (3.10) itself, no separate Python install needed.
 
 ```bash
 # clone project
 git clone https://github.com/AmedeeRoy/defile-migration-forecast
 cd defile-migration-forecast
 
-# create conda environment with required dependencies
-conda env create --file=environment.yaml
+# create the .venv and install every dependency at the exact pinned version (uv.lock)
+uv sync
 
-# Activate the environment
-conda activate defile-env
+# run any command inside that environment
+uv run python scripts/build_weather_cache.py
+uv run python src/train.py
+uv run pytest tests/
+
+# or activate it like a regular virtualenv, if you prefer
+source .venv/bin/activate
+python scripts/build_weather_cache.py
 
 # Build the local weather cache that training reads (see below - this takes a while)
-python scripts/build_weather_cache.py
+uv run python scripts/build_weather_cache.py
 ```
+
+Adding, removing or upgrading a dependency: edit `pyproject.toml`'s `dependencies` (or use
+`uv add <package>` / `uv remove <package>`), then `uv lock` to update `uv.lock` and `uv sync`
+to apply it. Upgrading is deliberate here -- `pyproject.toml` pins exact versions rather than
+ranges, so `uv lock` alone won't silently drift to a newer release; use
+`uv lock --upgrade-package <name>` and re-test when a bump is actually wanted.
 
 ### Weather data
 
@@ -115,6 +133,29 @@ python scripts/build_weather_cache.py --start 2008-01-01
 
 Re-run it periodically to extend the cache as ERA5 catches up; the archive lags real time by
 about five days.
+
+### Time conventions
+
+Everything the model reads or writes is in **UTC**, end to end:
+
+- **Weather** (`src/data/weather.py`) requests Open-Meteo with `timezone: "GMT"` (fixed
+  offset zero, unaffected by daylight saving), so both the hourly `time` coordinate
+  (0–23) and the `date` coordinate are UTC.
+- **Counts** are recorded in the field in local time (Europe/Paris, CET/CEST) and
+  converted once, in `notebooks/processing_count_data.ipynb`, via
+  `tz_localize("Europe/Paris", ambiguous="NaT")` followed by `tz_convert("UTC")`. The
+  resulting `all_count_processed.csv` stores `start`/`end` as UTC timestamps; the hourly
+  coverage `mask` built from them in `DefileDataModule.read_counts` (`src/data/defile_datamodule.py`)
+  is therefore UTC-hour indexed too, and lines up position-for-position with the weather's
+  `time` axis without any extra conversion.
+- The one field that stays in **local** terms is `count["date"]`: the calendar date of
+  the survey day, taken directly from the source data and never timezone-converted. This
+  is joined against weather's (UTC) `date` coordinate. The two coincide because Défilé
+  surveys only ever run in daylight hours — verified against the full 1966–2024 processed
+  dataset (159,946 rows): local and UTC calendar dates never disagree, start times fall
+  between 04:00–19:00 UTC, and `ambiguous="NaT"` never had to drop a DST-fallback
+  timestamp. This is an empirical property of the data, not an enforced invariant — a
+  future survey period starting near local midnight would break the join silently.
 
 ## How to use
 
@@ -161,8 +202,8 @@ python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,h
 ## Operational pipeline
 
 `.github/workflows/predict_and_deploy_forecasts.yml` runs daily at 03:00 UTC (and on push
-to `main`, or manually). It recreates the conda environment, runs prediction for all
-eleven species, and uploads the resulting NetCDF files to a GCE host, from which the
+to `main`, or manually). It installs the pinned environment with `uv sync`, runs prediction
+for all eleven species, and uploads the resulting NetCDF files to a GCE host, from which the
 defileViz front end fetches them directly at
 `https://defile.raphaelnussbaumer.com/forecasts/<Species_Name>/<YYYYMMDD>_<Species_Name>.nc`.
 

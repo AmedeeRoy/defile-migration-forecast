@@ -21,36 +21,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       forecasts-path: ${{ steps.set-path.outputs.path }}
-    defaults:
-      run:
-        shell: bash -l {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - name: Cache conda environment
-        uses: actions/cache@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9
         with:
-          path: ~/.conda/envs/defile-env
-          key: ${{ runner.os }}-conda-defile-env-${{ hashFiles('environment.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-conda-defile-env-
+          enable-cache: true
 
-      - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@v3
-
-      - name: Create conda environment
-        run: |
-          conda init bash
-          source ~/.bashrc
-          conda env create --file=environment.yaml || conda env update --file=environment.yaml
+      - name: Install pinned environment
+        run: uv sync --locked
 
       - name: Run prediction script
-        run: |
-          conda activate defile-env
-          python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby
+        run: uv run python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby
 
       - name: Set forecasts path
         id: set-path
