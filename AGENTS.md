@@ -39,9 +39,10 @@ scripts/
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
+  metrics.py                      row/day/shape/season metrics + the phenology baseline
   data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform
   models/                          LightningModule, criterion (Tweedie loss, etc.), components/ (unet/transformer/convnet)
-  plots/                           saved-prediction and test-set plotting helpers
+  plots/                           per-species PDF test report + prediction plots
   utils/                           logging, instantiators, misc helpers
 ```
 

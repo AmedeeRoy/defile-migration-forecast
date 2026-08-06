@@ -112,6 +112,20 @@ production as defileViz's stand-in uncertainty band, since the model's own uncer
 channel was dropped as untrained — this reuses something that already has a job in the
 running system.)
 
+**Landed**: `src/metrics.py` (the four-level metric set + both baselines, per era) and
+`src/plots/report.py`/`panels.py` (the consolidated PDF report, replacing the scattered
+plot files) — see below. The phenology file's generator was also moved out of a notebook
+into `scripts/build_phenology_stats.py` and fixed (see its module docstring): the notebook
+version had drifted out of sync with the actual committed file's schema, `pygam` was never
+a pinned dependency, and the hour-of-day `ratio` grid had a one-day off-by-one against the
+`doy`/`mean` arrays it's meant to align with. `DefileLitModule` also gathers predictions
+across DDP processes before scoring/writing anything (`_gather` in
+`src/models/defile_module.py`), and guards the file writes to the coordinating rank only —
+without it, `trainer=ddp` (selectable, unused today) would silently score and report only
+one rank's shard of the data, with every rank racing to write the same output files. Not
+yet done: retraining against any of this, which is what actually gates trusting these
+numbers.
+
 | level | headline metric(s) | computed, not headlined |
 |---|---|---|
 | 1. Row | **MAE** + **Bias**, birds/hr | Tweedie deviance itself (it's the loss; redundant as a metric) |
@@ -119,11 +133,12 @@ running system.)
 | 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (catches shape distortion even when the peak hour is right; keep computing it, don't headline two shape numbers) |
 | 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates (only worth surfacing if the median error is large and you need to know whether early- or late-season passage is driving it) |
 
-Package all of this — the table above, skill scores, and the existing per-year diagnostic
-plots (`plt_doy_sum`, `plt_timeseries`, `plt_true_vs_prediction`, `plt_counts_distribution`
-in `src/plots/save_test.py`) — into **one consolidated PDF/PNG report per species per run**,
-replacing the current scattered plot files. This is the tool every Phase 2 experiment (year
-ladder, location/variable ablation) gets judged against, so it needs to exist before those
+Package all of this — the table above, skill scores, and per-year diagnostic plots — into
+**one consolidated PDF report per species per run**, replacing the old scattered plot
+files. Landed as `src/plots/report.py` (page layout) + `src/plots/panels.py` (the
+individual axes-level plots, renamed from `src/plots/save_test.py`), wired into
+`DefileLitModule.save_test`. This is the tool every Phase 2 experiment (year ladder,
+location/variable ablation) gets judged against, so it needs to exist before those
 comparisons are meaningful, not after.
 
 **Inter-annual skill needs more than the current split can give it.** The random-period

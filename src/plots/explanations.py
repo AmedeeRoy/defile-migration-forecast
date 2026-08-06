@@ -1,52 +1,54 @@
+"""Saliency (Captum) attribution panels.
+
+Axes-level, like `src/plots/panels.py`: the caller owns the figure. The attributions
+themselves are computed in `DefileLitModule.test_step` over a capped number of test
+batches and only ever consumed as a mean over samples, which is what makes that cap safe.
+
+These panels are the starting point for the location/variable ablation in DEVELOPMENT.md
+Phase 2 -- a variable whose mean attribution is indistinguishable from zero across the
+test set is a candidate for removal, though attribution is a hint, not the ablation.
+"""
+
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
+
+C_ATTR = "#0072B2"
 
 
-def plt_explanations_metrics(data, explanations, filepath=None):
-    yr, doy, era5_main, era5_hourly, era5_daily = explanations
-
-    fig, ax = plt.subplots(3, 1, figsize=(6, 10), tight_layout=True, sharex=True)
-
-    values = torch.mean(era5_main, dim=(0, 2, 3)).numpy()
-    variables = list(data.era5_main.data_vars)
-    ax[0].barh(variables, values)
-    ax[0].set_title("Local hourly metrics")
-
-    values = torch.mean(era5_hourly, dim=(0, 2, 3)).numpy()
-    variables = list(data.era5_hourly.data_vars)
-    ax[1].barh(variables, values)
-    ax[1].set_title("Remote hourly metrics")
-
-    values = torch.mean(era5_daily, dim=(0, 2, 3)).numpy()
-    variables = list(data.era5_daily.data_vars)
-    ax[2].barh(variables, values)
-    ax[2].set_title("Remote daily metrics")
-
-    if filepath is not None:
-        plt.savefig(filepath)
-        plt.close()
-    else:
-        plt.show()
+def _mean_attribution(tensor: torch.Tensor, dims) -> np.ndarray:
+    """Mean absolute-gradient attribution, reduced over everything but the axis of interest."""
+    return torch.mean(tensor, dim=dims).numpy()
 
 
-def plt_explanations_locations(data, explanations, filepath=None):
-    yr, doy, era5_main, era5_hourly, era5_daily = explanations
+def draw_explanations_metrics(axes, datamodule, explanations) -> None:
+    """Mean attribution per weather variable, one axes per input stack.
 
-    fig, ax = plt.subplots(2, 1, figsize=(6, 6), tight_layout=True, sharex=True)
+    :param axes: Three axes (local hourly, remote hourly, remote daily).
+    """
+    _, _, era5_main, era5_hourly, era5_daily = explanations
 
-    values = torch.mean(era5_hourly, dim=(0, 1, 2)).numpy()
-    variables = list(data.era5_hourly.location.values)
-    ax[0].barh(variables, values)
-    ax[0].set_title("Remote hourly locations")
+    panels = (
+        (era5_main, (0, 2, 3), list(datamodule.era5_main.data_vars), "Local hourly (Défilé)"),
+        (era5_hourly, (0, 2, 3), list(datamodule.era5_hourly.data_vars), "Remote hourly"),
+        (era5_daily, (0, 2, 3), list(datamodule.era5_daily.data_vars), "Remote daily"),
+    )
 
-    values = torch.mean(era5_daily, dim=(0, 1, 2)).numpy()
-    variables = list(data.era5_daily.location.values)
-    ax[1].barh(variables, values)
-    ax[1].set_title("Remote daily locations")
+    for ax, (tensor, dims, labels, title) in zip(axes, panels):
+        ax.barh(labels, _mean_attribution(tensor, dims), color=C_ATTR)
+        ax.set_title(title, fontsize=9)
+        ax.tick_params(labelsize=7)
 
-    if filepath is not None:
-        plt.savefig(filepath)
-        plt.close()
-    else:
-        plt.show()
+
+def draw_explanations_locations(axes, datamodule, explanations) -> None:
+    """Mean attribution per location, one axes for the hourly stack and one for the daily."""
+    _, _, _, era5_hourly, era5_daily = explanations
+
+    panels = (
+        (era5_hourly, (0, 1, 2), list(datamodule.era5_hourly.location.values), "Hourly locations"),
+        (era5_daily, (0, 1, 2), list(datamodule.era5_daily.location.values), "Daily locations"),
+    )
+
+    for ax, (tensor, dims, labels, title) in zip(axes, panels):
+        ax.barh(labels, _mean_attribution(tensor, dims), color=C_ATTR)
+        ax.set_title(title, fontsize=9)
+        ax.tick_params(labelsize=7)

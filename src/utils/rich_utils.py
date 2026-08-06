@@ -3,6 +3,7 @@ from typing import Sequence
 
 import rich
 import rich.syntax
+import rich.table
 import rich.tree
 from hydra.core.hydra_config import HydraConfig
 from lightning_utilities.core.rank_zero import rank_zero_only
@@ -72,6 +73,39 @@ def print_config_tree(
     if save_to_file:
         with open(Path(cfg.paths.output_dir, "config_tree.log"), "w") as file:
             rich.print(tree, file=file)
+
+
+@rank_zero_only
+def print_metrics_table(report, title: str = "Test metrics") -> None:
+    """Print the headline metric table to the console at the end of a test run.
+
+    Lightning's own end-of-test table shows only what went through `self.log`, flat and
+    pooled. This shows the same breakdown the PDF's first page does -- overall and per era,
+    with the skill scores next to the raw values -- so a multirun over 11 species is
+    readable as it scrolls past, without opening 11 PDFs to find the one that went wrong.
+    """
+    # Imported here rather than at module scope: this module is imported by every entry
+    # point, and only the test path needs the metric column definitions.
+    from src.plots.panels import format_cell
+    from src.plots.report import HEADLINE_COLUMNS
+
+    # Metrics down, scopes across -- the transpose of the PDF's layout. Eleven metrics
+    # would not fit across an 80-column terminal, but four scopes always do, so the table
+    # stays readable when a multirun scrolls 11 species past.
+    scopes = [("overall", report.scalars)] + [
+        (str(era["era"]), era.to_dict()) for _, era in report.by_era.iterrows()
+    ]
+
+    table = rich.table.Table(title=title, header_style="bold", title_style="bold")
+    table.add_column("metric", style="cyan", no_wrap=True)
+    for scope, _ in scopes:
+        table.add_column(scope, justify="right")
+
+    for key, label in HEADLINE_COLUMNS:
+        cells = [format_cell(values.get(key)) or "-" for _, values in scopes]
+        table.add_row(label.replace("\n", " "), *cells)
+
+    rich.print(table)
 
 
 @rank_zero_only

@@ -1,25 +1,17 @@
 import os
-import pickle
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import cloudpickle
 import numpy as np
 import pandas as pd
 import torch
 from lightning import LightningDataModule
-from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
-from src.utils import (
-    RankedLogger,
-    extras,
-    get_metric_value,
-    instantiate_callbacks,
-    instantiate_loggers,
-    log_hyperparameters,
-    task_wrapper,
-)
+from src.metrics import era_of
+from src.utils import RankedLogger
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
@@ -560,122 +552,89 @@ class DefileDataModule(LightningDataModule):
                 self.era5_daily
             )
 
+            self.log_split_summary()
+
         if stage == "predict":
             with open(os.path.join(self.data_dir, "transform_data.pickle"), "rb") as f:
                 self.transform_data = cloudpickle.load(f)
 
-    def train_dataloader(self) -> DataLoader[Any]:
-        """Create and return the train dataloader.
+    def log_split_summary(self) -> None:
+        """Log what each split actually contains, once, at the top of a run.
 
-        :return: The train dataloader.
+        The three numbers that decide how any downstream metric should be read: how many
+        survey rows and distinct dates each split holds, what fraction of its rows are
+        zero (61-95% depending on species), and how those rows fall across the recording
+        eras -- the split is stratified by era, but the *row* counts are not, because the
+        2022+ hourly forms produce ~15 rows a day where 2013 produced one.
         """
-        idx = self.count["tvt"] == "train"
-        count = self.count[idx]
-        mask = self.mask[:, idx]
+        summary = self.count.assign(era=era_of(self.count["year"].to_numpy()))
+        log.info(f"Species: {self.species} | doy {list(self.doy)} | lag {self.lag_day} d")
+        for split in ("train", "val", "test"):
+            rows = summary[summary["tvt"] == split]
+            if rows.empty:
+                log.warning(f"{split:>5}: EMPTY split")
+                continue
+            eras = ", ".join(f"{era}: {n}" for era, n in rows["era"].value_counts().items())
+            log.info(
+                f"{split:>5}: {len(rows):>6} rows | {rows['date'].nunique():>5} dates | "
+                f"{len(rows['year'].unique()):>3} years | {(rows['count'] == 0).mean():>5.1%} zero "
+                f"| mean survey {rows['duration'].mean():.1f} h | {eras}"
+            )
 
-        self.data_train = DefileDataset(
+    def _build_dataset(self, split: str) -> DefileDataset:
+        """Build the `DefileDataset` for one split of `self.count`.
+
+        Row order is preserved from `self.count`, and `self.mask` is sliced with the same
+        boolean index, so column `i` of the dataset's mask belongs to its row `i`. Every
+        consumer downstream -- the loss, `src/metrics.py`, the report -- relies on that
+        alignment plus `shuffle=False` on the val/test loaders to line predictions back up
+        with dates.
+        """
+        idx = (self.count["tvt"] == split).to_numpy()
+        count = self.count[idx]
+
+        stacks = {
+            "era5_main": self.era5_main,
+            "era5_hourly": self.era5_hourly,
+            "era5_daily": self.era5_daily,
+            "era5_main_trans": self.era5_main_trans,
+            "era5_hourly_trans": self.era5_hourly_trans,
+            "era5_daily_trans": self.era5_daily_trans,
+        }
+        dates = count["date"].unique()
+        return DefileDataset(
             count=count,
-            era5_main=self.era5_main.sel(date=np.isin(self.era5_main["date"], count["date"])),
-            era5_hourly=self.era5_hourly.sel(
-                date=np.isin(self.era5_hourly["date"], count["date"])
-            ),
-            era5_daily=self.era5_daily.sel(date=np.isin(self.era5_daily["date"], count["date"])),
-            era5_main_trans=self.era5_main_trans.sel(
-                date=np.isin(self.era5_main_trans["date"], count["date"])
-            ),
-            era5_hourly_trans=self.era5_hourly_trans.sel(
-                date=np.isin(self.era5_hourly_trans["date"], count["date"])
-            ),
-            era5_daily_trans=self.era5_daily_trans.sel(
-                date=np.isin(self.era5_daily_trans["date"], count["date"])
-            ),
-            mask=mask,
+            mask=self.mask[:, idx],
+            **{
+                name: stack.sel(date=np.isin(stack["date"], dates))
+                for name, stack in stacks.items()
+            },
         )
 
+    def _dataloader(self, dataset: Dataset, shuffle: bool) -> DataLoader[Any]:
         return DataLoader(
-            dataset=self.data_train,
+            dataset=dataset,
             batch_size=self.batch_size_per_device,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            persistent_workers=True if self.num_workers > 0 else False,
-            shuffle=True,
+            persistent_workers=self.num_workers > 0,
+            shuffle=shuffle,
         )
+
+    def train_dataloader(self) -> DataLoader[Any]:
+        """Create and return the train dataloader."""
+        self.data_train = self._build_dataset("train")
+        return self._dataloader(self.data_train, shuffle=True)
 
     def val_dataloader(self) -> DataLoader[Any]:
-        """Create and return the validation dataloader.
-
-        :return: The validation dataloader.
-        """
-
-        idx = self.count["tvt"] == "val"
-        count = self.count[idx]
-        mask = self.mask[:, idx]
-
-        self.data_val = DefileDataset(
-            count=count,
-            era5_main=self.era5_main.sel(date=np.isin(self.era5_main["date"], count["date"])),
-            era5_hourly=self.era5_hourly.sel(
-                date=np.isin(self.era5_hourly["date"], count["date"])
-            ),
-            era5_daily=self.era5_daily.sel(date=np.isin(self.era5_daily["date"], count["date"])),
-            era5_main_trans=self.era5_main_trans.sel(
-                date=np.isin(self.era5_main_trans["date"], count["date"])
-            ),
-            era5_hourly_trans=self.era5_hourly_trans.sel(
-                date=np.isin(self.era5_hourly_trans["date"], count["date"])
-            ),
-            era5_daily_trans=self.era5_daily_trans.sel(
-                date=np.isin(self.era5_daily_trans["date"], count["date"])
-            ),
-            mask=mask,
-        )
-
-        return DataLoader(
-            dataset=self.data_val,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
-            persistent_workers=True if self.num_workers > 0 else False,
-            shuffle=False,
-        )
+        """Create and return the validation dataloader."""
+        self.data_val = self._build_dataset("val")
+        return self._dataloader(self.data_val, shuffle=False)
 
     def test_dataloader(self) -> DataLoader[Any]:
-        """Create and return the test dataloader.
-
-        :return: The test dataloader.
-        """
-
-        idx = self.count["tvt"] == "test"
-        count = self.count[idx]
-        mask = self.mask[:, idx]
-
-        self.data_test = DefileDataset(
-            count=count,
-            era5_main=self.era5_main.sel(date=np.isin(self.era5_main["date"], count["date"])),
-            era5_hourly=self.era5_hourly.sel(
-                date=np.isin(self.era5_hourly["date"], count["date"])
-            ),
-            era5_daily=self.era5_daily.sel(date=np.isin(self.era5_daily["date"], count["date"])),
-            era5_main_trans=self.era5_main_trans.sel(
-                date=np.isin(self.era5_main_trans["date"], count["date"])
-            ),
-            era5_hourly_trans=self.era5_hourly_trans.sel(
-                date=np.isin(self.era5_hourly_trans["date"], count["date"])
-            ),
-            era5_daily_trans=self.era5_daily_trans.sel(
-                date=np.isin(self.era5_daily_trans["date"], count["date"])
-            ),
-            mask=mask,
-        )
-
-        return DataLoader(
-            dataset=self.data_test,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
-            persistent_workers=True if self.num_workers > 0 else False,
-            shuffle=False,
-        )
+        """Create and return the test dataloader."""
+        self.data_test = self._build_dataset("test")
+        return self._dataloader(self.data_test, shuffle=False)
 
     def predict_dataloader(self) -> DataLoader[Any]:
         """Create and return the predict dataloader.
@@ -695,14 +654,7 @@ class DefileDataModule(LightningDataModule):
             return_original=False,
             year_used=self.year_used,
         )
-        return DataLoader(
-            dataset=self.data_predict,
-            batch_size=self.batch_size_per_device,
-            num_workers=self.hparams.num_workers,
-            pin_memory=self.hparams.pin_memory,
-            persistent_workers=True if self.num_workers > 0 else False,
-            shuffle=False,
-        )
+        return self._dataloader(self.data_predict, shuffle=False)
 
 
 if __name__ == "__main__":

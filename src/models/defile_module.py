@@ -1,21 +1,34 @@
 import datetime
+import json
 import os
-import pickle
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
+import pandas as pd
 import torch
 import xarray as xr
-from captum.attr import IntegratedGradients, Saliency
+from captum.attr import Saliency
 from lightning import LightningModule
-from matplotlib import pyplot as plt
 from scipy.stats import spearmanr
-from torchmetrics import MaxMetric, MeanMetric
-from torchmetrics.regression import ExplainedVariance, SpearmanCorrCoef
+from torchmetrics import MeanMetric
+from torchmetrics.regression import ExplainedVariance
 
+from src import metrics as M
 from src.models.criterion import applyMask
-from src.plots.explanations import *
-from src.plots.save_predict import *
-from src.plots.save_test import *
+from src.plots.report import build_report
+from src.plots.save_predict import plt_predict
+from src.utils import RankedLogger
+from src.utils.rich_utils import print_metrics_table
+
+log = RankedLogger(__name__, rank_zero_only=True)
+
+
+def _years_str(years) -> str:
+    """Collapse a sorted year list to `1966-1992 (12)` -- 40 individual years do not fit
+    on a report line, and the range plus the count is what actually gets compared."""
+    if not len(years):
+        return "none"
+    return f"{years[0]}-{years[-1]} ({len(years)})" if len(years) > 1 else str(years[0])
 
 
 class DefileLitModule(LightningModule):
@@ -98,6 +111,11 @@ class DefileLitModule(LightningModule):
 
         self.predict_pred = {"pred": []}
 
+        # Phenology baseline, loaded lazily on first use and reused for every epoch:
+        # it is a small JSON, but re-reading and re-parsing it once per validation epoch
+        # for a number that is logged every epoch is pure overhead.
+        self._phenology: Optional[M.Phenology] = None
+
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
         test, or predict.
@@ -132,6 +150,39 @@ class DefileLitModule(LightningModule):
         count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
         return loss, count_pred
+
+    def _gather(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Collect a per-rank-local tensor across DDP processes and restore dataset row order.
+
+        `self.val_pred`/`self.test_pred`/`self.predict_pred` are built one rank-local batch
+        at a time. Under `trainer=gpu devices: 1` (what every documented command in this
+        repo actually uses) there is only one rank and this is a no-op. But
+        `configs/trainer/ddp.yaml` exists and is selectable, and without this call every
+        metric in `on_validation_epoch_end`/`on_test_epoch_end` -- and every file
+        `save_test`/`save_predict` write -- would silently reflect only rank 0's shard of
+        the data.
+
+        `self.all_gather` documents that for `world_size > 1` it returns shape
+        `(world_size, batch, ...)`, with no extra dim added when `world_size == 1`. Lightning
+        hands rank `r` the interleaved indices `r, r+world_size, r+2*world_size, ...` from
+        `DistributedSampler` (since every val/test/predict dataloader here sets
+        `shuffle=False`, see `DefileDataModule._dataloader`), so transposing the rank axis
+        in front of the local-batch axis and flattening interleaves the ranks back into
+        that same order -- row `i` of the result is row `i` of `dataset.count`, which
+        `src.metrics.build_frame` and every write in this module assume positionally.
+
+        Caveat inherited from `DistributedSampler`, not introduced here: when the dataset
+        size doesn't divide evenly by `world_size`, it pads by repeating a few leading
+        samples on the last rank so every rank's local batch has equal size (`all_gather`
+        would otherwise hang) -- those few rows are duplicated in the gathered result. This
+        project's val/test/predict sets are never sharded in practice (`devices: 1`), so
+        that padding never triggers; it would need a custom sampler to eliminate outright
+        if DDP were ever used for real.
+        """
+        gathered = self.all_gather(tensor)
+        if gathered.dim() == tensor.dim():
+            return gathered  # world_size == 1: all_gather added no dimension
+        return gathered.transpose(0, 1).reshape(-1, *tensor.shape[1:])
 
     ### TRAIN -------------------
 
@@ -188,32 +239,23 @@ class DefileLitModule(LightningModule):
     def on_validation_epoch_end(self) -> None:
         "Lightning hook that is called when a validation epoch ends."
 
-        # Concatenate batches
-        for k in self.val_pred.keys():
-            self.val_pred[k] = torch.cat(self.val_pred[k], 0)
+        # Concatenate rank-local batches, then gather across DDP processes (a no-op at
+        # world_size == 1) so every metric below scores the whole validation set rather
+        # than whichever shard this rank happened to see -- see `_gather`.
+        preds = {k: self._gather(torch.cat(v, 0)) for k, v in self.val_pred.items()}
 
         # Get masked predictions
-        obs = self.val_pred["obs"].squeeze()
-        pred_masked = applyMask(self.val_pred["pred"][:, 0, :], self.val_pred["mask"])
+        obs = preds["obs"].squeeze()
+        pred_masked = applyMask(preds["pred"][:, 0, :], preds["mask"])
 
         # Compute R2 score
-        explained_variance = ExplainedVariance()
-        self.val_r2_score = explained_variance(pred_masked, obs)
-        self.log(
-            "val/r2_score",
-            self.val_r2_score,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
+        self.val_r2_score = ExplainedVariance()(pred_masked, obs)
+        self.log("val/r2_score", self.val_r2_score, on_step=False, on_epoch=True, prog_bar=True)
 
         # Compute spearman correlation coeff
-        # spearman_coeff = SpearmanCorrCoef()
-        # self.val_spearman_coeff = spearman_coeff(pred_masked, obs)
         obs_np = obs.cpu().numpy()
         pred_np = pred_masked.cpu().numpy()
         self.val_spearman_coeff, _ = spearmanr(pred_np, obs_np)
-
         self.log(
             "val/spearman_coeff",
             self.val_spearman_coeff,
@@ -222,8 +264,50 @@ class DefileLitModule(LightningModule):
             prog_bar=True,
         )
 
+        # Skill against day-of-year phenology, logged every epoch rather than only at
+        # test time: val/loss says the model is improving at its own objective, this says
+        # whether the weather features are buying anything over knowing the date alone.
+        # A run whose val/loss falls while this stays at or below zero is learning the
+        # season, not the weather (DEVELOPMENT.md Phase 1).
+        skill = self._skill_vs_phenology("val", preds["pred"][:, 0, :].cpu().numpy())
+        if skill is not None:
+            self.log(
+                "val/skill_vs_phenology",
+                skill,
+                on_step=False,
+                on_epoch=True,
+                prog_bar=True,
+            )
+
         # reinitialize validation step
         self.val_pred = {"obs": [], "mask": [], "pred": []}
+
+    def _skill_vs_phenology(self, split: str, pred_hourly: np.ndarray) -> Optional[float]:
+        """Row-level MAE skill against phenology for one split, or None if unavailable.
+
+        Returns None rather than raising whenever the predictions do not line up with the
+        split's rows -- Lightning's sanity check and `debug=limit` both run a truncated
+        loop, and a diagnostic metric must never be the thing that breaks a debug run.
+        """
+        dataset = getattr(self.trainer.datamodule, f"data_{split}", None)
+        if dataset is None or len(pred_hourly) != len(dataset.count):
+            return None
+
+        try:
+            phenology = self.phenology
+        except (FileNotFoundError, KeyError) as err:  # no phenology for this species
+            log.warning(f"Skipping skill-vs-phenology: {err}")
+            return None
+
+        return M.validation_skill(dataset.count, dataset.mask, pred_hourly, phenology)
+
+    @property
+    def phenology(self) -> M.Phenology:
+        """The species' day-of-year phenology, loaded once per run."""
+        if self._phenology is None:
+            datamodule = self.trainer.datamodule
+            self._phenology = M.Phenology.load(datamodule.data_dir, datamodule.species)
+        return self._phenology
 
     ### TEST -------------------
     def on_test_epoch_start(self) -> None:
@@ -274,20 +358,21 @@ class DefileLitModule(LightningModule):
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
-        # Concatenate batches
+        # Concatenate rank-local batches, then gather across DDP processes (a no-op at
+        # world_size == 1) so every metric, plot and file below reflects the whole test
+        # set rather than whichever shard this rank happened to see -- see `_gather`.
         for k in self.test_pred.keys():
-            self.test_pred[k] = torch.cat(self.test_pred[k], 0).cpu()
+            self.test_pred[k] = self._gather(torch.cat(self.test_pred[k], 0)).cpu()
 
         if self.test_explanation:
+            # Order doesn't matter here -- `plt_explanations_*` only ever consume a mean
+            # over samples -- so no reordering beyond what `_gather` already does.
             self.test_explanation = [
-                torch.cat([exp[k] for exp in self.test_explanation], dim=0).cpu()
+                self._gather(torch.cat([exp[k] for exp in self.test_explanation], dim=0)).cpu()
                 for k in range(len(self.test_explanation[0]))
             ]
         else:
             self.test_explanation = None
-        # filepath = os.path.join(self.output_dir, 'test_explanation.pickle')
-        # with open(filepath, 'wb') as f:
-        #     pickle.dump(self.test_explanation, f)
 
         # Get masked predictions
         obs = self.test_pred["obs"].squeeze()
@@ -295,19 +380,10 @@ class DefileLitModule(LightningModule):
         pred_masked = applyMask(self.test_pred["pred"][:, 0, :], self.test_pred["mask"])
 
         # Compute R2 score
-        explained_variance = ExplainedVariance()
-        self.test_r2_score = explained_variance(pred_masked, obs)
-        self.log(
-            "test/r2_score",
-            self.test_r2_score,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=True,
-        )
+        self.test_r2_score = ExplainedVariance()(pred_masked, obs)
+        self.log("test/r2_score", self.test_r2_score, on_step=False, on_epoch=True, prog_bar=True)
 
         # Compute spearman correlation coeff
-        # spearman_coeff = SpearmanCorrCoef()
-        # self.test_spearman_coeff = spearman_coeff(pred_masked, obs)
         obs_np = obs.cpu().numpy()
         pred_np = pred_masked.cpu().numpy()
         self.test_spearman_coeff, _ = spearmanr(pred_np, obs_np)
@@ -323,133 +399,121 @@ class DefileLitModule(LightningModule):
         if self.trainer.logger:  # Only save if logger present (e.g., not during debug)
             self.save_test()
 
-    def save_test(self):
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+    # ---------------------------------------------------------------- test artefacts
 
-        # Retrieve ERA5 at the main location in xarray (not tensor) and WITHOUT transformation
-        test_dataset = self.trainer.datamodule.data_test
-        test_dataset.set_return_original(True)
-        test = []
+    def save_test(self) -> None:
+        """Score the test predictions and write the run's artefacts.
 
-        for i in range(len(test_dataset)):
-            _, _, _, era5_main, _, _, _ = test_dataset[i]
-            t = era5_main.copy()
-            # Add the predicted hourly count
-            t = t.assign(pred_log_hourly_count=("time", self.test_pred["pred"][i, 0, :]))
+        Three files per species per run, and no more: the scored predictions
+        (`<species>.nc`), the metrics in machine-readable form (`<species>_metrics.json`,
+        for comparing runs without reopening a PDF), and the consolidated report
+        (`<species>_report.pdf`). This replaced seven separate JPEGs that carried no
+        metrics and no ordering.
 
-            if self.test_pred["pred"].shape[1] == 2:
-                t = t.assign(pred_log_hourly_count_std=("time", self.test_pred["pred"][i, 1, :]))
+        `self.log_dict`/`print_metrics_table` run on every rank -- Lightning expects
+        `self.log` called the same number of times on every process, and it's cheap. The
+        file writes below run once, on the coordinating rank only: every rank has already
+        gathered the identical global `report`/`pred_hourly` by this point
+        (`on_test_epoch_end`/`_gather`), so writing from every rank would only race them
+        all against the same paths, never add anything.
+        """
+        datamodule = self.trainer.datamodule
+        dataset = datamodule.data_test
 
-            # Add the observed count
-            t = t.assign(obs_count_=("", self.test_pred["obs"][i]))
-
-            # Add the hourly mask
-            t = t.assign(mask=("time", self.test_pred["mask"][i]))
-            test.append(t)
-
-        # Concatenate each data along date
-        test = xr.concat(test, dim="date")
-
-        # ugly way to deal with 'obs' dimensions
-        test = test.assign(
-            obs_count=(
-                "date",
-                test["obs_count_"].values.squeeze(),
-            )
+        pred_hourly = self.test_pred["pred"][:, 0, :].numpy()
+        report = M.evaluate(
+            count=dataset.count,
+            mask=dataset.mask,
+            pred_hourly=pred_hourly,
+            species=datamodule.species,
+            data_dir=datamodule.data_dir,
         )
-        test = test.drop_dims("")
 
-        # Add the total predicted count (sum according to mask)
-        test = test.assign(
-            pred_count=(
-                "date",
-                applyMask(test["pred_log_hourly_count"].values, test["mask"].values),
+        self.log_dict(report.logged("test"))
+        print_metrics_table(report, title=f"{datamodule.species} — test metrics")
+
+        if not self.trainer.is_global_zero:
+            return
+
+        os.makedirs(self.output_dir, exist_ok=True)
+        stem = os.path.join(self.output_dir, "_".join(datamodule.species.split(" ")))
+
+        self._write_netcdf(f"{stem}.nc", dataset, report, pred_hourly)
+
+        with open(f"{stem}_metrics.json", "w") as f:
+            json.dump(
+                {
+                    "species": datamodule.species,
+                    "scalars": report.scalars,
+                    "by_era": report.by_era.to_dict(orient="records"),
+                    "per_year": report.per_year.to_dict(orient="records"),
+                },
+                f,
+                indent=2,
+                default=float,
             )
+
+        build_report(
+            path=f"{stem}_report.pdf",
+            report=report,
+            phenology=self.phenology,
+            mask=dataset.mask,
+            pred_hourly=pred_hourly,
+            run_info=self._run_info(),
+            datamodule=datamodule,
+            explanations=self.test_explanation,
         )
-        if self.test_pred["pred"].shape[1] == 2:
-            test = test.assign(
-                pred_count_down=(
-                    "date",
-                    applyMask(
-                        np.clip(
-                            test["pred_log_hourly_count"].values
-                            - test["pred_log_hourly_count_std"].values,
-                            a_min=0,
-                            a_max=None,
-                        ),
-                        test["mask"].values,
-                    ),
-                ),
-                pred_count_up=(
-                    "date",
-                    applyMask(
-                        test["pred_log_hourly_count"].values
-                        + test["pred_log_hourly_count_std"].values,
-                        test["mask"].values,
-                    ),
-                ),
-            )
+        log.info(f"Wrote test report to {stem}_report.pdf")
 
+    def _write_netcdf(
+        self, path: str, dataset, report: M.MetricReport, pred_hourly: np.ndarray
+    ) -> None:
+        """Write the test predictions alongside the untransformed weather they came from.
+
+        One vectorised `.sel` over the test dates rather than one `.sel` per row followed
+        by an `xr.concat` of thousands of single-date Datasets: the old form was quadratic
+        in the number of test rows (a full test split runs to several thousand) and took
+        longer than the test epoch itself.
+        """
+        dates = xr.DataArray(pd.DatetimeIndex(dataset.count["date"]), dims="date")
+        test = self.trainer.datamodule.era5_main.sel(date=dates)
+
+        test = test.assign(
+            pred_log_hourly_count=(("date", "time"), pred_hourly),
+            mask=(("date", "time"), np.asarray(dataset.mask, dtype=float).T),
+            obs_count=("date", report.frame["obs"].to_numpy()),
+            pred_count=("date", report.frame["pred"].to_numpy()),
+            phen_count=("date", report.frame["phen"].to_numpy()),
+        )
         test["time"] = test.time.astype(str)
+        test.to_netcdf(path)
 
-        ## Save predictions ------------------
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + ".nc"
-        test.to_netcdf(os.path.join(self.output_dir, filename))
-        print(test)
+    def _run_info(self) -> Dict[str, str]:
+        """The provenance block printed on the report's first page.
 
-        ## Save plots ------------------
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" ")) + "_counts_distribution.jpg"
-        )
-        plt_counts_distribution(
-            test.obs_count.values,
-            test.pred_count.values,
-            filepath=os.path.join(self.output_dir, filename),
-        )
+        Which years were held out, and how many rows each split holds, is the first thing
+        anyone comparing two reports needs -- and the first thing lost if it lives only in
+        a log file that the PDF does not travel with.
+        """
+        datamodule = self.trainer.datamodule
+        count = datamodule.count
+        years = {
+            split: sorted(count.loc[count["tvt"] == split, "year"].unique())
+            for split in ("train", "val", "test")
+        }
+        sizes = {split: int((count["tvt"] == split).sum()) for split in years}
+        test_rows = count[count["tvt"] == "test"]
 
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_true_vs_prediction.jpg"
-        plt_true_vs_prediction(
-            test.obs_count.values,
-            test.pred_count.values,
-            filepath=os.path.join(self.output_dir, filename),
-        )
-
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_timeseries.jpg"
-        plt_timeseries(
-            test, log_transformed=False, filepath=os.path.join(self.output_dir, filename)
-        )
-
-        filename = (
-            "_".join(self.trainer.datamodule.species.split(" "))
-            + "_timeseries_log_transformed.jpg"
-        )
-        plt_timeseries(
-            test, log_transformed=True, filepath=os.path.join(self.output_dir, filename)
-        )
-        filename = "_".join(self.trainer.datamodule.species.split(" ")) + "_doy_sum.jpg"
-        plt_doy_sum(test, filepath=os.path.join(self.output_dir, filename))
-
-        if self.test_explanation is not None:
-            filename = (
-                "_".join(self.trainer.datamodule.species.split(" "))
-                + "_contributions_metrics.jpg"
-            )
-            plt_explanations_metrics(
-                self.trainer.datamodule,
-                self.test_explanation,
-                filepath=os.path.join(self.output_dir, filename),
-            )
-
-            filename = (
-                "_".join(self.trainer.datamodule.species.split(" "))
-                + "_contributions_locations.jpg"
-            )
-            plt_explanations_locations(
-                self.trainer.datamodule,
-                self.test_explanation,
-                filepath=os.path.join(self.output_dir, filename),
-            )
+        checkpoint = getattr(self.trainer, "ckpt_path", None) or "current weights"
+        return {
+            "output_dir": str(self.output_dir),
+            "checkpoint": str(checkpoint),
+            "train": f"{sizes['train']:>6} rows  years {_years_str(years['train'])}",
+            "val": f"{sizes['val']:>6} rows  years {_years_str(years['val'])}",
+            "test": f"{sizes['test']:>6} rows  years {_years_str(years['test'])}",
+            "test zero rows": f"{float((test_rows['count'] == 0).mean()):.1%}",
+            "doy range": str(list(datamodule.doy)),
+        }
 
     ### EXPORT PREDICTIONS -------------------
     def predict_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
@@ -469,34 +533,43 @@ class DefileLitModule(LightningModule):
 
     def on_predict_epoch_end(self) -> None:
         """Lightning hook that is called when a predict epoch ends."""
-        # Concatenate batches
+        # Concatenate rank-local batches, then gather across DDP processes (a no-op at
+        # world_size == 1) so the forecast reflects every date rather than whichever
+        # shard this rank happened to see -- see `_gather`.
         for k in self.predict_pred.keys():
-            self.predict_pred[k] = torch.cat(self.predict_pred[k], 0).cpu()
+            self.predict_pred[k] = self._gather(torch.cat(self.predict_pred[k], 0)).cpu()
 
-        self.save_predict()
+        # Runs on every rank up to here (cheap, and every rank now holds the identical
+        # gathered forecast); only the coordinating rank writes it, so multiple ranks
+        # under `trainer=ddp` don't race each other against the same output paths.
+        if self.trainer.is_global_zero:
+            self.save_predict()
 
     def save_predict(self):
-        predict_dataset = self.trainer.datamodule.data_predict
-        predict_dataset.set_return_original(True)
-        predictions = []
+        """Write the daily forecast: one NetCDF (consumed by defileViz) and one preview JPEG.
 
-        for i in range(len(predict_dataset)):
-            _, _, era5_main, _, _ = predict_dataset[i]
-            pred = era5_main.copy()
-            pred = pred.assign(pred_log_hourly_count=("time", self.predict_pred["pred"][i, 0, :]))
-            predictions.append(pred)
+        The filename pattern `<YYYYMMDD>_<Species_Name>.nc` and the variable name
+        `pred_log_hourly_count` are a contract with the frontend, which fetches them by
+        URL -- see AGENTS.md "Related repo". Do not rename either without coordinating.
+        """
+        datamodule = self.trainer.datamodule
+        predict_dataset = datamodule.data_predict
 
-        predictions = xr.concat(predictions, dim="date")
-        # predictions["time"] = predictions.time.astype(str)
-        today = datetime.date.today().strftime("%Y%m%d")
-        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
+        # One gather over the forecast dates rather than a per-date `.sel` + `xr.concat`,
+        # matching `_write_netcdf`. Only a handful of dates here, but the two paths
+        # disagreeing about how the output is built is how they drift apart.
+        dates = xr.DataArray(pd.DatetimeIndex(predict_dataset.count["date"]), dims="date")
+        predictions = predict_dataset.era5_main.sel(date=dates).assign(
+            pred_log_hourly_count=(("date", "time"), self.predict_pred["pred"][:, 0, :].numpy())
+        )
 
-        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".nc"
-        predictions.to_netcdf(os.path.join(self.output_dir, filename))
-
-        filename = "_".join([today] + self.trainer.datamodule.species.split(" ")) + ".jpg"
-        filepath = os.path.join(self.output_dir, filename)
-        plt_predict(predictions, species=self.trainer.datamodule.species, filepath=filepath)
+        os.makedirs(self.output_dir, exist_ok=True)
+        stem = os.path.join(
+            self.output_dir,
+            "_".join([datetime.date.today().strftime("%Y%m%d")] + datamodule.species.split(" ")),
+        )
+        predictions.to_netcdf(f"{stem}.nc")
+        plt_predict(predictions, species=datamodule.species, filepath=f"{stem}.jpg")
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

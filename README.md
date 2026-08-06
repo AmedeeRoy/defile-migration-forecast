@@ -60,10 +60,11 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 ├── src                    <- Source code
 │   ├── data                     <- Datamodule, weather access, normalisation
 │   ├── models                   <- LightningModule, losses, network components
-│   ├── plots                    <- Plotting/explanation scripts
+│   ├── plots                    <- Per-species PDF test report, prediction plots
 │   ├── utils                    <- Utility scripts
 │   │
 │   ├── eval.py                  <- Run evaluation
+│   ├── metrics.py               <- Row/day/shape/season metrics + the phenology baseline
 │   ├── predict.py               <- Run prediction
 │   └── train.py                 <- Run training
 │
