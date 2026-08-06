@@ -198,14 +198,20 @@ class UNetplus(nn.Module):
             # nn.ReLU(),  # force output >= 0
         )
 
-        # Force the count to be zero during the hours of the day with no observation.
-        # Registered as a non-persistent buffer so it follows the module's device without
-        # being rebuilt on every forward pass, and without appearing in state_dict (which
-        # would break loading of existing checkpoints).
-        pred_mask = torch.ones(24)
-        pred_mask[:5] = 0
-        pred_mask[19:] = 0
-        self.register_buffer("pred_mask", pred_mask.view(1, 1, 24), persistent=False)
+        # No hard hour mask here, deliberately. This used to force the output to zero at
+        # UTC hours 0-4 and 19-23, ahead of and independent of the real per-sample survey
+        # coverage mask that the loss applies. Real surveys start before 05:00 UTC on 145
+        # of 4,900 days (3%, concentrated in July-August dawn starts under CEST): on those
+        # days the loss's mask correctly said "score this hour" while the network was
+        # architecturally forced to emit zero there, biasing the prediction down on exactly
+        # the days where the early hours carry birds. `applyMask` in
+        # src/models/criterion.py already restricts the loss to the hours each survey
+        # actually covered, per sample, which is both correct and sufficient.
+        #
+        # Consequence to be aware of on the forecast path: hours that no survey has ever
+        # covered (deep night) now receive no gradient and are whatever the 1-D conv stack
+        # extrapolates from dawn/dusk rather than a guaranteed zero. The mean diurnal
+        # profile panel in the test report is where to check that this stays negligible.
 
     def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
         # Define forward pass
@@ -246,8 +252,5 @@ class UNetplus(nn.Module):
         # at least exp(8)-1 = 2979
         out = 8 * out_h * out_d
         # out = out_h + out_d
-
-        # Force count to be zero during the hours of day with no data
-        out = out * self.pred_mask
 
         return out  # (batch, 1, 24)

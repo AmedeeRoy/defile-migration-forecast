@@ -58,25 +58,30 @@ accident (see the year-subset ladder and `out_h` items in Phase 2, both downstre
 same fact) — so what gets reported needs to account for both, not just retrain against the
 two pooled metrics that exist today.
 
-**Fix first, before retraining:** `UNetplus.__init__` (`src/models/components/unet.py`)
-hard-zeroes the network's own output at UTC hours 0–4 and 19–23, ahead of and independent of
-the real per-sample survey coverage mask used in the loss. Real survey coverage starts before
-05:00 UTC on 145 of 4,900 days (3%, concentrated in July–August dawn starts under CEST) —
-on those days the loss's mask correctly says "count this hour" but the network is
-architecturally forced to output zero there regardless, biasing the prediction down on
-exactly the days this matters for. Drop the hardcoded mask and rely solely on the per-sample
-mask already applied in `applyMask`/`src/models/criterion.py`, which is correct and
-per-sample; the network-level one is pure downside. (`convnet.py`/`transformer.py` carry the
-same pattern but aren't wired into any config, so they're inert, not affected.) This directly
-affects the intra-day shape metric below, so land it first.
+**Fixed, not yet retrained against:** `UNetplus.__init__` (`src/models/components/unet.py`)
+used to hard-zero the network's own output at UTC hours 0–4 and 19–23, ahead of and
+independent of the real per-sample survey coverage mask used in the loss. Real survey
+coverage starts before 05:00 UTC on 145 of 4,900 days (3%, concentrated in July–August dawn
+starts under CEST) — on those days the loss's mask correctly said "count this hour" but the
+network was architecturally forced to output zero there regardless, biasing the prediction
+down on exactly the days this mattered for. A data check confirms the direction: across
+every hourly-resolution dawn/dusk survey row in the dataset, the 11 modelled raptor species
+account for only 2 individuals total (thermal-soaring raptors genuinely don't move at
+dawn/dusk), so the old bug cost little in volume, but it was pure downside on precisely those
+rare, real records. Dropped the hardcoded mask; the per-sample mask already applied in
+`applyMask`/`src/models/criterion.py` is correct and sufficient on its own. (`convnet.py`/
+`transformer.py` carry the same pattern but aren't wired into any config, so they were inert,
+not affected.) Consequence to watch for once retrained: hours no survey has ever covered
+(deep night) now get no gradient at all, rather than a guaranteed zero — check the mean
+diurnal profile panel in the test report (intra-day shape metric, below) stays sane there.
 
 #### Loss function
 
 - **Row weighting — a config flag (`data.loss_weighting`), not a fixed choice**, since the
   right answer isn't obvious: a 6am–7pm survey and a 10am–2pm survey get very different
   weight under raw-duration weighting even though most of the long survey's extra hours may
-  be near-zero activity, and the model's `pred_mask` (once fixed, above) still only spans
-  05–19 UTC. Three options to test:
+  be near-zero activity, and the model's active window (the hard `pred_mask` removed above
+  only ever spanned it anyway) is still 05–19 UTC conceptually. Three options to test:
   - `"none"` (status quo) — baseline for comparison.
   - `"active_overlap"` — weight = overlap between the survey mask and the model's 05–19 UTC
     active window, so a short midday survey inside it isn't penalised relative to a long
