@@ -21,6 +21,12 @@ the model learns to depend on that isn't available then is a liability.
 
 ## Status
 
+Environment management is `uv` (`pyproject.toml` + `uv.lock`), not conda —
+`environment.yaml` is gone. Dependencies are pinned to exact versions, not ranges, since the
+first attempt at ranged constraints silently resolved `torch` and `pyarrow` several major
+versions ahead of anything this project has been tested against; bump deliberately with
+`uv lock --upgrade-package <name>`, not by loosening the pins.
+
 Weather is centralised on Open-Meteo (`src.data.weather.get_weather`) for both training and
 forecasting, with the forecast path pinned to `ecmwf_ifs025` to match ERA5's 0.25° training
 grid. A residual wind-agreement gap remains between the two in complex terrain even at
@@ -188,8 +194,6 @@ that kills the daily run.
 **Phase 4 — operational hardening**, independent small PRs, can run anytime in parallel:
 - Freshness check (assert the published file's date matches today) + failure notification.
   Right now if `predict.py` fails, the app keeps serving stale files with no indication.
-- Reproducible daily job: `conda env create || conda env update` on every run is slow and
-  can drift; a lockfile or prebuilt container image would fix that.
 - Transform-in-checkpoint: `data/transform_data.pickle` is a single global file that must
   correspond to the promoted checkpoints, with nothing enforcing that and retraining
   silently rewriting it. Saving transform parameters inside the checkpoint removes the

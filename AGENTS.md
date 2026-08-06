@@ -46,15 +46,19 @@ src/
 
 ## Environment
 
-Conda env (`environment.yaml`), Python 3.10. Core deps: `pytorch=2.*`, `lightning=2.*`,
-`hydra-core=1.*`, `pandas=2.*`, `xarray=2023.6.0`, `rich`, `matplotlib`, `einops`,
-`cloudpickle`; via pip: `hydra-optuna-sweeper`, `hydra-colorlog`, `rootutils`,
-`suncalc`, `openmeteo_sdk`/`openmeteo_requests`, `requests-cache`, `retry-requests`,
+Managed with [uv](https://docs.astral.sh/uv/), Python 3.10 (`.python-version`; uv provisions
+this itself, no separate Python install needed). Exact versions pinned in `pyproject.toml`
+and locked in `uv.lock` -- deliberately pinned, not ranged, so `uv lock` alone can't silently
+drift to a newer release. Core deps: `torch==2.5.1`, `lightning==2.5.5`,
+`hydra-core==1.3.2`, `pandas==2.3.3`, `xarray==2023.6.0`, `rich`, `matplotlib`, `einops`,
+`cloudpickle`, `hydra-optuna-sweeper`, `hydra-colorlog`, `rootutils`, `suncalc`,
+`openmeteo-sdk`/`openmeteo-requests`, `requests-cache`, `retry-requests`,
 `captum` (used for saliency/explanations in `src/plots/explanations.py`).
 
 ```bash
-conda env create --file=environment.yaml
-conda activate defile-env
+uv sync                          # creates .venv, installs everything at the pinned versions
+uv run python src/train.py       # run any command inside it
+# or: source .venv/bin/activate && python src/train.py
 ```
 
 ## Key commands
@@ -102,7 +106,7 @@ Pre-commit hooks (`.pre-commit-config.yaml`) — run `pre-commit run --all-files
 treating a change as done. Configured hooks: standard hygiene checks
 (`check-added-large-files`, `check-merge-conflict`, `check-yaml`, `end-of-file-fixer`,
 `trailing-whitespace`), `black` (line length 99), `isort` (black profile),
-`docformatter`, `prettier` for YAML (excludes `environment.yaml`), `mdformat`,
+`docformatter`, `prettier` for YAML, `mdformat`,
 `codespell` (skips `logs/`, `data/`, `*.ipynb`), and — importantly —
 **`nbstripout`**, which should strip notebook outputs automatically on commit. If a
 notebook diff still carries megabytes of embedded output, the hook likely isn't
@@ -223,6 +227,10 @@ This repo currently lives inside a OneDrive-synced folder. Two things to watch f
 2. The same sync layer can make `git status` show many files as modified with no
    real content change (it's touching metadata/permissions, not content). Always
    check `git diff`, don't trust `git status` alone before committing.
+3. `.venv/` (created by `uv sync`) is thousands of small files living in this same synced
+   folder — a prime candidate for the placeholder/deadlock issue in (1), and there is no
+   reason to sync it at all (it's gitignored and fully reproducible from `uv.lock`). If
+   `uv sync`/`uv run` hang or error strangely, that's the first thing to suspect.
 
 ## Things not to do
 
@@ -235,8 +243,8 @@ This repo currently lives inside a OneDrive-synced folder. Two things to watch f
 
 Runs daily at 03:00 UTC (cron), on every push to `main`, and on manual dispatch:
 
-1. Creates/updates the conda env from `environment.yaml`.
-2. Runs `python src/predict.py --multirun experiment=<all 11 species>`, producing
+1. Installs the pinned environment with `uv sync --locked`.
+2. Runs `uv run python src/predict.py --multirun experiment=<all 11 species>`, producing
    NetCDF forecast files under `prod/forecasts/`.
 3. Uploads those forecasts to a GCE host via SCP (`secrets.GCE_HOST/USER/SSH_KEY`) —
    this is what actually serves the files defileViz consumes (see below).
