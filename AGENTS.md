@@ -36,6 +36,7 @@ prod/            Production artifacts (gitignored, generated):
 scripts/
   schedule.sh                    cron entrypoint for scheduled predict+deploy runs
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
+  build_phenology_stats.py       builds data/count/species_doy_statistics.json
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
   data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform
@@ -214,6 +215,13 @@ rather than editing `configs/data/defile.yaml` directly.
   Exceptions that *are* committed: `data/transform_data.pickle`,
   `data/count/readme.md`, `data/count/species_doy_statistics.json`, and
   `prod/models/*/checkpoints/best.ckpt`.
+- `data/count/species_doy_statistics.json` — per-species day-of-year phenology
+  (`src.phenology.Phenology`): the skill-score baseline every test-report metric is judged
+  against, and also what defileViz renders as its uncertainty band. Built by
+  `python scripts/build_phenology_stats.py` (species list read from
+  `configs/experiment/*.yaml`, so it never needs a second species list kept in sync by
+  hand). `notebooks/phenology_baseline.ipynb` calls the same builder for exploration only — it
+  does not write the file itself anymore.
 
 ## Known environment gotcha: OneDrive sync
 

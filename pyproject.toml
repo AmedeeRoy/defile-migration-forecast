@@ -34,6 +34,12 @@ dependencies = [
     "requests-cache==1.2.1",
     "retry-requests==2.0.0",
     "captum==0.8.0",
+    # GAM fitting for the phenology baseline (scripts/build_phenology_stats.py ->
+    # data/count/species_doy_statistics.json), consumed by src.metrics.Phenology and by
+    # defileViz's uncertainty bands. Not previously pinned here at all -- the generator
+    # lived only in a notebook, so it silently depended on whatever happened to be in
+    # whoever's environment ran it last, outside this project's tracked dependencies.
+    "pygam==0.12.0",
     # Pinned directly, not just transitively: requests>=2.32 breaks type-hint resolution
     # somewhere in the requests-cache/openmeteo_requests stack (NameError: name
     # 'RequestsCookieJar' is not defined, from a lazily-evaluated forward reference), which

@@ -86,24 +86,25 @@ diurnal profile panel in the test report (intra-day shape metric, below) stays s
   - `"active_overlap"` — weight = overlap between the survey mask and the model's 05–19 UTC
     active window, so a short midday survey inside it isn't penalised relative to a long
     dawn-to-dusk one, and no row is penalised for hours the model can't predict.
-  - `"climatology"` — weight by expected activity from an **hourly** climatology, so a
-    midday hour in peak season counts for more than one in the off-peak fringe. Most
-    faithful to what actually matters, but needs an hourly climatology built first —
-    `species_doy_statistics.json` is daily-only today, so this is a data-prep task before
-    it's a config flag.
+  - `"phenology"` — weight by expected activity from an **hourly** phenology baseline, so a
+    midday hour in peak season counts for more than one in the off-peak fringe.
+    `species_doy_statistics.json` already carries this (a GAM-fitted `ratio` field, hour
+    of day x day of year — see `scripts/build_phenology_stats.py` and
+    `src.phenology.Phenology.hourly_rate`), so this is a config flag now, not a data-prep
+    task.
 
 #### Reporting and metrics
 
 Report one, at most two, complementary metrics per level — no redundant variants, though
 extra diagnostics can be computed without being shown. All of them reported **per species
 and per era, never pooled** (Merlin at 95% zero and Common Buzzard at 65% zero are different
-problems), and all with a **skill score against day-of-year climatology**
-(`1 − score_model / score_climatology`, using `data/count/species_doy_statistics.json`) and
+problems), and all with a **skill score against day-of-year phenology**
+(`1 − score_model / score_phenology`, using `data/count/species_doy_statistics.json`) and
 against **persistence** (yesterday's count) as naive baselines — if the model doesn't beat
-climatology, the weather features aren't contributing anything, and no raw metric value
+phenology, the weather features aren't contributing anything, and no raw metric value
 alone will show that. This is purely an evaluation-time comparison, not a training input: a
 second scoring pass over the same predictions. Cheap enough to also log every validation
-epoch (`val/skill_vs_climatology`), not just at final test time. Caveat: the climatology
+epoch (`val/skill_vs_phenology`), not just at final test time. Caveat: the phenology
 file has no `year` field — it's pooled across all years including whatever ends up in the
 test split, a mild leakage risk on the baseline side; worth rebuilding per-split if a skill
 score ever looks suspiciously good, not blocking to start with. (Also already live in
@@ -114,7 +115,7 @@ running system.)
 | level | headline metric(s) | computed, not headlined |
 |---|---|---|
 | 1. Row | **MAE** + **Bias**, birds/hr | Tweedie deviance itself (it's the loss; redundant as a metric) |
-| 2. Day (event) | **CSI** vs. a per-species-doy climatology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts, for when CSI looks wrong and you need to know why |
+| 2. Day (event) | **CSI** vs. a per-species-doy phenology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts, for when CSI looks wrong and you need to know why |
 | 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (catches shape distortion even when the peak hour is right; keep computing it, don't headline two shape numbers) |
 | 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates (only worth surfacing if the median error is large and you need to know whether early- or late-season passage is driving it) |
 
