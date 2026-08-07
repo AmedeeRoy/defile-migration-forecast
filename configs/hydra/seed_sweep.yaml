@@ -1,0 +1,15 @@
+# https://hydra.cc/docs/configure_hydra/intro/
+
+# Override for `--multirun ... seed=0,1,2` seed-comparison sweeps (see DEVELOPMENT.md /
+# scripts/aggregate_seeds.py). The default sweep.subdir (configs/hydra/default.yaml) is
+# just the species name, so every seed of the same species writes to the same output dir
+# and overwrites the previous seed's metrics.json/report.pdf/*.nc (only checkpoints get
+# auto-versioned by Lightning, so this was silent). Kept as an opt-in override rather than
+# changed in default.yaml because that bare-species subdir is what
+# scripts/move_checkpoints_to_prod.py and configs/predict.yaml rely on for single-seed
+# promotion runs (prod/models/${species}/checkpoints/best.ckpt).
+defaults:
+  - default
+
+sweep:
+  subdir: ${underscore:'${data.species}'}/seed_${seed}
