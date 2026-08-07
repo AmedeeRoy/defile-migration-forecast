@@ -3,6 +3,14 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+# Floor added before `log(prior_shape)` (see UNetplus.forward). Not zero: a `prior_shape`
+# hour of exactly 0 (deep night) would otherwise make that hour's softmax logit -inf,
+# making it architecturally *impossible* to ever predict anything there regardless of
+# real evidence -- precisely the rigidity the old hardcoded dawn/dusk zero-mask caused,
+# which this project already found and fixed once (see DECISIONS.md -> Model
+# architecture). This keeps night heavily discouraged, not forbidden.
+PRIOR_LOG_EPS = 1e-6
+
 
 class DownConv(nn.Module):
     """A helper Module that performs 2 convolutions and 1 MaxPool.
@@ -146,15 +154,25 @@ class UNetplus(nn.Module):
             up_conv = UpConv(ins, outs)
             self.up_convs.append(up_conv)
 
+        # No trailing Sigmoid: this now produces raw logits `z`, combined with the
+        # phenology shape prior's log-probability before a softmax (see forward()) --
+        # out_h is a genuine distribution over the 24 hours (sums to 1) now, not 24
+        # independent (0, 1) values as before.
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
             nn.Conv1d(
                 4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
             ),
-            nn.Sigmoid(),  # force output between 0-1
-            # nn.ReLU(),  # force output >= 0
         )
+        # Zero-initialized so the network starts training at out_h == prior_shape
+        # exactly (the residual logit `z` is 0 everywhere at init) -- see DECISIONS.md ->
+        # Model architecture for why anchoring the default this way, rather than an
+        # arbitrary initial output, is the actual fix for out_h's flat-collapse failure
+        # mode: there is no longer a nearby degenerate state for training to fall into
+        # when it has little else to go on.
+        nn.init.zeros_(self.conv_final[-1].weight)
+        nn.init.zeros_(self.conv_final[-1].bias)
 
         # Daily Network --------------------------
         self.nb_lag_day = nb_lag_day
@@ -208,12 +226,15 @@ class UNetplus(nn.Module):
         # src/models/criterion.py already restricts the loss to the hours each survey
         # actually covered, per sample, which is both correct and sufficient.
         #
-        # Consequence to be aware of on the forecast path: hours that no survey has ever
-        # covered (deep night) now receive no gradient and are whatever the 1-D conv stack
-        # extrapolates from dawn/dusk rather than a guaranteed zero. The mean diurnal
-        # profile panel in the test report is where to check that this stays negligible.
+        # Dropping that hard mask left deep night (which no survey has ever covered) with
+        # no gradient at all, and out_h free to settle anywhere -- including a flat,
+        # input-invariant collapse observed directly on some seeds after retraining (see
+        # DECISIONS.md -> Model architecture). Fixed not by reintroducing a hard mask, but
+        # by anchoring out_h's *default* to a smooth, physically-informed shape (the
+        # `prior_shape` argument below) that real weather evidence can still override --
+        # see forward()'s softmax step.
 
-    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
+    def forward(self, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily):
         # Define forward pass
         # ---------------------------
 
@@ -236,7 +257,17 @@ class UNetplus(nn.Module):
         for i, module in enumerate(self.up_convs):
             before_pool = encoder_outs[-(i + 2)]
             out_h = module(before_pool, out_h)
-        out_h = self.conv_final(out_h)
+        z = self.conv_final(out_h)  # (batch, nb_output_features, 24) raw logits
+
+        # out_h is now a genuine distribution over the 24 hours (sums to 1): the
+        # network's logits `z`, biased by the phenology prior's log-probability. At
+        # init (z == 0 everywhere, by the zero-init above) this is exactly `prior_shape`;
+        # as training proceeds, `z` is a learned residual that shifts probability mass
+        # away from the prior wherever the hourly weather inputs actually justify it.
+        # `out_d` (below) is a single scalar shared by every hour of one sample, so it
+        # cancels out of this softmax entirely -- this supervises shape only.
+        log_prior = torch.log(prior_shape + PRIOR_LOG_EPS).unsqueeze(1)
+        out_h = torch.softmax(z + log_prior, dim=-1)
 
         # Daily weather
         doy_ = doy.repeat(1, self.nb_lag_day).unsqueeze(1)
@@ -247,9 +278,12 @@ class UNetplus(nn.Module):
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
-        # out_h and out_d are both between 0 and 1
-        # Multiply by 8 to get the expected count to reach
-        # at least exp(8)-1 = 2979
+        # out_h now sums to 1 across the 24 hours (a genuine shape distribution, not 24
+        # independent (0, 1) values); out_d is between 0 and 1. The `8x` scale (giving a
+        # max reachable count of exp(8)-1 = 2979) was tuned against the old
+        # unconstrained-per-hour out_h and will settle at a different effective value
+        # once retrained against this parameterisation -- expected, not a bug, checked
+        # post-retrain like any architecture change here.
         out = 8 * out_h * out_d
         # out = out_h + out_d
 

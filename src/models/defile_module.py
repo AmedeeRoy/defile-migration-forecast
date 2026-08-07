@@ -128,9 +128,9 @@ class DefileLitModule(LightningModule):
         if self.hparams.compile and stage == "fit":
             self.net = torch.compile(self.net)
 
-    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily) -> torch.Tensor:
+    def forward(self, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`."""
-        return self.net(yr, doy, era5_main, era5_hourly, era5_daily)
+        return self.net(yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
         return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion.values()]).sum()
@@ -146,8 +146,8 @@ class DefileLitModule(LightningModule):
             - A tensor of losses.
             - A tensor of predictions.
         """
-        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
-        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
+        count, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily, mask = batch
+        count_pred = self.forward(yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
         loss = self.loss(count_pred, count, mask)
         return loss, count_pred
 
@@ -230,7 +230,7 @@ class DefileLitModule(LightningModule):
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         # save all predictions (reuse the forward pass from model_step)
-        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        count, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily, mask = batch
 
         self.val_pred["obs"].append(count)
         self.val_pred["mask"].append(mask)
@@ -315,15 +315,17 @@ class DefileLitModule(LightningModule):
         if self.compute_saliency:
             self.explainer = Saliency(self.explainable_model_step)
 
-    def explainable_model_step(self, yr, doy, era5_main, era5_hourly, era5_daily):
-        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
+    def explainable_model_step(self, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily):
+        count_pred = self.forward(yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
         count_pred = torch.mean(count_pred[:, 0, :], dim=1)
         return count_pred
 
     def explain(self, batch) -> None:
         batch = (b.requires_grad_() for b in batch)
-        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
-        saliency = self.explainer.attribute((yr, doy, era5_main, era5_hourly, era5_daily))
+        count, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily, mask = batch
+        saliency = self.explainer.attribute(
+            (yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
+        )
         return saliency
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
@@ -350,7 +352,7 @@ class DefileLitModule(LightningModule):
         self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         # save all predictions (reuse the forward pass from model_step)
-        count, yr, doy, era5_main, era5_hourly, era5_daily, mask = batch
+        count, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily, mask = batch
 
         self.test_pred["obs"].append(count)  # single value
         self.test_pred["mask"].append(mask)  # hourly mask
@@ -526,8 +528,8 @@ class DefileLitModule(LightningModule):
         # No loss is computed here: ForecastDataset supplies a dummy zero `count` and a
         # length-1 zero `mask`, so evaluating the criterion would divide by
         # mask.sum() == 0 and yield NaN, on top of costing an extra forward pass.
-        _, yr, doy, era5_main, era5_hourly, era5_daily, _ = batch
-        count_pred = self.forward(yr, doy, era5_main, era5_hourly, era5_daily)
+        _, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily, _ = batch
+        count_pred = self.forward(yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
 
         self.predict_pred["pred"].append(count_pred)
 

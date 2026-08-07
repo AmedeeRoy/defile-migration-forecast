@@ -11,9 +11,21 @@ from torch.utils.data import DataLoader, Dataset
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
 from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
+from src.phenology import Phenology
 from src.utils import RankedLogger
 
 log = RankedLogger(__name__, rank_zero_only=True)
+
+
+def _prior_shape_lookup(data_dir: str, species: str) -> np.ndarray:
+    """`(366, 24)` float32 array: `Phenology.hourly_shape` for every day of year, indexed
+    by `doy - 1` -- the shape UNetplus's out_h defaults to before any weather evidence
+    shifts it away (see DECISIONS.md -> Model architecture). Built once per run, same
+    pattern as the old NightPenalty's `night_mask_by_doy_hour` lookup (superseded by
+    this: the prior's own night-anchoring already forces those hours to 0).
+    """
+    phenology = Phenology.load(data_dir, species)
+    return phenology.hourly_shape(np.arange(1, 367)).astype(np.float32)
 
 
 def sample2tensor(sample):
@@ -41,6 +53,7 @@ class DefileDataset(Dataset):
         era5_hourly_trans,
         era5_daily_trans,
         mask,
+        prior_shape_lookup,
         return_original=False,
     ):
         # Assign to self
@@ -52,6 +65,7 @@ class DefileDataset(Dataset):
         self.era5_hourly_trans = era5_hourly_trans
         self.era5_daily_trans = era5_daily_trans
         self.mask = mask
+        self.prior_shape_lookup = prior_shape_lookup
         self.return_original = return_original
 
         # `.sel(date=...)` on a full xarray Dataset costs on the order of hundreds of
@@ -93,6 +107,9 @@ class DefileDataset(Dataset):
 
     def __getitem__(self, idx):
         count = self.count.iloc[idx]
+        # (24,) float32, sums to 1 -- the shape out_h defaults to before weather evidence
+        # shifts it (see UNetplus.forward and ShapeSupervision's replacement).
+        prior_shape = self.prior_shape_lookup[int(count["doy"]) - 1]
 
         # index by count/observation
         if self.return_original:
@@ -100,6 +117,7 @@ class DefileDataset(Dataset):
                 count["count"],
                 count["year_used"],
                 count["doy"],
+                prior_shape,
                 self.era5_main.sel(date=count["date"]),
                 self.era5_hourly.sel(date=count["date"]),
                 self.era5_daily.sel(date=count["date"]),
@@ -110,6 +128,7 @@ class DefileDataset(Dataset):
                 count["count"],
                 count["year_used_trans"],
                 count["doy_trans"],
+                prior_shape,
                 self._main_trans_arr[:, self._main_idx[idx]],
                 self._hourly_trans_arr[:, self._hourly_idx[idx]],
                 self._daily_trans_arr[:, self._daily_idx[idx]],
@@ -134,6 +153,8 @@ class ForecastDataset(Dataset):
         lag_day,
         forecast_day,
         transform_data,
+        data_dir,
+        species,
         return_original=False,
         year_used="none",
     ):
@@ -146,6 +167,7 @@ class ForecastDataset(Dataset):
         self.transform_data = transform_data
         self.return_original = return_original
         self.year_used = year_used
+        self.prior_shape_lookup = _prior_shape_lookup(data_dir, species)
 
         # WEATHER DATA ----------------------------
         # Same `get_weather` entry point, same conversions and same daily aggregation as
@@ -215,12 +237,14 @@ class ForecastDataset(Dataset):
 
     def __getitem__(self, idx):
         date = self.count["date"][idx]
+        prior_shape = self.prior_shape_lookup[int(self.count["doy"][idx]) - 1]
 
         # index by count/observation
         if self.return_original:
             return (
                 self.count["year_used"][idx],
                 self.count["doy"][idx],
+                prior_shape,
                 self.era5_main.sel(date=date),
                 self.era5_hourly.sel(date=date),
                 self.era5_daily.sel(date=date),
@@ -229,6 +253,7 @@ class ForecastDataset(Dataset):
             sample = (
                 self.count["year_used_trans"][idx],
                 self.count["doy_trans"][idx],
+                prior_shape,
                 self.era5_main_trans.sel(date=date),
                 self.era5_hourly_trans.sel(date=date),
                 self.era5_daily_trans.sel(date=date),
@@ -421,6 +446,10 @@ class DefileDataModule(LightningDataModule):
 
     def setup(self, stage: str):
         if (stage == "fit") | (stage == "validate") | (stage == "test"):
+            # A fact about this species, independent of split -- computed once per stage,
+            # not per split. See UNetplus.forward's `prior_shape` argument.
+            self.prior_shape_lookup = _prior_shape_lookup(self.data_dir, self.species)
+
             # READ WEATHER DATA ----------------------------
             # Read from the local Parquet cache built by scripts/build_weather_cache.py.
             # `get_weather` pushes the year and day-of-year filters down into the read, so
@@ -602,6 +631,7 @@ class DefileDataModule(LightningDataModule):
         return DefileDataset(
             count=count,
             mask=self.mask[:, idx],
+            prior_shape_lookup=self.prior_shape_lookup,
             **{
                 name: stack.sel(date=np.isin(stack["date"], dates))
                 for name, stack in stacks.items()
@@ -648,6 +678,8 @@ class DefileDataModule(LightningDataModule):
             lag_day=self.lag_day,
             forecast_day=self.forecast_day,
             transform_data=self.transform_data,
+            data_dir=self.data_dir,
+            species=self.species,
             return_original=False,
             year_used=self.year_used,
         )
