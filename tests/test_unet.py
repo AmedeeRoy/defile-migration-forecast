@@ -42,9 +42,10 @@ def _random_inputs(net, batch_size, prior_shape=None):
 
 
 def test_out_h_equals_prior_shape_at_init():
-    """z == 0 everywhere at construction (zero-initialized last layer), so
-    softmax(0 + log(prior_shape)) must reproduce prior_shape exactly, up to
-    PRIOR_LOG_EPS."""
+    """z ~= 0 everywhere at construction (near-zero-initialized last layer, not exactly
+    zero -- see that init's comment for why exact zero would block gradient to every
+    upstream layer), so softmax(z + log(prior_shape)) must closely reproduce
+    prior_shape."""
     net = _make_net()
     net.eval()
     batch_size = 5
@@ -59,7 +60,7 @@ def test_out_h_equals_prior_shape_at_init():
     # recover it by normalising `out` back to sum to 1 across hours (out_d is a single
     # scalar shared by every hour of one sample, so it cancels out of that division).
     out_h_recovered = out[:, 0, :] / out.sum(dim=2)
-    assert torch.allclose(out_h_recovered, prior_shape, atol=1e-4)
+    assert torch.allclose(out_h_recovered, prior_shape, atol=1e-2)
 
 
 def test_out_h_sums_to_one():

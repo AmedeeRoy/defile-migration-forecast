@@ -165,13 +165,27 @@ class UNetplus(nn.Module):
                 4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
             ),
         )
-        # Zero-initialized so the network starts training at out_h == prior_shape
-        # exactly (the residual logit `z` is 0 everywhere at init) -- see DECISIONS.md ->
-        # Model architecture for why anchoring the default this way, rather than an
-        # arbitrary initial output, is the actual fix for out_h's flat-collapse failure
-        # mode: there is no longer a nearby degenerate state for training to fall into
-        # when it has little else to go on.
-        nn.init.zeros_(self.conv_final[-1].weight)
+        # Near-zero (not exactly zero) initialized, so the network starts training at
+        # out_h ~= prior_shape -- see DECISIONS.md -> Model architecture for why
+        # anchoring the default this way, rather than an arbitrary initial output, is
+        # the actual fix for out_h's flat-collapse failure mode: there is no longer a
+        # nearby degenerate state for training to fall into when it has little else to
+        # go on.
+        #
+        # Deliberately not exactly zero: for a linear/conv layer, d(output)/d(input) = W,
+        # so W == 0 exactly would make the gradient reaching every upstream layer (the
+        # whole encoder/decoder before this one) exactly zero too, on the very first
+        # step -- the layer's own weights still get a valid gradient and move off zero
+        # after step 1, so this "cold start" is transient, but it measurably matters
+        # here: with this repo's early-stopping patience of 3 (configs/callbacks/
+        # early_stopping.yaml), a training run can plateau and stop before the network
+        # has warmed back up, leaving out_d stuck near 0 and every prediction capped far
+        # below its true ceiling (confirmed directly: max predicted count across an
+        # entire test set was ~3.4 birds/hr against true single-day counts over 1000,
+        # with `out = 8 * out_h * out_d` capable of reaching 8). A small random init
+        # keeps out_h close to prior_shape at start while letting gradient reach the
+        # rest of the network immediately.
+        nn.init.normal_(self.conv_final[-1].weight, std=1e-3)
         nn.init.zeros_(self.conv_final[-1].bias)
 
         # Daily Network --------------------------
