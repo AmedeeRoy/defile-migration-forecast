@@ -50,3 +50,9 @@ output_dir: ${paths.output_dir}
 # test-set size.
 compute_saliency: true
 saliency_max_batches: 20
+
+# Applies `data/count/species_year_statistics.json`'s damped-trend multiplier to the
+# forecast output (predict only -- has no effect on train/val/test). See src/trend.py.
+# A missing/stale trend file logs a warning and falls back to no correction rather than
+# failing the forecast job.
+apply_trend_correction: true

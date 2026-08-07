@@ -17,6 +17,7 @@ from src import metrics as M
 from src.models.criterion import applyMask
 from src.plots.report import build_report
 from src.plots.save_predict import plt_predict
+from src.trend import Trend
 from src.utils import RankedLogger
 from src.utils.rich_utils import print_metrics_table
 
@@ -72,6 +73,7 @@ class DefileLitModule(LightningModule):
         output_dir: str,
         compute_saliency: bool = True,
         saliency_max_batches: int = 20,
+        apply_trend_correction: bool = True,
     ) -> None:
         """Initialize a `MNISTLitModule`.
 
@@ -86,6 +88,9 @@ class DefileLitModule(LightningModule):
             an average over samples (see `plt_explanations_*`), so a subsample is enough, and
             it avoids paying the backward-pass cost and memory for every batch.
             Ignored when `compute_saliency` is False.
+        :param apply_trend_correction: Whether `save_predict` scales the forecast by the
+            species' annual damped-trend multiplier (`src.trend.Trend`). Only affects
+            `predict`; train/val/test are untouched. Defaults to `True`.
         """
         super().__init__()
 
@@ -98,6 +103,7 @@ class DefileLitModule(LightningModule):
         self.output_dir = output_dir
         self.compute_saliency = compute_saliency
         self.saliency_max_batches = saliency_max_batches
+        self.apply_trend_correction = apply_trend_correction
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -115,6 +121,10 @@ class DefileLitModule(LightningModule):
         # it is a small JSON, but re-reading and re-parsing it once per validation epoch
         # for a number that is logged every epoch is pure overhead.
         self._phenology: Optional[M.Phenology] = None
+
+        # Annual trend correction, loaded lazily on first use (predict only) and reused
+        # for every date in the forecast -- same rationale as `_phenology` above.
+        self._trend: Optional[Trend] = None
 
     def setup(self, stage: str) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
@@ -308,6 +318,14 @@ class DefileLitModule(LightningModule):
             datamodule = self.trainer.datamodule
             self._phenology = M.Phenology.load(datamodule.data_dir, datamodule.species)
         return self._phenology
+
+    @property
+    def trend(self) -> Trend:
+        """The species' annual damped-trend correction, loaded once per run."""
+        if self._trend is None:
+            datamodule = self.trainer.datamodule
+            self._trend = Trend.load(datamodule.data_dir, datamodule.species)
+        return self._trend
 
     ### TEST -------------------
     def on_test_epoch_start(self) -> None:
@@ -547,6 +565,34 @@ class DefileLitModule(LightningModule):
         if self.trainer.is_global_zero:
             self.save_predict()
 
+    def _apply_trend_correction(self, pred_log: np.ndarray, dates: np.ndarray) -> np.ndarray:
+        """Scales `pred_log` (log1p birds/hr, shape `(date, time)`) by the per-year trend
+        multiplier from `src.trend.Trend` (see that module and DECISIONS.md for why this
+        is a post-hoc multiplier rather than a network input).
+
+        The multiplier lives on the raw birds/hr scale, so it is applied as
+        `log1p(mult * expm1(pred_log))`, not by adding/scaling in log space directly. A
+        missing or malformed trend file logs a warning and returns `pred_log` unchanged --
+        the daily forecast job must not fail just because this file is stale or hasn't
+        been built yet for a species (same fallback philosophy as `_skill_vs_phenology`).
+        """
+        if not self.apply_trend_correction:
+            return pred_log
+
+        try:
+            trend = self.trend
+        except (FileNotFoundError, KeyError) as err:
+            log.warning(f"Skipping trend correction: {err}")
+            return pred_log
+
+        years = pd.DatetimeIndex(dates).year.to_numpy()
+        multiplier_by_year = {int(y): trend.multiplier(int(y)) for y in np.unique(years)}
+        for y, m in multiplier_by_year.items():
+            log.info(f"Trend correction for {self.trainer.datamodule.species} {y}: x{m:.2f}")
+        mult_by_row = np.array([multiplier_by_year[int(y)] for y in years])
+
+        return np.log1p(mult_by_row[:, None] * np.expm1(pred_log))
+
     def save_predict(self):
         """Write the daily forecast: one NetCDF (consumed by defileViz) and one preview JPEG.
 
@@ -561,8 +607,10 @@ class DefileLitModule(LightningModule):
         # matching `_write_netcdf`. Only a handful of dates here, but the two paths
         # disagreeing about how the output is built is how they drift apart.
         dates = xr.DataArray(pd.DatetimeIndex(predict_dataset.count["date"]), dims="date")
+        pred_log = self.predict_pred["pred"][:, 0, :].numpy()
+        pred_log = self._apply_trend_correction(pred_log, dates.values)
         predictions = predict_dataset.era5_main.sel(date=dates).assign(
-            pred_log_hourly_count=(("date", "time"), self.predict_pred["pred"][:, 0, :].numpy())
+            pred_log_hourly_count=(("date", "time"), pred_log)
         )
 
         os.makedirs(self.output_dir, exist_ok=True)
