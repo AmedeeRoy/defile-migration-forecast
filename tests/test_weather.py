@@ -471,7 +471,7 @@ def test_wind_over_complex_terrain_is_documented_as_divergent():
     at matched resolution: ERA5 is a reanalysis that assimilates observations and IFS-025 is a
     raw forecast, and that distinction still bites harder in complex terrain than over flat
     ground. Wind direction at a bottleneck is one of the strongest drivers of raptor passage,
-    so this residual gap is still worth tracking. See DEVELOPMENT.md 4.19d.
+    so this residual gap is still worth tracking. See DECISIONS.md -> Weather.
 
     This test asserts only the direction of the effect, so it fails if the gap ever closes -
     which would mean the products, or this understanding of them, have changed.
@@ -483,7 +483,7 @@ def test_wind_over_complex_terrain_is_documented_as_divergent():
     assert flat["corr"] > defile["corr"], (
         f"expected 10 m wind to agree better over flat terrain than in the gorge, but got "
         f"{FLAT_REFERENCE_LOCATION}={flat['corr']:.3f} vs Defile={defile['corr']:.3f}. "
-        f"If this now passes trivially, re-measure and update DEVELOPMENT.md 4.19d."
+        f"If this now passes trivially, re-measure and update DECISIONS.md -> Weather."
     )
 
 
