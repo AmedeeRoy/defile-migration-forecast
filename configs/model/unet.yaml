@@ -16,10 +16,15 @@ scheduler:
 
 net:
   _target_: src.models.components.unet.UNetplus
-  nb_input_features_hourly: ${eval:'4+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
+  # `2*len(history_windows)+2*history_cumulative` is the history-channel count
+  # (value + observed-hours per window/cumulative -- see src.data.history), duplicated
+  # here as a plain arithmetic expression since a `data.*` key can only be a
+  # `DefileDataModule.__init__` kwarg, not a Hydra-only derived value (`data.history_windows`
+  # and `data.history_cumulative` are those kwargs; this is not a third one).
+  nb_input_features_hourly: ${eval:'4+2*${len:${data.history_windows}}+2*${data.history_cumulative}+${len:${data.era5_main_variables}}+${len:${data.era5_hourly_locations}}*${len:${data.era5_hourly_variables}}'}
   nb_layer_hourly: 2
   nb_hidden_features_hourly: 16
-  nb_input_features_daily: ${eval:'2+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
+  nb_input_features_daily: ${eval:'2+2*${len:${data.history_windows}}+2*${data.history_cumulative}+${len:${data.era5_daily_locations}}*${len:${data.era5_daily_variables}}'}
   nb_lag_day: ${data.lag_day}
   nb_layer_daily: 6
   nb_hidden_features_daily: 128

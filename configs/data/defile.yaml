@@ -78,4 +78,14 @@ years: ${eval:"list(range(1966, 2026))"}
 doy: [196, 335]
 train_val_test: "period"
 year_used: "constant" # "constant" or "none" or "period"
+
+# Within-season history (src/data/history.py): the "own-site lag" idea from
+# DEVELOPMENT.md's Trektellen roadmap, built directly from this species' own earlier rows
+# in the same season rather than a separate live feed. `history_windows` is a list of
+# trailing-day lag windows (e.g. [1, 3, 7] for yesterday / last 3 days / last week's
+# birds/observer-hour rate); `history_cumulative` adds the season-to-date rate. Empty/false
+# by default -- a strict no-op reproducing the pre-history model exactly.
+history_windows: []
+history_cumulative: False
+
 compute_transform_data: True

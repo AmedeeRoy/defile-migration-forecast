@@ -213,9 +213,17 @@ class UNetplus(nn.Module):
         # extrapolates from dawn/dusk rather than a guaranteed zero. The mean diurnal
         # profile panel in the test report is where to check that this stays negligible.
 
-    def forward(self, yr, doy, era5_main, era5_hourly, era5_daily):
+    def forward(self, yr, doy, history, era5_main, era5_hourly, era5_daily):
         # Define forward pass
         # ---------------------------
+
+        # `history` is (batch, n_history_channels) -- within-season lag/cumulative
+        # features from src.data.history, zero-width when none are configured (a genuine
+        # no-op: torch.cat with a zero-sized tensor along the cat dim changes nothing).
+        # Broadcast across time the same way yr/doy are, but per-channel rather than
+        # `.repeat(1, T)` on a single column: `(batch, C) -> (batch, C, T)`.
+        history_h = history.unsqueeze(-1).repeat(1, 1, 24)
+        history_d = history.unsqueeze(-1).repeat(1, 1, self.nb_lag_day)
 
         # Hourly weather
         doy_ = doy.repeat(1, 24).unsqueeze(1)
@@ -225,7 +233,7 @@ class UNetplus(nn.Module):
         # drop the batch axis whenever the batch holds a single sample (e.g. a trailing
         # batch of size 1), corrupting the concatenation below.
         era5_main = era5_main.squeeze(-1)
-        out_h = torch.cat([era5_main, era5_hourly, doy_, yr_], 1)
+        out_h = torch.cat([era5_main, era5_hourly, doy_, yr_, history_h], 1)
 
         encoder_outs = []
         # encoder pathway, save outputs for merging
@@ -242,7 +250,7 @@ class UNetplus(nn.Module):
         doy_ = doy.repeat(1, self.nb_lag_day).unsqueeze(1)
         yr_ = yr.repeat(1, self.nb_lag_day).unsqueeze(1)
         era5_daily = rearrange(era5_daily, "b f t x -> b (f x) t")
-        X_d = torch.cat([era5_daily, doy_, yr_], 1)
+        X_d = torch.cat([era5_daily, doy_, yr_, history_d], 1)
 
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)

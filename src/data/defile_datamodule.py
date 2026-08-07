@@ -9,6 +9,7 @@ from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
 from src.data.data_transformer import DataTransformer
+from src.data.history import add_history_features, history_as_of_date, n_history_channels
 from src.data.weather import CACHE_SUBDIR, get_weather
 from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
 from src.utils import RankedLogger
@@ -41,6 +42,7 @@ class DefileDataset(Dataset):
         era5_hourly_trans,
         era5_daily_trans,
         mask,
+        history_cols=(),
         return_original=False,
     ):
         # Assign to self
@@ -52,6 +54,11 @@ class DefileDataset(Dataset):
         self.era5_hourly_trans = era5_hourly_trans
         self.era5_daily_trans = era5_daily_trans
         self.mask = mask
+        # Within-season history channels (src/data/history.py), e.g. `history_lag3_value`.
+        # A plain tuple of column names rather than recomputed from `count.columns` each
+        # time: `()` when the config requests no history, so this is a strict no-op that
+        # reproduces the pre-history batch shape exactly.
+        self.history_cols = list(history_cols)
         self.return_original = return_original
 
         # `.sel(date=...)` on a full xarray Dataset costs on the order of hundreds of
@@ -93,6 +100,9 @@ class DefileDataset(Dataset):
 
     def __getitem__(self, idx):
         count = self.count.iloc[idx]
+        # (n_history_channels,) -- empty when no history channels are configured, in
+        # which case this is a genuine no-op (see UNetplus.forward's `history` argument).
+        history = count[self.history_cols].to_numpy(dtype=np.float32) if self.history_cols else np.zeros(0, dtype=np.float32)
 
         # index by count/observation
         if self.return_original:
@@ -100,6 +110,7 @@ class DefileDataset(Dataset):
                 count["count"],
                 count["year_used"],
                 count["doy"],
+                history,
                 self.era5_main.sel(date=count["date"]),
                 self.era5_hourly.sel(date=count["date"]),
                 self.era5_daily.sel(date=count["date"]),
@@ -110,6 +121,7 @@ class DefileDataset(Dataset):
                 count["count"],
                 count["year_used_trans"],
                 count["doy_trans"],
+                history,
                 self._main_trans_arr[:, self._main_idx[idx]],
                 self._hourly_trans_arr[:, self._hourly_idx[idx]],
                 self._daily_trans_arr[:, self._daily_idx[idx]],
@@ -136,6 +148,11 @@ class ForecastDataset(Dataset):
         transform_data,
         return_original=False,
         year_used="none",
+        data_dir=None,
+        species=None,
+        doy=None,
+        history_windows=(),
+        history_cumulative=False,
     ):
         # Assert that if transform=True
         if transform_data is None:
@@ -146,6 +163,11 @@ class ForecastDataset(Dataset):
         self.transform_data = transform_data
         self.return_original = return_original
         self.year_used = year_used
+        self.history_cols = [
+            c for n in history_windows for c in (f"history_lag{n}_value", f"history_lag{n}_hours")
+        ]
+        if history_cumulative:
+            self.history_cols += ["history_cum_value", "history_cum_hours"]
 
         # WEATHER DATA ----------------------------
         # Same `get_weather` entry point, same conversions and same daily aggregation as
@@ -205,6 +227,24 @@ class ForecastDataset(Dataset):
 
         self.count = count
 
+        # Within-season history, frozen "as of" the first forecast date: computed once
+        # from real observations strictly before today, and applied identically to every
+        # date in the forecast horizon -- nothing new is actually observed between issuing
+        # the forecast and the days it covers, so this doesn't (and shouldn't) vary across
+        # the horizon. See src.data.history.history_as_of_date for the fallback behaviour
+        # (all-zero, not a crash) when the species has no data yet this season.
+        if self.history_cols:
+            self.history_value = history_as_of_date(
+                data_dir=data_dir,
+                species=species,
+                doy=doy,
+                as_of_date=count["date"].min(),
+                windows=history_windows,
+                cumulative=history_cumulative,
+            )
+        else:
+            self.history_value = np.zeros(0, dtype=np.float32)
+
         # Apply transformation
         self.era5_main_trans = self.transform_data["main"].apply_transformers(self.era5_main)
         self.era5_hourly_trans = self.transform_data["hourly"].apply_transformers(self.era5_hourly)
@@ -221,6 +261,7 @@ class ForecastDataset(Dataset):
             return (
                 self.count["year_used"][idx],
                 self.count["doy"][idx],
+                self.history_value,
                 self.era5_main.sel(date=date),
                 self.era5_hourly.sel(date=date),
                 self.era5_daily.sel(date=date),
@@ -229,6 +270,7 @@ class ForecastDataset(Dataset):
             sample = (
                 self.count["year_used_trans"][idx],
                 self.count["doy_trans"][idx],
+                self.history_value,
                 self.era5_main_trans.sel(date=date),
                 self.era5_hourly_trans.sel(date=date),
                 self.era5_daily_trans.sel(date=date),
@@ -295,6 +337,8 @@ class DefileDataModule(LightningDataModule):
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         train_val_test: str = "period",
         year_used: str = "none",
+        history_windows: list = [],
+        history_cumulative: bool = False,
         compute_transform_data: bool = True,
         split_seed: int = 0,
         batch_size: int = 64,
@@ -312,6 +356,12 @@ class DefileDataModule(LightningDataModule):
         :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
         :param train_val_test: The type of train, validation and test split. Defaults to `"period"`.
         :param year_used: The type of year variable used in the model. Defaults to `"none"`.  "constant" for no information of year included in the model, "none" for the exact year or "period" where only a broad category of year period is included
+        :param history_windows: Trailing-day lag windows for within-season history
+            features (e.g. `[1, 3, 7]` for yesterday, the last 3 days, and the last week's
+            birds/observer-hour rate). Empty by default -- a strict no-op, reproducing the
+            pre-history batch shape exactly. See `src/data/history.py`.
+        :param history_cumulative: Whether to also add the season-to-date cumulative rate
+            as a history feature. Defaults to `False`.
         :param split_seed: Seed for the train/val/test split. The split is drawn from a
             dedicated generator seeded with this value, so it is identical on every call
             to `setup()` regardless of global RNG state. Defaults to `0`.
@@ -345,6 +395,15 @@ class DefileDataModule(LightningDataModule):
         self.train_val_test = train_val_test
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.year_used = year_used
+        self.history_windows = list(history_windows)
+        self.history_cumulative = history_cumulative
+        # Deterministic column order, computed once: every consumer of a history tensor
+        # (the Dataset, ForecastDataset, UNetplus.forward) must agree on channel order.
+        self.history_cols = [
+            c for n in self.history_windows for c in (f"history_lag{n}_value", f"history_lag{n}_hours")
+        ]
+        if self.history_cumulative:
+            self.history_cols += ["history_cum_value", "history_cum_hours"]
         self.compute_transform_data = compute_transform_data
         self.split_seed = split_seed
         self.batch_size_per_device = batch_size
@@ -407,6 +466,10 @@ class DefileDataModule(LightningDataModule):
             PERIOD_YEARS[0],
             np.where(self.year_used == "period", count["year_period"], count["year"]),
         )
+
+        # Within-season history features (src/data/history.py) -- a no-op returning
+        # `count` unchanged when neither history_windows nor history_cumulative is set.
+        count = add_history_features(count, windows=self.history_windows, cumulative=self.history_cumulative)
 
         # Create mask
         # Corresponding to the fraction of each hour of the day during which the count in question has been happening
@@ -602,6 +665,7 @@ class DefileDataModule(LightningDataModule):
         return DefileDataset(
             count=count,
             mask=self.mask[:, idx],
+            history_cols=self.history_cols,
             **{
                 name: stack.sel(date=np.isin(stack["date"], dates))
                 for name, stack in stacks.items()
@@ -650,6 +714,11 @@ class DefileDataModule(LightningDataModule):
             transform_data=self.transform_data,
             return_original=False,
             year_used=self.year_used,
+            data_dir=self.data_dir,
+            species=self.species,
+            doy=self.doy,
+            history_windows=self.history_windows,
+            history_cumulative=self.history_cumulative,
         )
         return self._dataloader(self.data_predict, shuffle=False)
 

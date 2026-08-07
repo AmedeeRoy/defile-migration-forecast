@@ -25,7 +25,7 @@ def draw_explanations_metrics(axes, datamodule, explanations) -> None:
 
     :param axes: Three axes (local hourly, remote hourly, remote daily).
     """
-    _, _, era5_main, era5_hourly, era5_daily = explanations
+    _, _, _, era5_main, era5_hourly, era5_daily = explanations
 
     panels = (
         (era5_main, (0, 2, 3), list(datamodule.era5_main.data_vars), "Local hourly (Défilé)"),
@@ -41,7 +41,7 @@ def draw_explanations_metrics(axes, datamodule, explanations) -> None:
 
 def draw_explanations_locations(axes, datamodule, explanations) -> None:
     """Mean attribution per location, one axes for the hourly stack and one for the daily."""
-    _, _, _, era5_hourly, era5_daily = explanations
+    _, _, _, _, era5_hourly, era5_daily = explanations
 
     panels = (
         (era5_hourly, (0, 1, 2), list(datamodule.era5_hourly.location.values), "Hourly locations"),
