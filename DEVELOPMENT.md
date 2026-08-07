@@ -1,9 +1,8 @@
 # Défilé migration forecast — development roadmap
 
-This tracks what's actually left to do. Resolved items are removed once merged and
-retrained against, not archived here — git history and the PR list are the record of what
-was fixed and why. If something below looks wrong or already done, say so before it gets
-deleted rather than after.
+This tracks what's actually left to do. Resolved items move to `DECISIONS.md` (a running
+log of settled calls and what was tried) rather than being archived here. If something
+below looks wrong or already done, say so before it gets deleted rather than after.
 
 ## What we are building
 
@@ -175,21 +174,19 @@ Also in scope for this phase:
   follow-up: predict the *share* of the season's total per day/hour and forecast the
   annual total separately, removing most year-to-year variance from the hard part of the
   problem.
-- **Direct shape supervision for `out_h`.** The architecture already splits into two
-  pieces multiplied together: `out_h` (24 values, the *relative shape* of the day) and
-  `out_d` (one value, the *overall size* of the day) — `out = 8 · out_h · out_d`. Training
-  today only ever checks the *combined* prediction against the survey's total count; nothing
-  directly checks whether `out_h`'s shape resembles the true shape of the day. But for
-  dates recorded as several one-hour blocks (common since 2014, near-universal since 2021),
-  the true hourly counts already exist in the data — e.g. 12 one-hour survey rows on one
-  date *are* an hour-by-hour count, currently only used as 12 near-duplicate training rows
-  (the same reweighting effect again), never as a shape. Idea: on those dates, normalise
-  the true hourly counts to sum to 1 (shape only, not magnitude) and add a direct loss term
-  comparing that to similarly-normalised `out_h` — teaching the shape sub-network directly
-  instead of only through the combined total. Unlike the (already-fixed) `ProbaRMSE`
-  inconsistency, this is a genuinely new term, using different, finer-grained data, to
-  supervise a sub-output nothing currently teaches directly. Exploratory — worth a small
-  experiment before committing to it further.
+- **`out_h` could collapse to a flat, constant prediction — fixed, not yet retrained
+  against for most species.** Confirmed directly on some seeds once real retraining
+  started. Anchored the hourly sub-network's default output to a smooth climatological
+  shape instead, which the network can still override wherever weather evidence
+  justifies it; see `DECISIONS.md` → Model architecture for what was tried (including a
+  first, rejected attempt) and the evidence. Two follow-ups from that work, not done yet:
+  - Shape accuracy came out slightly, consistently lower than the previous architecture
+    (not a collapse — just a modest gap). Worth a deliberate retune once this has been
+    retrained against more broadly: the learning rate and the `out_h`/`out_d` output
+    scale were both tuned for the old architecture and haven't been revisited for this
+    one.
+  - Only validated on Common Buzzard so far (the species the collapse was found on) —
+    check the other modelled species before trusting this broadly.
 - **For later, lower priority: a probability envelope from the Tweedie loss itself**,
   rather than a second model-predicted output channel (the approach already dropped for
   being untrained). The Tweedie distribution already has a defined variance-mean
