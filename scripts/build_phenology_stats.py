@@ -31,12 +31,14 @@ Usage:
     python scripts/build_phenology_stats.py                 # all 11 modelled species
     python scripts/build_phenology_stats.py --species "Osprey" "Red Kite"
     python scripts/build_phenology_stats.py --dry-run        # fit and report, don't write
-    python scripts/build_phenology_stats.py --dry-run --plot-dir /tmp/phenology_qa
-        # also writes <plot-dir>/<species>_phenology_diagnostic.pdf per species: the
-        # fitted ratio(doy, hour) surface and hourly_shape (see src.phenology) for a
-        # few representative days, so the fit can be checked visually without a
-        # notebook -- see DECISIONS.md/the phenology-shape-prior plan for why this
-        # replaced notebooks/phenology_baseline.ipynb's plot-only role.
+
+Every run (including --dry-run) also writes a diagnostic PDF to
+logs/qa/phenology/species_doy_statistics_diagnostic.pdf by default -- one page per
+species: the fitted ratio(doy, hour) surface and hourly_shape (see src.phenology) for a
+few representative days, so the fit can be checked visually without a notebook. See
+DECISIONS.md/the phenology-shape-prior plan for why this replaced
+notebooks/phenology_baseline.ipynb's plot-only role. Redirect with `--plot-dir <path>`,
+or pass `--plot-dir ""` to skip it.
 
 `notebooks/phenology_baseline.ipynb` also runs this script and plots what it produced --
 `--plot-dir` above covers the same "does this fit look sane" need as a generated PDF
@@ -454,8 +456,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--plot-dir",
-        default=None,
-        help="Also write a per-species diagnostic PDF here (see module docstring)",
+        default=os.path.join("logs", "qa", "phenology"),
+        help="Write the diagnostic PDF here (see module docstring). Under logs/, "
+        "already gitignored (logs/*) -- a regenerable QA artifact, not a committed "
+        "one. Pass an empty string to skip plotting entirely.",
     )
     args = parser.parse_args()
 
