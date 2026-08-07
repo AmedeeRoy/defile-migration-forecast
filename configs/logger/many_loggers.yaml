@@ -1,8 +1,14 @@
 # train with many loggers at once
+#
+# mlflow removed from the default stack: it is not in pyproject.toml's pinned dependency
+# list (only torch/lightning/hydra-core/... are), so `python src/train.py` with no
+# overrides raised `ModuleNotFoundError: Requirement 'mlflow>=1.0.0' not met` at logger
+# instantiation, after the datamodule/model were already built. If you want mlflow, add
+# it to pyproject.toml's dependencies and `uv lock`, then uncomment it below.
 
 defaults:
   - csv
-  - mlflow
+  # - mlflow
   # - neptune
   # - comet
   # - tensorboard
