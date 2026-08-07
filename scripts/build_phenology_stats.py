@@ -3,7 +3,10 @@
 
 Writes `data/count/species_doy_statistics.json`: for each species, a 7-day-smoothed
 distribution (mean, min, max, quantiles) of the daily count rate (birds/hr) by day of
-year, plus a GAM-fitted hour-of-day activity `ratio` (hourly rate / that day's rate).
+year, plus a GAM-fitted hour-of-day activity `ratio` (hourly rate / that day's rate),
+fitted as a `doy x hour` tensor-product interaction (see `fit_hourly_ratio`'s docstring
+for why the interaction term matters: the simpler additive alternative is mathematically
+incapable of expressing any within-season shift in shape, only in magnitude).
 
 Two consumers read this file, so its schema is a contract, not free to change casually:
 
@@ -28,15 +31,23 @@ Usage:
     python scripts/build_phenology_stats.py                 # all 11 modelled species
     python scripts/build_phenology_stats.py --species "Osprey" "Red Kite"
     python scripts/build_phenology_stats.py --dry-run        # fit and report, don't write
+    python scripts/build_phenology_stats.py --dry-run --plot-dir /tmp/phenology_qa
+        # also writes <plot-dir>/<species>_phenology_diagnostic.pdf per species: the
+        # fitted ratio(doy, hour) surface and hourly_shape (see src.phenology) for a
+        # few representative days, so the fit can be checked visually without a
+        # notebook -- see DECISIONS.md/the phenology-shape-prior plan for why this
+        # replaced notebooks/phenology_baseline.ipynb's plot-only role.
 
-`notebooks/phenology_baseline.ipynb` runs this script and plots what it produced. For
-exploring or tuning the fit itself (GAM diagnostic plots, spline-count search, raw
+`notebooks/phenology_baseline.ipynb` also runs this script and plots what it produced --
+`--plot-dir` above covers the same "does this fit look sane" need as a generated PDF
+instead, so the notebook is a candidate for removal once that's in regular use (not
+done yet: confirm before deleting a notebook someone might still have a workflow around).
+
+For exploring or tuning the fit itself (GAM diagnostic plots, spline-count search, raw
 pre-smoothing ratio samples), use this module's `PhenologyBuilder` directly.
 """
 
 import argparse
-import glob
-import json
 import math
 import os
 import sys
@@ -44,13 +55,19 @@ import sys
 import numpy as np
 import pandas as pd
 import rootutils
-import yaml
-from pygam import PoissonGAM, s
+from matplotlib.backends.backend_pdf import PdfPages
+from matplotlib.figure import Figure
+from pygam import PoissonGAM, s, te
 from pygam.utils import OptimizationError
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.phenology import PHENOLOGY_FILE, RATIO_HOURS  # noqa: E402
+from scripts._species_stats_common import (  # noqa: E402
+    default_doy_range,
+    species_from_experiments,
+    write_json_atomic,
+)
+from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
 
 # Percentiles baked into the currently-committed file (`quantile_levels`); kept as the
 # default rather than re-derived so a re-run without `--quantiles` reproduces the same
@@ -76,37 +93,6 @@ HOUR_SPLINES = 12
 GAM_LAM_LADDER = [(100, 10), (1000, 100), (10_000, 1_000), (100_000, 10_000)]
 
 SMOOTH_WINDOW = 7
-
-
-def species_from_experiments(configs_dir: str) -> list:
-    """The set of modelled species, read from `configs/experiment/*.yaml`.
-
-    Deliberately not a hardcoded list living in this script: those 11 files are already
-    the authoritative "what species does this project model" (AGENTS.md "Species /
-    experiment pattern"), and a second copy here is exactly the kind of drift that left
-    this generator out of sync with its own output in the first place.
-    """
-    species = []
-    for path in sorted(glob.glob(os.path.join(configs_dir, "experiment", "*.yaml"))):
-        with open(path) as f:
-            cfg = yaml.safe_load(f)
-        name = cfg.get("data", {}).get("species")
-        if name is None:
-            raise ValueError(f"{path} has no data.species entry")
-        species.append(name)
-    return species
-
-
-def default_doy_range(configs_dir: str) -> list:
-    """The trained season, read from `configs/data/defile.yaml`'s `doy` field.
-
-    Fitting this file over a different season than the model is trained on would make it
-    a baseline for a question nobody is asking; reading the value rather than copying it
-    keeps the two from silently diverging.
-    """
-    with open(os.path.join(configs_dir, "data", "defile.yaml")) as f:
-        cfg = yaml.safe_load(f)
-    return list(cfg["doy"])
 
 
 class PhenologyBuilder:
@@ -197,8 +183,29 @@ class PhenologyBuilder:
 
         return df.loc[df["n_periods"] > 1, ["doy", "hour", "ratio"]].dropna()
 
+    @staticmethod
+    def _fit_gam_with_lam_ladder(term, X, y, species: str, lam_ladder=GAM_LAM_LADDER) -> PoissonGAM:
+        """Fits `term` against `(X, y)`, retrying with progressively stronger
+        regularization from `lam_ladder` if PIRLS diverges -- see `GAM_LAM_LADDER`'s
+        module-level comment for why some species need this at all. Shared between the
+        additive and tensor-interaction fits below rather than duplicated per fit.
+        """
+        for lam in lam_ladder:
+            try:
+                gam = PoissonGAM(term, lam=list(lam)).fit(X, y)
+                if lam != lam_ladder[0]:
+                    print(f"  {species}: PIRLS needed lam={lam} to converge")
+                return gam
+            except OptimizationError:
+                continue
+        raise OptimizationError(f"{species}: PIRLS did not converge even at lam={lam_ladder[-1]}")
+
     def fit_hourly_ratio(
-        self, species: str, k0: int = DOY_SPLINES, k1: int = HOUR_SPLINES
+        self,
+        species: str,
+        k0: int = DOY_SPLINES,
+        k1: int = HOUR_SPLINES,
+        interaction: bool = True,
     ) -> np.ndarray:
         """GAM-fitted `ratio(doy, hour)` over the full `self.doy` range x `RATIO_HOURS`.
 
@@ -210,23 +217,31 @@ class PhenologyBuilder:
         consumer that pairs them up by position (`src.phenology.Phenology.hourly_rate`) is
         now robust to that historical mismatch, but a freshly built file should not have
         it in the first place.
+
+        `interaction` (default True): whether `doy` and `hour` enter as a tensor-product
+        interaction (`te(0, 1)`) or as two separate additive terms (`s(0) + s(1)`, the
+        original fit). This matters more than it looks -- `PoissonGAM` fits on the log
+        scale, so the additive form is
+        `ratio(doy, hour) = exp(f_doy(doy)) * exp(f_hour(hour))`: a pure per-day scale
+        factor times a *single, doy-invariant* hourly shape. Once normalised to a shape
+        (sum to 1, see `src.phenology.Phenology.hourly_shape`), that shared scale factor
+        cancels out exactly -- the additive fit was mathematically incapable of expressing
+        within-season shape drift, only within-season *magnitude*, which is redundant
+        with `mean` anyway (confirmed directly: every representative day's normalised
+        ratio was the same curve to 3 decimal places). Switched to `te(0, 1)` after
+        visually comparing both on a generated diagnostic PDF (`--plot-dir`) across all
+        11 species: the interaction fit shows a real, plausible seasonal shift (peak
+        timing moving later and the day becoming more concentrated as the season
+        progresses) rather than obviously-overfit noise, and every species still
+        converged (some needed `GAM_LAM_LADDER`'s fallback, same as the additive fit
+        already did for the sparser species). Pass `interaction=False` to reproduce the
+        original fit for comparison.
         """
         samples = self._hourly_ratio_samples(species)
         X, y = samples[["doy", "hour"]].to_numpy(), samples["ratio"].to_numpy()
 
-        gam = None
-        for lam in GAM_LAM_LADDER:
-            try:
-                gam = PoissonGAM(s(0, n_splines=k0) + s(1, n_splines=k1), lam=list(lam)).fit(X, y)
-                if lam != GAM_LAM_LADDER[0]:
-                    print(f"  {species}: PIRLS needed lam={lam} to converge")
-                break
-            except OptimizationError:
-                continue
-        if gam is None:
-            raise OptimizationError(
-                f"{species}: PIRLS did not converge even at lam={GAM_LAM_LADDER[-1]}"
-            )
+        term = te(0, 1, n_splines=[k0, k1]) if interaction else s(0, n_splines=k0) + s(1, n_splines=k1)
+        gam = self._fit_gam_with_lam_ladder(term, X, y, species)
 
         doy_grid = np.arange(self.doy[0], self.doy[1] + 1)
         grid = np.column_stack(
@@ -274,7 +289,7 @@ class PhenologyBuilder:
             "quantile_levels": list(quantile_levels),
             "quantiles": np.stack(smoothed["quantiles"].to_numpy()).tolist(),
             "trektellen_species_id": trektellen_id,
-            "ratio": self.fit_hourly_ratio(species).tolist(),
+            "ratio": self.fit_hourly_ratio(species, interaction=True).tolist(),
         }
 
     @staticmethod
@@ -304,6 +319,102 @@ class PhenologyBuilder:
         rolled["quantiles"] = list(smoothed_quantiles.to_numpy())
 
         return rolled
+
+
+def _phenology_from_record(record: dict) -> Phenology:
+    """Builds a `Phenology` directly from a freshly-fitted `build()` record, without a
+    round trip through the JSON file -- so `--plot-dir` can render a species' diagnostic
+    page from the same in-memory fit that's about to be written (or, on `--dry-run`,
+    the fit that would have been written)."""
+    return Phenology(
+        species=record["species"],
+        doy=np.asarray(record["doy"]),
+        mean=np.asarray(record["mean"]),
+        quantile_levels=np.asarray(record["quantile_levels"]),
+        quantiles=np.asarray(record["quantiles"]),
+        ratio=np.asarray(record["ratio"]),
+    )
+
+
+def _draw_shape_row(fig: Figure, row: int, n_rows: int, phenology: Phenology, title: str) -> None:
+    """One row of panels (heatmap + representative-day lines) for `phenology`, at grid
+    row `row` of `n_rows` -- shared between the additive and tensor-interaction fits so
+    they render identically and are easy to compare directly, page over page."""
+    doy = phenology.doy
+    shape = phenology.hourly_shape(doy)  # (D, 24), each row sums to 1
+
+    ax_heat = fig.add_subplot(n_rows, 2, 2 * row + 1)
+    ax_lines = fig.add_subplot(n_rows, 2, 2 * row + 2)
+
+    im = ax_heat.imshow(
+        shape.T,
+        aspect="auto",
+        origin="lower",
+        extent=[doy[0], doy[-1], -0.5, 23.5],
+        cmap="viridis",
+    )
+    ax_heat.set_xlabel("Day of year")
+    ax_heat.set_ylabel("Hour (UTC)")
+    ax_heat.set_title(f"{title}: hourly_shape(doy, hour)")
+    fig.colorbar(im, ax=ax_heat, shrink=0.8, label="shape (sums to 1/day)")
+
+    sample_doys = sorted({int(doy[0]), int(doy[len(doy) // 2]), int(doy[-1])})
+    colors = ["#0072B2", "#E69F00", "#009E73"]  # matches src/plots/panels.py's palette
+    for d, color in zip(sample_doys, colors):
+        ax_lines.plot(range(24), phenology.hourly_shape([d])[0], color=color, marker="o", ms=3, label=f"doy {d}")
+    ax_lines.set_xlabel("Hour (UTC)")
+    ax_lines.set_ylabel("shape")
+    ax_lines.set_title(f"{title}: representative days")
+    ax_lines.legend(fontsize=7)
+
+
+def draw_species_diagnostic(
+    fig: Figure, record: dict, ratio_additive: np.ndarray = None
+) -> None:
+    """One diagnostic page for `record`: does the fitted `ratio` / `hourly_shape` look
+    like a real migration day, and does night actually go to zero?
+
+    Top row: `record["ratio"]` as fitted (the tensor-interaction `te(0, 1)`, default
+    since the comparison below) -- can express real within-season shape drift, unlike
+    the additive alternative.
+    Bottom row (only if `ratio_additive` is given, e.g. via
+    `PhenologyBuilder.fit_hourly_ratio(species, interaction=False)`): the additive fit
+    for comparison -- mathematically incapable of shape drift across the season (see
+    `fit_hourly_ratio`'s docstring), so every representative day's line is identical
+    there by construction.
+    """
+    n_rows = 2 if ratio_additive is not None else 1
+    fig.suptitle(record["species"], fontsize=12)
+
+    _draw_shape_row(fig, 0, n_rows, _phenology_from_record(record), "fitted (te(0,1))")
+
+    if ratio_additive is not None:
+        additive_record = dict(record, ratio=ratio_additive.tolist())
+        _draw_shape_row(
+            fig, 1, n_rows, _phenology_from_record(additive_record), "additive comparison"
+        )
+
+
+def write_diagnostic_pdf(
+    records: list, plot_dir: str, ratio_additive_by_species: dict = None
+) -> str:
+    """Writes one multi-page PDF (one page per species) to `plot_dir`, per `--plot-dir`
+    -- see the module docstring for why this replaces the plot-only role of
+    `notebooks/phenology_baseline.ipynb`. `ratio_additive_by_species`, if given, adds
+    the additive-fit comparison row (see `draw_species_diagnostic`) -- e.g. from
+    `{r["species"]: builder.fit_hourly_ratio(r["species"], interaction=False) for r in records}`."""
+    ratio_additive_by_species = ratio_additive_by_species or {}
+    os.makedirs(plot_dir, exist_ok=True)
+    out_path = os.path.join(plot_dir, "species_doy_statistics_diagnostic.pdf")
+    with PdfPages(out_path) as pdf:
+        for record in records:
+            has_comparison = record["species"] in ratio_additive_by_species
+            fig = Figure(figsize=(11.69, 11 if has_comparison else 6), constrained_layout=True)
+            draw_species_diagnostic(
+                fig, record, ratio_additive_by_species.get(record["species"])
+            )
+            pdf.savefig(fig)
+    return out_path
 
 
 def main() -> int:
@@ -341,6 +452,11 @@ def main() -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="Fit and report, but do not write the file"
     )
+    parser.add_argument(
+        "--plot-dir",
+        default=None,
+        help="Also write a per-species diagnostic PDF here (see module docstring)",
+    )
     args = parser.parse_args()
 
     species_list = args.species or species_from_experiments(args.configs_dir)
@@ -361,16 +477,15 @@ def main() -> int:
         print(f"Fitting {species}...")
         records.append(builder.build(species))
 
+    if args.plot_dir:
+        pdf_path = write_diagnostic_pdf(records, args.plot_dir)
+        print(f"Wrote diagnostic PDF to {pdf_path}")
+
     if args.dry_run:
         print(f"Dry run: built {len(records)} species, not writing {out_path}")
         return 0
 
-    # Write to a temp file and rename into place: this file is read by every training/eval
-    # run and, once deployed, by defileViz -- a reader must never see a half-written file.
-    tmp_path = f"{out_path}.tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(records, f, indent=2)
-    os.replace(tmp_path, out_path)
+    write_json_atomic(records, out_path)
 
     print(f"Wrote {len(records)} species to {out_path}")
     return 0

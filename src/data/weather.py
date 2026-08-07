@@ -361,6 +361,35 @@ def _add_sun_position(df, location):
     return df
 
 
+def night_mask_by_doy_hour(threshold_deg=-6.0, location="Defile", reference_year=2001):
+    """`(366, 24)` bool array: True where the sun is below `threshold_deg` altitude (civil
+    twilight by default) at that UTC hour of that day-of-year, else False.
+
+    Deterministic and astronomically exact -- needs no observed data, unlike a statistical
+    fit over hours with very little of it. Used to zero out `Phenology.hourly_shape`'s
+    deep-night hours (`src/phenology.py`) directly, rather than asking the day-of-year x
+    hour GAM fit to cover territory it has ~no real observations for (`DEVELOPMENT.md`:
+    across every hourly-resolution dawn/dusk survey row in the dataset, the 11 modelled
+    raptor species account for only 2 individuals total). Day-of-year/hour resolution is
+    enough for this; sub-day drift between `reference_year` and a real observation's year
+    is negligible for a threshold this coarse.
+    """
+    lat, lon = get_lat_lon(location)
+    base = pd.Timestamp(f"{reference_year}-01-01")
+    doys = np.arange(1, 367)
+    hours = np.arange(24)
+    timestamps = pd.DatetimeIndex(
+        [
+            base + pd.Timedelta(days=int(d) - 1, hours=int(h))
+            for d in doys
+            for h in hours
+        ]
+    )
+    position = get_position(timestamps, lon[0], lat[0])
+    altitude_deg = np.degrees(np.asarray(position["altitude"], dtype="float64"))
+    return (altitude_deg < threshold_deg).reshape(len(doys), 24)
+
+
 def _to_hourly_dataset(df):
     """Reshapes a tidy long DataFrame into an (date, time, location) `xarray.Dataset`."""
     df = df.copy()

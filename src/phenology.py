@@ -22,6 +22,8 @@ from typing import Sequence
 
 import numpy as np
 
+from src.data.weather import night_mask_by_doy_hour
+
 PHENOLOGY_FILE = os.path.join("count", "species_doy_statistics.json")
 
 # `ratio` in the phenology file is a GAM fit of (hourly period rate / that day's rate)
@@ -115,3 +117,36 @@ class Phenology:
         profile = np.zeros((len(pos), 24), dtype=float)
         profile[:, RATIO_HOURS] = self.ratio[ratio_pos] * self.mean[pos][:, None]
         return profile
+
+    def hourly_shape(self, doy: Sequence[int]) -> np.ndarray:
+        """The day's diurnal *shape* -- `hourly_rate`, normalised to sum to 1 across the
+        24 hours -- with every astronomically-night hour forced to exactly 0 first.
+
+        Deep night is forced by `night_mask_by_doy_hour` (`src/data/weather.py`), not
+        fitted: `ratio`'s GAM already only ever sees real hourly-bin data (`RATIO_HOURS`,
+        6-17), and per DEVELOPMENT.md there is essentially none at night to fit against
+        anyway (2 individuals total, dataset-wide, across all 11 modelled species) --
+        a deterministic astronomical fact is both cheaper and more reliable than
+        extrapolating a spline into territory it has no real data for.
+
+        Used as the shape prior `UNetplus`'s `out_h` defaults to before any weather
+        evidence shifts it (see DECISIONS.md -> Model architecture) -- unlike every other
+        method on this class, this one is read at training/forecast time, not only at
+        evaluation time.
+
+        Days with a phenological rate of exactly zero (season edges) fall back to a
+        uniform shape over `RATIO_HOURS`, rather than an all-zero vector that is
+        undefined once normalised.
+        """
+        profile = self.hourly_rate(doy)
+        doy_arr = np.clip(np.asarray(doy), 1, 366)
+        profile = np.where(night_mask_by_doy_hour()[doy_arr - 1], 0.0, profile)
+
+        flat_fallback = np.zeros(24)
+        flat_fallback[RATIO_HOURS] = 1.0 / len(RATIO_HOURS)
+        total = profile.sum(axis=1)
+        zero_days = total == 0
+        profile[zero_days] = flat_fallback
+        total[zero_days] = 1.0
+
+        return profile / total[:, None]
