@@ -3,13 +3,45 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-# Floor added before `log(prior_shape)` (see UNetplus.forward). Not zero: a `prior_shape`
-# hour of exactly 0 (deep night) would otherwise make that hour's softmax logit -inf,
-# making it architecturally *impossible* to ever predict anything there regardless of
-# real evidence -- precisely the rigidity the old hardcoded dawn/dusk zero-mask caused,
-# which this project already found and fixed once (see DECISIONS.md -> Model
-# architecture). This keeps night heavily discouraged, not forbidden.
+# Floor used when turning `prior_shape` into a per-hour logit bias (see
+# `prior_shape_to_logit_bias`). Not zero: an hour whose prior is exactly 0 (deep night)
+# would otherwise get a -inf bias, making it architecturally *impossible* to ever predict
+# anything there regardless of real evidence -- precisely the rigidity the old hardcoded
+# dawn/dusk zero-mask caused, which this project already found and fixed once (see
+# DECISIONS.md -> Model architecture). This keeps night heavily discouraged, not forbidden:
+# logit(1e-6) is about -13.8, so a learned logit has to genuinely fight for that hour.
 PRIOR_LOG_EPS = 1e-6
+
+# What `out_h` is at its peak hour when the network adds nothing (raw logit z == 0), i.e.
+# the prior-only default. 0.5 keeps the initial scale of `out_h` comparable to the old
+# free-sigmoid architecture (whose small random init also sat near 0.5), so `out_d`'s
+# learned scale and the `8 *` constant in `forward` stay in the range they were tuned for.
+PRIOR_PEAK_TARGET = 0.5
+
+
+def prior_shape_to_logit_bias(prior_shape, peak_target=PRIOR_PEAK_TARGET, eps=PRIOR_LOG_EPS):
+    """Turns a normalised 24h shape (sums to 1, from `Phenology.hourly_shape`) into a
+    per-hour logit bias for `out_h`'s sigmoid -- `(batch, 24) -> (batch, 24)`.
+
+    Deliberately *not* a softmax over the prior's log-probabilities. That was the first
+    attempt and it is wrong for this model: a softmax forces the 24 hours to sum to 1, so
+    `out_h` becomes a pure shape and every bit of magnitude has to come from `out_d`, a
+    single scalar fed only by *daily*-scale inputs. That is a real capacity cut, not a
+    reparameterisation -- the hourly branch can then only redistribute a total it has no
+    way to influence, even though hourly weather (a rain band, a wind shift) genuinely
+    changes how many birds pass in an hour, not just when. Measured directly: a 3-seed
+    sweep under the softmax form held `season_total_ratio` at ~0.14 (vs ~1.34 for the
+    unconstrained baseline), unmoved by 2x the epochs or 5x the early-stopping patience.
+
+    The sigmoid form keeps the anchoring without the constraint. The prior is rescaled so
+    its peak hour maps to `peak_target` and its zero hours to ~0, then converted to a
+    logit; `out_h = sigmoid(z + bias)` is `peak_target` at the peak when `z == 0`, and each
+    hour is free in (0, 1) independently -- so `out_h` still carries absolute magnitude,
+    exactly as it did before any prior existed.
+    """
+    peak = prior_shape.amax(dim=-1, keepdim=True).clamp_min(eps)
+    target = (prior_shape / peak) * peak_target
+    return torch.log(target + eps) - torch.log1p(-target + eps)
 
 
 class DownConv(nn.Module):
@@ -154,10 +186,10 @@ class UNetplus(nn.Module):
             up_conv = UpConv(ins, outs)
             self.up_convs.append(up_conv)
 
-        # No trailing Sigmoid: this now produces raw logits `z`, combined with the
-        # phenology shape prior's log-probability before a softmax (see forward()) --
-        # out_h is a genuine distribution over the 24 hours (sums to 1) now, not 24
-        # independent (0, 1) values as before.
+        # No trailing Sigmoid here: it moved into `forward`, where the phenology prior's
+        # logit bias is added first so the sigmoid's default is the prior's shape rather
+        # than an arbitrary init. `out_h`'s range and meaning are otherwise unchanged --
+        # still 24 independent values in (0, 1) that carry magnitude as well as shape.
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
@@ -246,7 +278,7 @@ class UNetplus(nn.Module):
         # DECISIONS.md -> Model architecture). Fixed not by reintroducing a hard mask, but
         # by anchoring out_h's *default* to a smooth, physically-informed shape (the
         # `prior_shape` argument below) that real weather evidence can still override --
-        # see forward()'s softmax step.
+        # see forward()'s sigmoid step and `prior_shape_to_logit_bias`.
 
     def forward(self, yr, doy, prior_shape, era5_main, era5_hourly, era5_daily):
         # Define forward pass
@@ -273,15 +305,16 @@ class UNetplus(nn.Module):
             out_h = module(before_pool, out_h)
         z = self.conv_final(out_h)  # (batch, nb_output_features, 24) raw logits
 
-        # out_h is now a genuine distribution over the 24 hours (sums to 1): the
-        # network's logits `z`, biased by the phenology prior's log-probability. At
-        # init (z == 0 everywhere, by the zero-init above) this is exactly `prior_shape`;
-        # as training proceeds, `z` is a learned residual that shifts probability mass
-        # away from the prior wherever the hourly weather inputs actually justify it.
-        # `out_d` (below) is a single scalar shared by every hour of one sample, so it
-        # cancels out of this softmax entirely -- this supervises shape only.
-        log_prior = torch.log(prior_shape + PRIOR_LOG_EPS).unsqueeze(1)
-        out_h = torch.softmax(z + log_prior, dim=-1)
+        # out_h stays what it always was -- 24 independent values in (0, 1), free to carry
+        # absolute magnitude, not just the day's shape -- but its *default* is now the
+        # phenology prior instead of an arbitrary init. `z` is the network's learned
+        # per-hour logit; the bias term makes `sigmoid(z + bias)` sit at the prior's
+        # rescaled shape when `z == 0` (see `prior_shape_to_logit_bias`, including why a
+        # softmax here was wrong). Hourly weather can push any hour up or down in absolute
+        # terms, so the hourly branch keeps its share of the magnitude prediction and
+        # `out_d` is not left carrying all of it alone.
+        prior_bias = prior_shape_to_logit_bias(prior_shape).unsqueeze(1)
+        out_h = torch.sigmoid(z + prior_bias)
 
         # Daily weather
         doy_ = doy.repeat(1, self.nb_lag_day).unsqueeze(1)
@@ -292,12 +325,11 @@ class UNetplus(nn.Module):
         out_d = torch.mean(self.layers_d(X_d), dim=2)
         out_d = self.last_layer_d(out_d).unsqueeze(1)
 
-        # out_h now sums to 1 across the 24 hours (a genuine shape distribution, not 24
-        # independent (0, 1) values); out_d is between 0 and 1. The `8x` scale (giving a
-        # max reachable count of exp(8)-1 = 2979) was tuned against the old
-        # unconstrained-per-hour out_h and will settle at a different effective value
-        # once retrained against this parameterisation -- expected, not a bug, checked
-        # post-retrain like any architecture change here.
+        # out_h and out_d are both between 0 and 1 -- unchanged from before the prior was
+        # introduced, so the `8 *` scale (max reachable count exp(8)-1 = 2979) still means
+        # what it did when it was tuned. Both branches contribute magnitude: out_d damps
+        # the whole day from daily-scale inputs, out_h sets each hour's level from
+        # hourly-scale inputs.
         out = 8 * out_h * out_d
         # out = out_h + out_d
 
