@@ -14,9 +14,11 @@ devices: 1
 # perform a validation loop every N training epochs
 check_val_every_n_epoch: 1
 
-# set True to to ensure deterministic results
-# makes training slower but gives more reproducibility than just setting seeds
-deterministic: False
+# Same seed, same config, different outcome was observed directly on this codebase and
+# accelerator (trainer=mps): with this False, non-deterministic op ordering means
+# seed_everything alone does not make a run reproducible. Makes training somewhat slower,
+# but a rerun -- for debugging, or comparing a code change -- needs a stable answer.
+deterministic: True
 
 inference_mode: False
 
