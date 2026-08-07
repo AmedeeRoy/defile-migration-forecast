@@ -187,6 +187,24 @@ Also in scope for this phase:
     one.
   - Only validated on Common Buzzard so far (the species the collapse was found on) —
     check the other modelled species before trusting this broadly.
+  - **Red Kite reproduces a different, still-open version of the collapse under this
+    fix, on every seed tested** — the hourly shape goes flat within a day (though it
+    still varies normally between days), even though its own climatological prior
+    looks fine on inspection. Not present on the previous architecture for this
+    species. Current best guess: Red Kite has by far the strongest multi-year
+    population trend of any modelled species, and is trained with year information
+    withheld from the model (`year_used: "constant"`) — so a large, systematic part of
+    the true variation in count is structurally unexplainable from the model's inputs.
+    That's a plausible reason this species in particular finds the shortcut of
+    saturating the hourly output rather than shaping it. The annual-trend-correction
+    work (a separate branch) currently only corrects the model's *output* after
+    prediction — it doesn't change what the model is trained against, so it likely
+    doesn't fix this on its own. Worth revisiting once that work lands: does training
+    against trend-adjusted rates (rather than correcting only at predict time) remove
+    the unexplainable variance that this collapse may be exploiting? Until this is
+    understood, don't retrain or promote Red Kite (or any unvalidated species — check
+    for this signature first: near-identical shape metrics across a seed sweep is the
+    tell) against this architecture.
 - **For later, lower priority: a probability envelope from the Tweedie loss itself**,
   rather than a second model-predicted output channel (the approach already dropped for
   being untrained). The Tweedie distribution already has a defined variance-mean
