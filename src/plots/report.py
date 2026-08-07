@@ -216,22 +216,29 @@ def _page_season(pdf: PdfPages, report: MetricReport, phenology: Phenology) -> N
     if not years:
         return
 
-    fig = _new_page(A4_LANDSCAPE)
+    # One row per test year: a fixed A4 height stops being readable past ~4-5 years (text
+    # from adjacent rows collides), so the page grows with the row count instead. PdfPages
+    # takes the page size from each figure, so this doesn't need to match A4 at all.
+    fig = _new_page((A4_LANDSCAPE[0], max(A4_LANDSCAPE[1], 1.15 * len(years) + 0.6)))
     fig.suptitle(f"{report.species} — season through each test year", fontsize=12)
     grid = fig.add_gridspec(nrows=max(len(years), 1), ncols=2, width_ratios=[2.2, 1])
 
     for i, year in enumerate(years):
         year_daily = report.daily[report.daily["year"] == year]
+        is_last = i == len(years) - 1
+
         ax = fig.add_subplot(grid[i, 0])
         draw_doy_year(ax, year_daily, phenology=phenology)
         if i == 0:
             ax.legend(fontsize=6, ncol=4, loc="upper left")
-        if i < len(years) - 1:
-            ax.set_xticklabels([])
-        else:
+        if is_last:
             ax.set_xlabel("Day of year")
+        else:
+            ax.set_xticklabels([])
 
-        draw_cumulative_passage(fig.add_subplot(grid[i, 1]), year_daily)
+        draw_cumulative_passage(
+            fig.add_subplot(grid[i, 1]), year_daily, show_xlabel=is_last
+        )
 
     _finish(pdf, fig)
 

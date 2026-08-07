@@ -138,12 +138,17 @@ def draw_doy_year(ax, year_daily: pd.DataFrame, phenology=None, threshold=None) 
     ax.set_ylabel(f"{int(g['year'].iloc[0])}\n[birds/hr]")
 
 
-def draw_cumulative_passage(ax, year_daily: pd.DataFrame) -> None:
+def draw_cumulative_passage(ax, year_daily: pd.DataFrame, show_xlabel: bool = True) -> None:
     """Cumulative share of the season's passage -- the phenology view of level 4.
 
     Normalised to 1, so a curve shifted left or right is a timing error and a curve of the
     wrong shape is a within-season distribution error; magnitude errors, which the
     seasonal-total ratio already reports, are deliberately divided out.
+
+    The year is already labelled on the row's left-hand panel (`draw_doy_year`), so it is
+    not repeated here as a title -- with one row per test year, a title on every row
+    collided with the `set_ylabel` below it once more than a handful of years are stacked
+    on one page.
     """
     if year_daily.empty:
         return _empty(ax)
@@ -156,9 +161,11 @@ def draw_cumulative_passage(ax, year_daily: pd.DataFrame) -> None:
 
     ax.axhline(0.5, c="grey", lw=0.7, ls=":")
     ax.set_ylim(0, 1)
-    ax.set_xlabel("Day of year")
-    ax.set_ylabel("Cumulative share")
-    ax.set_title(f"{int(g['year'].iloc[0])}", fontsize=9)
+    ax.set_ylabel("Cumulative\nshare", fontsize=8)
+    if show_xlabel:
+        ax.set_xlabel("Day of year")
+    else:
+        ax.set_xticklabels([])
 
 
 # --------------------------------------------------------------------------------------
