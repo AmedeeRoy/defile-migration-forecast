@@ -2,7 +2,7 @@
 name = "defile-migration-forecast"
 version = "0.1.0"
 description = "Forecasts of hourly raptor passage rate at Défilé de l'Écluse"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11,<3.12"
 
 # Exact pins, matching what this project was actually installed and tested against on the
 # retired conda environment (see git history for environment.yaml). This is a tooling swap,
