@@ -321,6 +321,7 @@ class DefileDataModule(LightningDataModule):
         train_val_test: str = "period",
         year_used: str = "none",
         compute_transform_data: bool = True,
+        transform_data_path: Optional[str] = None,
         split_seed: int = 0,
         batch_size: int = 64,
         num_workers: int = 0,
@@ -341,6 +342,10 @@ class DefileDataModule(LightningDataModule):
         :param year_used: The type of year variable used in the model. Defaults to `"none"`.
             "constant" for no information of year included in the model, "none" for the exact year
             or "period" where only a broad category of year period is included
+        :param transform_data_path: Where the fitted normalisation is written (training) and read
+            (predict, or `compute_transform_data=False`). Defaults to
+            `<data_dir>/transform_data.pickle`, the copy `predict.py` serves from; `debug=` configs
+            point it at the run's output dir so a smoke test can't clobber it.
         :param split_seed: Seed for the train/val/test split. The split is drawn from a dedicated
             generator seeded with this value, so it is identical on every call to `setup()`
             regardless of global RNG state. Defaults to `0`.
@@ -375,6 +380,9 @@ class DefileDataModule(LightningDataModule):
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
         self.year_used = year_used
         self.compute_transform_data = compute_transform_data
+        self.transform_data_path = transform_data_path or os.path.join(
+            data_dir, "transform_data.pickle"
+        )
         self.split_seed = split_seed
         self.batch_size_per_device = batch_size
         self.num_workers = num_workers
@@ -560,10 +568,10 @@ class DefileDataModule(LightningDataModule):
                     "hourly": DataTransformer(dataset=self.era5_hourly),
                     "daily": DataTransformer(dataset=self.era5_daily),
                 }
-                with open(os.path.join(self.data_dir, "transform_data.pickle"), "wb") as f:
+                with open(self.transform_data_path, "wb") as f:
                     cloudpickle.dump(transform_data, f)
             else:
-                with open(os.path.join(self.data_dir, "transform_data.pickle"), "rb") as f:
+                with open(self.transform_data_path, "rb") as f:
                     transform_data = cloudpickle.load(f)
 
             self.transform_data = transform_data
@@ -585,7 +593,7 @@ class DefileDataModule(LightningDataModule):
             self.log_split_summary()
 
         if stage == "predict":
-            with open(os.path.join(self.data_dir, "transform_data.pickle"), "rb") as f:
+            with open(self.transform_data_path, "rb") as f:
                 self.transform_data = cloudpickle.load(f)
 
     def log_split_summary(self) -> None:

@@ -1,3 +1,5 @@
+import os
+import shutil
 from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
@@ -72,6 +74,14 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if cfg.get("train"):
         log.info("Starting training!")
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
+
+        # Keep the normalisation this run was fitted with next to its checkpoints: the shared
+        # copy in data/ is overwritten by the next training run, and a checkpoint is only
+        # usable with the transform it was trained against.
+        src = os.path.abspath(datamodule.transform_data_path)
+        dst = os.path.join(os.path.abspath(cfg.paths.output_dir), os.path.basename(src))
+        if datamodule.compute_transform_data and src != dst:  # debug= already writes it there
+            shutil.copy2(src, dst)
 
     train_metrics = trainer.callback_metrics
 

@@ -33,3 +33,5 @@ trainer:
 data:
   num_workers: 0 # debuggers don't like multiprocessing
   pin_memory: False # disable gpu memory pin
+  # keep the smoke test's normalisation out of data/transform_data.pickle, which predict.py serves
+  transform_data_path: ${paths.output_dir}/transform_data.pickle
