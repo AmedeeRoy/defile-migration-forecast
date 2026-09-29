@@ -20,132 +20,74 @@ the model learns to depend on that isn't available then is a liability.
 
 ## Status
 
-Environment management is `uv` (`pyproject.toml` + `uv.lock`), not conda —
-`environment.yaml` is gone. Dependencies are pinned to exact versions, not ranges, since the
-first attempt at ranged constraints silently resolved `torch` and `pyarrow` several major
-versions ahead of anything this project has been tested against; bump deliberately with
-`uv lock --upgrade-package <name>`, not by loosening the pins.
+Environment management is `uv` (`pyproject.toml` + `uv.lock`); dependencies are pinned to
+exact versions (bump deliberately with `uv lock --upgrade-package <name>`). Weather is one
+Open-Meteo path for training and serving. What was settled and why lives in `DECISIONS.md`
+(weather, architecture, loss, evaluation, production guards); this file only lists what is
+left.
 
-Weather is centralised on Open-Meteo (`src.data.weather.get_weather`) for both training and
-forecasting, with the forecast path pinned to `ecmwf_ifs025` to match ERA5's 0.25° training
-grid. A residual wind-agreement gap remains between the two in complex terrain even at
-matched resolution (Défilé ~0.55 corr vs. flat-terrain ~0.93,
-`tests/test_weather.py::test_wind_over_complex_terrain_is_documented_as_divergent`) — not
-something to fix further, but worth checking against Phase 1's new skill metrics once
-retrained, to see whether it actually moves forecast skill or only feature correlation.
-
-Tweedie alone is the current default and standard loss (`configs/model/unet.yaml`); `ProbaRMSE`
-is fixed and still available in `src/models/criterion.py` for the ablation Phase 1 calls for,
-but isn't included by default.
-
-**Decided, not revisiting:** fitting normalisation stats on the full dataset rather than
-train-only is fine for this use case. Fine-tuning on Open-Meteo's Historical Forecast API is
-out of scope.
-
-**Nothing in `prod/models/` has been retrained against any current fix yet** — that's Phase 1.
+**Nothing in `prod/models/` has been retrained against any current fix** — the committed
+checkpoints date from 2025-09, before the mask removal, the phenology shape prior, the
+Tweedie-only loss and the weather migration. The hyperparameters in `configs/experiment/*.yaml`
+were tuned before all of these and should be treated as void until retrained. That is
+Phase 1, and it is the gate for trusting any model-quality number.
 
 ## Plan
 
-**Phase 1 — retrain all 11 species checkpoints, and fix what "model quality" means while
-doing it.** Retraining is the actual gate for trusting any model-quality number; nothing
-should be judged on accuracy before this, including whether the `ecmwf_ifs025` pin above
-actually helps. The data is highly skewed (61–95% zero survey rows depending on species; the
-top 1% of rows hold 27–70% of all birds counted) and the survey unit changed shape over the
-project's history (mean survey duration ~9.7 h in 2013 vs. ~1.0 h from 2022 on, rows/year up
-~12x over the same span) — this reweights the loss toward the hourly-recording era by
-accident (see the year-subset ladder and `out_h` items in Phase 2, both downstream of the
-same fact) — so what gets reported needs to account for both, not just retrain against the
-two pooled metrics that exist today.
+**Phase 1 — retrain all 11 species, and fix what "model quality" means while doing it.**
+Nothing should be judged on accuracy before this, including whether the `ecmwf_ifs025` pin
+actually helps forecast skill or only feature correlation (the residual wind gap at Défilé,
+~0.55 vs ~0.93 over flat terrain, is in `DECISIONS.md`). The data is highly skewed (61–95%
+zero survey rows depending on species; the top 1% of rows hold 27–70% of all birds counted)
+and the survey unit changed shape over the project's history (mean survey duration ~9.7 h in
+2013 vs. ~1.0 h from 2022 on, rows/year up ~12x over the same span). That reweights the loss
+toward the hourly-recording era by accident, so what gets reported must account for both.
 
-**Fixed, not yet retrained against:** `UNetplus.__init__` (`src/models/components/unet.py`)
-used to hard-zero the network's own output at UTC hours 0–4 and 19–23, ahead of and
-independent of the real per-sample survey coverage mask used in the loss. Real survey
-coverage starts before 05:00 UTC on 145 of 4,900 days (3%, concentrated in July–August dawn
-starts under CEST) — on those days the loss's mask correctly said "count this hour" but the
-network was architecturally forced to output zero there regardless, biasing the prediction
-down on exactly the days this mattered for. A data check confirms the direction: across
-every hourly-resolution dawn/dusk survey row in the dataset, the 11 modelled raptor species
-account for only 2 individuals total (thermal-soaring raptors genuinely don't move at
-dawn/dusk), so the old bug cost little in volume, but it was pure downside on precisely those
-rare, real records. Dropped the hardcoded mask; the per-sample mask already applied in
-`applyMask`/`src/models/criterion.py` is correct and sufficient on its own. (`convnet.py`/
-`transformer.py` carry the same pattern but aren't wired into any config, so they were inert,
-not affected.) Consequence to watch for once retrained: hours no survey has ever covered
-(deep night) now get no gradient at all, rather than a guaranteed zero — check the mean
-diurnal profile panel in the test report (intra-day shape metric, below) stays sane there.
+Things to check on the first retrain:
+
+- Hours no survey has ever covered (deep night) get no gradient, only the phenology prior
+  anchoring them: confirm the mean diurnal profile panel in the test report stays sane there.
+- Whether `ProbaRMSE` (kept in `src/models/criterion.py`, off by default) earns a place
+  in an ablation against the Tweedie-only baseline.
 
 #### Loss function
 
-- **Row weighting — a config flag (`data.loss_weighting`), not a fixed choice**, since the
-  right answer isn't obvious: a 6am–7pm survey and a 10am–2pm survey get very different
+- **Row weighting — proposed, not implemented.** No `data.loss_weighting` flag exists yet.
+  The right answer isn't obvious: a 6am–7pm survey and a 10am–2pm survey get very different
   weight under raw-duration weighting even though most of the long survey's extra hours may
-  be near-zero activity, and the model's active window (the hard `pred_mask` removed above
-  only ever spanned it anyway) is still 05–19 UTC conceptually. Three options to test:
+  be near-zero activity. Three options to test behind a config flag:
   - `"none"` (status quo) — baseline for comparison.
-  - `"active_overlap"` — weight = overlap between the survey mask and the model's 05–19 UTC
-    active window, so a short midday survey inside it isn't penalised relative to a long
-    dawn-to-dusk one, and no row is penalised for hours the model can't predict.
-  - `"phenology"` — weight by expected activity from an **hourly** phenology baseline, so a
+  - `"active_overlap"` — weight = overlap between the survey mask and the 05–19 UTC active
+    window, so a short midday survey isn't penalised relative to a long dawn-to-dusk one.
+  - `"phenology"` — weight by expected activity from the **hourly** phenology baseline, so a
     midday hour in peak season counts for more than one in the off-peak fringe.
-    `species_doy_statistics.json` already carries this (a GAM-fitted `ratio` field, hour
-    of day x day of year — see `scripts/build_phenology_stats.py` and
-    `src.phenology.Phenology.hourly_rate`), so this is a config flag now, not a data-prep
-    task.
+    `species_doy_statistics.json` already carries the needed hour x day-of-year `ratio`
+    (`src.phenology.Phenology.hourly_rate`), so this needs no new data prep.
 
 #### Reporting and metrics
 
-Report one, at most two, complementary metrics per level — no redundant variants, though
-extra diagnostics can be computed without being shown. All of them reported **per species
-and per era, never pooled** (Merlin at 95% zero and Common Buzzard at 65% zero are different
-problems), and all with a **skill score against day-of-year phenology**
-(`1 − score_model / score_phenology`, using `data/count/species_doy_statistics.json`) and
-against **persistence** (yesterday's count) as naive baselines — if the model doesn't beat
-phenology, the weather features aren't contributing anything, and no raw metric value
-alone will show that. This is purely an evaluation-time comparison, not a training input: a
-second scoring pass over the same predictions. Cheap enough to also log every validation
-epoch (`val/skill_vs_phenology`), not just at final test time. Caveat: the phenology
-file has no `year` field — it's pooled across all years including whatever ends up in the
-test split, a mild leakage risk on the baseline side; worth rebuilding per-split if a skill
-score ever looks suspiciously good, not blocking to start with. (Also already live in
-production as defileViz's stand-in uncertainty band, since the model's own uncertainty
-channel was dropped as untrained — this reuses something that already has a job in the
-running system.)
+The metric set and consolidated PDF report have landed (see `DECISIONS.md` → Evaluation); what
+remains is using them and closing their known gaps:
 
-**Landed**: `src/metrics.py` (the four-level metric set + both baselines, per era) and
-`src/plots/report.py`/`panels.py` (the consolidated PDF report, replacing the scattered
-plot files) — see below. The phenology file's generator was also moved out of a notebook
-into `scripts/build_phenology_stats.py` and fixed (see its module docstring): the notebook
-version had drifted out of sync with the actual committed file's schema, `pygam` was never
-a pinned dependency, and the hour-of-day `ratio` grid had a one-day off-by-one against the
-`doy`/`mean` arrays it's meant to align with. `DefileLitModule` also gathers predictions
-across DDP processes before scoring/writing anything (`_gather` in
-`src/models/defile_module.py`), and guards the file writes to the coordinating rank only —
-without it, `trainer=ddp` (selectable, unused today) would silently score and report only
-one rank's shard of the data, with every rank racing to write the same output files. Not
-yet done: retraining against any of this, which is what actually gates trusting these
-numbers.
+- **Inter-annual skill needs more than the current split can give it.** The random-period
+  split yields ~3 test years, not enough for a year-tracking correlation to mean anything.
+  Trustworthy season-level metrics across years need leave-one-year-out or rolling-origin
+  cross-validation — a real change to the eval harness, and the same limitation the
+  chronological-holdout idea in Phase 2 addresses.
+- **The phenology baseline is pooled across all years**, including the test split (the file
+  has no `year` field): a mild leakage risk on the baseline side. Rebuild per-split if a
+  skill score ever looks suspiciously good.
+- Consider logging `val/skill_vs_phenology` every validation epoch, not just at test time.
+
+The metric levels, for reference (all reported per species and per era, with skill scores vs.
+phenology and persistence):
 
 | level | headline metric(s) | computed, not headlined |
 |---|---|---|
 | 1. Row | **MAE** + **Bias**, birds/hr | Tweedie deviance itself (it's the loss; redundant as a metric) |
-| 2. Day (event) | **CSI** vs. a per-species-doy phenology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts, for when CSI looks wrong and you need to know why |
-| 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (catches shape distortion even when the peak hour is right; keep computing it, don't headline two shape numbers) |
-| 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates (only worth surfacing if the median error is large and you need to know whether early- or late-season passage is driving it) |
-
-Package all of this — the table above, skill scores, and per-year diagnostic plots — into
-**one consolidated PDF report per species per run**, replacing the old scattered plot
-files. Landed as `src/plots/report.py` (page layout) + `src/plots/panels.py` (the
-individual axes-level plots, renamed from `src/plots/save_test.py`), wired into
-`DefileLitModule.save_test`. This is the tool every Phase 2 experiment (year ladder,
-location/variable ablation) gets judged against, so it needs to exist before those
-comparisons are meaningful, not after.
-
-**Inter-annual skill needs more than the current split can give it.** The random-period
-split yields ~3 test years, not enough for a year-tracking correlation to mean anything.
-Making the season-level metrics above trustworthy across years needs leave-one-year-out or
-rolling-origin cross-validation — a real change to the eval harness, not just a metric
-addition, and the same underlying limitation the chronological-holdout idea in Phase 2
-addresses. Worth knowing before promising that number works from day one.
+| 2. Day (event) | **CSI** vs. a per-species-doy phenology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts |
+| 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (keep computing it, don't headline two shape numbers) |
+| 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates |
 
 **Phase 2 — general modelling research, branch per experiment, not urgent to land quickly.**
 The main one: **location and variable selection.** `era5_main_variables`,
@@ -174,37 +116,25 @@ Also in scope for this phase:
   follow-up: predict the *share* of the season's total per day/hour and forecast the
   annual total separately, removing most year-to-year variance from the hard part of the
   problem.
-- **`out_h` could collapse to a flat, constant prediction — fixed, not yet retrained
-  against for most species.** Confirmed directly on some seeds once real retraining
-  started. Anchored the hourly sub-network's default output to a smooth climatological
-  shape instead, which the network can still override wherever weather evidence
-  justifies it; see `DECISIONS.md` → Model architecture for what was tried (including a
-  first, rejected attempt) and the evidence. Two follow-ups from that work, not done yet:
-  - Shape accuracy came out slightly, consistently lower than the previous architecture
-    (not a collapse — just a modest gap). Worth a deliberate retune once this has been
-    retrained against more broadly: the learning rate and the `out_h`/`out_d` output
-    scale were both tuned for the old architecture and haven't been revisited for this
-    one.
-  - Only validated on Common Buzzard so far (the species the collapse was found on) —
-    check the other modelled species before trusting this broadly.
-  - **Red Kite reproduces a different, still-open version of the collapse under this
-    fix, on every seed tested** — the hourly shape goes flat within a day (though it
-    still varies normally between days), even though its own climatological prior
-    looks fine on inspection. Not present on the previous architecture for this
-    species. Current best guess: Red Kite has by far the strongest multi-year
-    population trend of any modelled species, and is trained with year information
-    withheld from the model (`year_used: "constant"`) — so a large, systematic part of
-    the true variation in count is structurally unexplainable from the model's inputs.
-    That's a plausible reason this species in particular finds the shortcut of
-    saturating the hourly output rather than shaping it. The annual-trend-correction
-    work (a separate branch) currently only corrects the model's *output* after
-    prediction — it doesn't change what the model is trained against, so it likely
-    doesn't fix this on its own. Worth revisiting once that work lands: does training
-    against trend-adjusted rates (rather than correcting only at predict time) remove
-    the unexplainable variance that this collapse may be exploiting? Until this is
-    understood, don't retrain or promote Red Kite (or any unvalidated species — check
-    for this signature first: near-identical shape metrics across a seed sweep is the
-    tell) against this architecture.
+- **Validate the `out_h` phenology-prior anchoring beyond Common Buzzard.** The collapse fix
+  (`DECISIONS.md` → Model architecture) has only been validated on Common Buzzard, 3 seeds.
+  Follow-ups:
+  - Check every other species before trusting or promoting it. The tell for a collapse is
+    near-identical shape metrics across a seed sweep.
+  - Shape accuracy came out slightly, consistently lower than the previous architecture.
+    The learning rate and the `out_h`/`out_d` output scale were tuned for the old
+    architecture; retune deliberately once retrained more broadly.
+  - **Red Kite reproduces a different, still-open collapse under this fix, on every seed
+    tested** — the hourly shape goes flat within a day (though it still varies normally
+    between days), even though its own climatological prior looks fine. Not present on the
+    previous architecture. Best guess: Red Kite has by far the strongest multi-year
+    population trend of any species and is trained with year information withheld
+    (`year_used: "constant"`), so a large, systematic part of the variation in count is
+    unexplainable from the model's inputs, and saturating the hourly output is a shortcut.
+    The annual-trend-correction work (a separate branch) only corrects the model's *output*
+    after prediction, so it likely doesn't fix this alone. Worth testing whether training
+    against trend-adjusted rates removes the unexplainable variance. Until understood, don't
+    retrain or promote Red Kite against this architecture.
 - **For later, lower priority: a probability envelope from the Tweedie loss itself**,
   rather than a second model-predicted output channel (the approach already dropped for
   being untrained). The Tweedie distribution already has a defined variance-mean
@@ -229,7 +159,9 @@ that kills the daily run.
 
 **Phase 4 — operational hardening**, independent small PRs, can run anytime in parallel:
 - Freshness check (assert the published file's date matches today) + failure notification.
-  Right now if `predict.py` fails, the app keeps serving stale files with no indication.
+  The publish guard (`DECISIONS.md` → Production safety) now makes a degenerate forecast fail
+  the job rather than reach the app, but nobody is told when that happens, and the app keeps
+  serving yesterday's file with no indication.
 - Transform-in-checkpoint: `data/transform_data.pickle` is a single global file that must
   correspond to the promoted checkpoints, with nothing enforcing that and retraining
   silently rewriting it. Saving transform parameters inside the checkpoint removes the

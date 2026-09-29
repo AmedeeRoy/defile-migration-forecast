@@ -1,8 +1,8 @@
 # Défilé de l'Ecluse - Bird Migration Forecasts
 
-[![python](https://img.shields.io/badge/-Python_3.8_%7C_3.9_%7C_3.10-blue?logo=python&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![pytorch](https://img.shields.io/badge/PyTorch_2.0+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
-[![lightning](https://img.shields.io/badge/-Lightning_2.0+-792ee5?logo=pytorchlightning&logoColor=white)](https://pytorchlightning.ai/)
+[![python](https://img.shields.io/badge/-Python_3.11-blue?logo=python&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![pytorch](https://img.shields.io/badge/PyTorch_2.5-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
+[![lightning](https://img.shields.io/badge/-Lightning_2.5-792ee5?logo=pytorchlightning&logoColor=white)](https://pytorchlightning.ai/)
 [![hydra](https://img.shields.io/badge/Config-Hydra_1.3-89b8cd)](https://hydra.cc/)
 
 This project trains and runs deep-learning models that forecast the **hourly passage rate**
@@ -13,10 +13,10 @@ days, and the results are displayed by the companion
 
 This work is based on the [lightning-hydra-template](https://github.com/ashleve/lightning-hydra-template/).
 
-> **Project status:** see [DEVELOPMENT.md](./DEVELOPMENT.md) for open defects and the
-> phased plan to close them. Model metrics and the tuned hyperparameters in
-> `configs/experiment/` should not be trusted until the checkpoints are retrained against
-> the fixes that have already landed.
+> **Project status:** [DEVELOPMENT.md](./DEVELOPMENT.md) lists what is still open (the phased
+> plan), and [DECISIONS.md](./DECISIONS.md) records what has been settled and why. Model
+> metrics and the tuned hyperparameters in `configs/experiment/` should not be trusted until
+> the checkpoints are retrained against the fixes that have already landed.
 
 ## Project Structure
 
@@ -27,9 +27,8 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 │   ├── debug                    <- Debugging configs
 │   ├── experiment               <- Experiment configs (one per species)
 │   ├── extras                   <- Extra utilities configs
-│   ├── hydra                    <- Hydra run/sweep directory configs
 │   ├── hparams_search           <- Hyperparameter search configs
-│   ├── hydra                    <- Hydra configs
+│   ├── hydra                    <- Hydra run/sweep directory configs
 │   ├── logger                   <- Logger configs
 │   ├── model                    <- Model configs
 │   ├── paths                    <- Project paths configs
@@ -73,9 +72,12 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 ├── .gitignore                <- List of files ignored by git
 ├── .pre-commit-config.yaml   <- Configuration of pre-commit hooks for code formatting
 ├── .project-root             <- File for inferring the position of project root directory
-├── .python-version           <- Python version uv provisions (3.10)
+├── .python-version           <- Python version uv provisions (3.11)
 ├── pyproject.toml            <- Project metadata and pinned dependencies (uv)
 ├── uv.lock                   <- Exact resolved dependency versions (uv), commit this
+├── AGENTS.md                 <- Conventions and gotchas for AI coding agents
+├── DECISIONS.md              <- Log of settled decisions and what was tried
+├── DEVELOPMENT.md            <- Open roadmap
 └── README.md
 ```
 
@@ -83,7 +85,7 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/). Install uv itself once
 (`curl -LsSf https://astral.sh/uv/install.sh | sh`, or see uv's docs for other platforms) --
-uv then provisions the pinned Python version (3.10) itself, no separate Python install needed.
+uv then provisions the pinned Python version (3.11) itself, no separate Python install needed.
 
 ```bash
 # clone project
@@ -94,17 +96,16 @@ cd defile-migration-forecast
 uv sync
 
 # run any command inside that environment
-uv run python scripts/build_weather_cache.py
 uv run python src/train.py
 uv run pytest tests/
 
 # or activate it like a regular virtualenv, if you prefer
 source .venv/bin/activate
-python scripts/build_weather_cache.py
-
-# Build the local weather cache that training reads (see below - this takes a while)
-uv run python scripts/build_weather_cache.py
+python src/train.py
 ```
+
+Training reads a local weather cache that must be built first (see [Weather data](#weather-data);
+a full backfill takes a few days, a `--start 2008-01-01` cache fits in one).
 
 Adding, removing or upgrading a dependency: edit `pyproject.toml`'s `dependencies` (or use
 `uv add <package>` / `uv remove <package>`), then `uv lock` to update `uv.lock` and `uv sync`
@@ -116,9 +117,10 @@ ranges, so `uv lock` alone won't silently drift to a newer release; use
 
 All weather comes from Open-Meteo through a single entry point,
 `src.data.weather.get_weather`. Training reads a local Parquet cache under `data/weather/`;
-the daily forecast job calls the Open-Meteo forecast API. Both go through the same variable
-vocabulary, unit conversions and daily-aggregation rules, so the two cannot silently drift
-apart.
+the daily forecast job calls the Open-Meteo forecast API, pinned to `ecmwf_ifs025` to match
+ERA5's grid. Both go through the same variable vocabulary, unit conversions and
+daily-aggregation rules, so the two cannot silently drift apart (see
+[DECISIONS.md](./DECISIONS.md)).
 
 The cache is gitignored and built by `scripts/build_weather_cache.py`. A full 1966-present
 backfill of all locations costs roughly 28 000 weighted API calls against a free-tier
@@ -254,8 +256,11 @@ pytest tests/                # offline tests
 pytest tests/ -m network     # plus the parity check against Open-Meteo
 ```
 
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for what this does and does not fix - in particular,
-training on reanalysis while serving from a forecast remains a real distribution shift.
+Training on reanalysis while serving from a forecast remains a real distribution shift,
+notably for 10 m wind in the Défilé gorge; see [DECISIONS.md](./DECISIONS.md) (Weather).
+
+The job skips days outside the trained season and refuses to publish a non-finite or
+all-but-zero forecast, leaving the previous file in place.
 
 ## Species
 

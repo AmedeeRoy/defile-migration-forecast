@@ -27,7 +27,7 @@ configs/        Hydra configs
   paths/           Path configs (default = local dev, production = deployed)
   trainer/         Lightning Trainer configs (cpu, gpu, mps, ddp)
   train.yaml, eval.yaml, predict.yaml, test.yaml   Top-level entry configs
-data/            Raw + processed data (count/, era5/, taxonomy.csv, ...) — gitignored
+data/            Raw + processed data (count/, weather/, taxonomy.csv, ...) — gitignored
 logs/            Lightning/Hydra run outputs — gitignored
 notebooks/       Exploration notebooks; retired ones live in notebooks/old/
 prod/            Production artifacts (gitignored, generated):
@@ -38,18 +38,20 @@ scripts/
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
+tests/                            pytest suite (weather, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
   metrics.py                      row/day/shape/season metrics + the phenology baseline
   data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform
   models/                          LightningModule, criterion (Tweedie loss, etc.), components/ (unet/transformer/convnet)
+  phenology.py                    Phenology baseline + the 24h shape prior fed to the UNet
   plots/                           per-species PDF test report + prediction plots
   utils/                           logging, instantiators, misc helpers
 ```
 
 ## Environment
 
-Managed with [uv](https://docs.astral.sh/uv/), Python 3.10 (`.python-version`; uv provisions
+Managed with [uv](https://docs.astral.sh/uv/), Python 3.11 (`.python-version`; uv provisions
 this itself, no separate Python install needed). Exact versions pinned in `pyproject.toml`
 and locked in `uv.lock` -- deliberately pinned, not ranged, so `uv lock` alone can't silently
 drift to a newer release. Core deps: `torch==2.5.1`, `lightning==2.5.5`,
@@ -123,17 +125,20 @@ installed locally: run `pre-commit install` once per clone.
 - **Hourly branch** — a 1-D U-Net over the 24-hour axis. Input channels are the "main"
   ERA5 stack at Défilé (14 variables + sun altitude/azimuth), the hourly stack at 5
   nearby locations (5 × 14 channels), plus day-of-year and year broadcast across hours.
-  Learns the *shape* of the day.
+  Learns the *shape* of the day, as a deviation from a climatological `prior_shape`
+  (phenology-derived, passed through the datamodule) that anchors its default output.
 - **Daily branch** — a 1-D conv stack over the lag axis (`lag_day` days of history) on the
   daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*.
 - Combined multiplicatively: `out = 8 * out_h * out_d`, both sigmoid-bounded, so output is
-  in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). Hours <05 and ≥19 UTC are forced to
-  zero by a hard-coded mask in `forward`.
+  in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). There is deliberately **no hard hour
+  mask**: night is discouraged by the prior, never architecturally impossible. Don't
+  reintroduce one, and don't normalise `out_h` over the day (both were tried; see
+  `DECISIONS.md` → Model architecture).
 
 Targets are hourly rates (`count / survey duration`), with a 24-element `mask` giving the
-fraction of each hour covered by the survey. Loss is `TweedieLoss + ProbaRMSE`
-(`src/models/criterion.py`), weighted per species by Optuna-tuned values in
-`configs/experiment/*.yaml`.
+fraction of each hour covered by the survey. Loss is `TweedieLoss` alone
+(`src/models/criterion.py`; `ProbaRMSE` still exists but is off by default), with `p` tuned
+per species in `configs/experiment/*.yaml`. Training is deterministic for a given seed.
 
 Feature-count expressions in `configs/model/unet.yaml` are derived from the data config via
 Hydra resolvers (`${len:...}`, `${eval:...}`) — if you change the variable/location lists
@@ -208,21 +213,27 @@ Concretely:
   `from src.phenology import RATIO_HOURS`, `from src.plots.panels import C_PRED`, not a
   second `RATIO_HOURS = np.arange(6, 18)` or `C_ATTR = "#0072B2"` a few files away.
 
-## Known defects — read before making changes
+## Roadmap and decisions — read before making changes
 
-`DEVELOPMENT.md` at the repo root is the live roadmap: open defects and the phased plan to
-close them, nothing archived. **Read it before trusting any model metric or tuning
-hyperparameters** — the values currently in `configs/experiment/*.yaml` were tuned before
-several of these fixes landed and before this migration, so they should be considered void
-until retrained.
+- `DEVELOPMENT.md` is the live roadmap: only what is still open, in phases.
+- `DECISIONS.md` is the log of settled calls and what was tried and rejected (weather path,
+  architecture, loss, evaluation, production guards). Check it before re-proposing something;
+  add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
-The one worth knowing about even without opening the file: Défilé sits in a gorge that
-ERA5's 25 km cell cannot resolve, so 10 m wind correlates only ~0.27 between the training
-and serving products there (~0.90 over flat terrain). That's a genuine train/serve
-distribution shift which unifying the provider did **not** fix, and it is plausibly the
-biggest remaining limit on forecast skill (`DEVELOPMENT.md` 4.19d).
+**Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
+checkpoints in `prod/models/` and the values in `configs/experiment/*.yaml` predate several
+fixes and the weather migration, and should be considered void until retrained.
 
-Tests live in `tests/` and cover the weather layer only. The rest of the codebase has none.
+The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
+25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and
+serving products there (~0.93 over flat terrain), even with the forecast pinned to
+`ecmwf_ifs025`. It is a real train/serve distribution shift and plausibly the biggest
+remaining limit on forecast skill (`DECISIONS.md` → Weather).
+
+Tests live in `tests/`: the weather layer (`test_weather.py`), the datamodule's `prior_shape`
+plumbing, `UNetplus`'s shape-prior anchoring, the phenology baseline, and the predict-time
+season and publish guards. Metrics, plots and the rest of the training loop have none;
+`debug=default` is the smoke test for those.
 
 ## Species / experiment pattern
 
@@ -265,7 +276,7 @@ rather than editing `configs/data/defile.yaml` directly.
 
 ## Known environment gotcha: OneDrive sync
 
-This repo currently lives inside a OneDrive-synced folder. Two things to watch for:
+This repo currently lives inside a OneDrive-synced folder. Three things to watch for:
 
 1. OneDrive "Files On-Demand" keeps rarely-opened files as cloud-only placeholders.
    Reading one can fail with errors like "Resource deadlock avoided", or hang, even
@@ -312,9 +323,13 @@ Runs daily at 03:00 UTC (cron), on every push to `main`, and on manual dispatch:
    this is what actually serves the files defileViz consumes (see below).
 4. Also deploys `www/` (this repo's own minimal page) to this repo's GitHub Pages.
 
-There's a second workflow, `.github/workflows/test_gce.yml`, presumably a
-connectivity check for the GCE deploy step — I haven't been able to read its contents
-yet (OneDrive placeholder issue), so treat that description as unconfirmed.
+A second workflow, `.github/workflows/test_gce.yml` (manual dispatch only), uploads a dummy
+`test.txt` to the GCE host via SCP: a connectivity check for the deploy step, not part of
+the pipeline.
+
+Safeguards in `predict.py` / `DefileLitModule.save_predict`: the job skips out-of-season days
+and fails rather than publish a non-finite or all-but-zero forecast (`DECISIONS.md` →
+Production safety). Nothing yet notifies a human when it fails.
 
 ## Related repo
 
