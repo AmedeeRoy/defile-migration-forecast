@@ -1,6 +1,8 @@
 import datetime
+import hashlib
 import json
 import os
+import subprocess
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
@@ -14,6 +16,7 @@ from torchmetrics import MeanMetric
 from torchmetrics.regression import ExplainedVariance
 
 from src import metrics as M
+from src.data.weather import FORECAST_MODEL
 from src.models.criterion import applyMask
 from src.plots.report import build_report
 from src.plots.save_predict import plt_predict
@@ -563,6 +566,8 @@ class DefileLitModule(LightningModule):
         predictions = predict_dataset.era5_main.sel(date=dates).assign(
             pred_log_hourly_count=(("date", "time"), self.predict_pred["pred"][:, 0, :].numpy())
         )
+        predictions["pred_log_hourly_count"].attrs["units"] = "log1p(birds per hour)"
+        predictions.attrs.update(self._forecast_provenance(datamodule.species))
 
         os.makedirs(self.output_dir, exist_ok=True)
         stem = os.path.join(
@@ -571,6 +576,36 @@ class DefileLitModule(LightningModule):
         )
         predictions.to_netcdf(f"{stem}.nc")
         plt_predict(predictions, species=datamodule.species, filepath=f"{stem}.jpg")
+
+    def _forecast_provenance(self, species: str) -> Dict[str, str]:
+        """Global NetCDF attributes saying which model produced a forecast, and when.
+
+        Without them a published file cannot be traced back to a checkpoint, so a forecast that
+        looks wrong on defileViz cannot be told apart from a stale model.
+        """
+        ckpt_path = self.trainer.ckpt_path or ""
+        ckpt_sha = ""
+        if os.path.isfile(ckpt_path):
+            with open(ckpt_path, "rb") as f:
+                ckpt_sha = hashlib.sha256(f.read()).hexdigest()[:12]
+        git_sha = os.environ.get("GITHUB_SHA", "")
+        if not git_sha:
+            try:
+                git_sha = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+                ).stdout.strip()
+            except (OSError, subprocess.CalledProcessError):
+                pass
+        return {
+            "species": species,
+            "issued_at": datetime.datetime.now(datetime.timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            "weather_model": FORECAST_MODEL,
+            "checkpoint": os.path.relpath(ckpt_path) if ckpt_path else "",
+            "checkpoint_sha256": ckpt_sha,
+            "git_sha": git_sha[:12],
+        }
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Choose what optimizers and learning-rate schedulers to use in your optimization.

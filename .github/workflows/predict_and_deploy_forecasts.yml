@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       forecasts-path: ${{ steps.set-path.outputs.path }}
+      n_forecasts: ${{ steps.predict.outputs.n_forecasts }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -35,14 +36,30 @@ jobs:
       - name: Install pinned environment
         run: uv sync --locked
 
+      # One process per species rather than one --multirun: Hydra's launcher aborts the
+      # whole sweep on the first exception, so one broken species used to publish nothing
+      # for all eleven. Failures still fail the job (and trigger GitHub's email), after
+      # the species that did succeed have been published.
       - name: Run prediction script
-        run: uv run python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,honey_buzzard,marsh_harrier,sparrowhawk,kestrel,osprey,hen_harrier,merlin,hobby
+        id: predict
+        run: |
+          failed=()
+          for sp in common_buzzard red_kite black_kite honey_buzzard marsh_harrier sparrowhawk kestrel osprey hen_harrier merlin hobby; do
+            uv run python src/predict.py experiment=$sp || failed+=("$sp")
+          done
+          # Out of season predict.py writes nothing; downstream jobs then skip instead of failing.
+          echo "n_forecasts=$(find prod/forecasts -name '*.nc' 2>/dev/null | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          if [ ${#failed[@]} -gt 0 ]; then
+            echo "::error::Prediction failed for: ${failed[*]}"
+            exit 1
+          fi
 
       - name: Set forecasts path
         id: set-path
         run: echo "path=prod/forecasts" >> $GITHUB_OUTPUT
 
       - name: Upload forecasts artifact
+        if: ${{ !cancelled() && steps.predict.outputs.n_forecasts != '0' && steps.predict.outputs.n_forecasts != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: forecasts
@@ -51,6 +68,7 @@ jobs:
   deploy_pages:
     runs-on: ubuntu-latest
     needs: predict
+    if: ${{ !cancelled() && needs.predict.outputs.n_forecasts != '0' && needs.predict.outputs.n_forecasts != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -78,6 +96,7 @@ jobs:
   upload_gce:
     runs-on: ubuntu-latest
     needs: predict
+    if: ${{ !cancelled() && needs.predict.outputs.n_forecasts != '0' && needs.predict.outputs.n_forecasts != '' }}
     steps:
       - name: Download forecasts artifact
         uses: actions/download-artifact@v5
