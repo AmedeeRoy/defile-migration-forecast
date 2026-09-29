@@ -33,8 +33,8 @@ def print_config_tree(
     """Prints the contents of a DictConfig as a tree structure using the Rich library.
 
     :param cfg: A DictConfig composed by Hydra.
-    :param print_order: Determines in what order config components are printed. Default is ``("data", "model",
-    "callbacks", "logger", "trainer", "paths", "extras")``.
+    :param print_order: Determines in what order config components are printed. Default is
+        ``("data", "model", "callbacks", "logger", "trainer", "paths", "extras")``.
     :param resolve: Whether to resolve reference fields of DictConfig. Default is ``False``.
     :param save_to_file: Whether to export config to the hydra output folder. Default is ``False``.
     """
@@ -79,10 +79,10 @@ def print_config_tree(
 def print_metrics_table(report, title: str = "Test metrics") -> None:
     """Print the headline metric table to the console at the end of a test run.
 
-    Lightning's own end-of-test table shows only what went through `self.log`, flat and
-    pooled. This shows the same breakdown the PDF's first page does -- overall and per era,
-    with the skill scores next to the raw values -- so a multirun over 11 species is
-    readable as it scrolls past, without opening 11 PDFs to find the one that went wrong.
+    Lightning's own end-of-test table shows only what went through `self.log`, flat and pooled.
+    This shows the same breakdown the PDF's first page does -- overall and per era, with the skill
+    scores next to the raw values -- so a multirun over 11 species is readable as it scrolls past,
+    without opening 11 PDFs to find the one that went wrong.
     """
     # Imported here rather than at module scope: this module is imported by every entry
     # point, and only the test path needs the metric column definitions.

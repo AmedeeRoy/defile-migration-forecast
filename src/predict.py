@@ -1,6 +1,6 @@
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
-import time
 
 import hydra
 import rootutils
@@ -21,10 +21,10 @@ log = RankedLogger(__name__, rank_zero_only=True)
 def is_in_season(doy_range, date) -> bool:
     """Whether `date` falls within the inclusive [start, end] day-of-year range.
 
-    Training data is restricted to `doy_range` (mid-July to end of November by default),
-    so the model has never seen the rest of the year. The daily cron runs regardless,
-    which without this guard would publish confident extrapolations from a model with no
-    grounding for roughly seven months a year (DEVELOPMENT.md 4.11).
+    Training data is restricted to `doy_range` (mid-July to end of November by default), so the
+    model has never seen the rest of the year. The daily cron runs regardless, which without this
+    guard would publish confident extrapolations from a model with no grounding for roughly seven
+    months a year (DEVELOPMENT.md 4.11).
     """
     start, end = doy_range
     return start <= date.timetuple().tm_yday <= end

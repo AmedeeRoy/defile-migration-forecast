@@ -86,7 +86,10 @@ def _resolve_paths(patterns: list) -> list:
 
 
 def load_runs(patterns: list) -> dict:
-    """Reads every metrics.json and groups by `species`. Returns {species: [run_dict, ...]}."""
+    """Reads every metrics.json and groups by `species`.
+
+    Returns {species: [run_dict, ...]}.
+    """
     by_species = defaultdict(list)
     for path in _resolve_paths(patterns):
         p = Path(path)
@@ -100,7 +103,8 @@ def load_runs(patterns: list) -> dict:
 
 
 def summarize_species(runs: list) -> dict:
-    """One species' seed group -> {scalars: {key: (mean, std)}, by_era: {era: {key: (mean, std)}}}."""
+    """One species' seed group -> {scalars: {key: (mean, std)}, by_era: {era: {key: (mean,
+    std)}}}."""
     scalars = {k: _mean_std([r["scalars"].get(k) for r in runs]) for k in HEADLINE}
 
     eras = defaultdict(list)

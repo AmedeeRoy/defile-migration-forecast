@@ -20,7 +20,7 @@ hydra:
 
   mode: "MULTIRUN" # set hydra to multirun by default if this config is attached
 
-  sweeper:  
+  sweeper:
     _target_: hydra_plugins.hydra_optuna_sweeper.optuna_sweeper.OptunaSweeper
 
     # storage URL to persist optimization results

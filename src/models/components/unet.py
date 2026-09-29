@@ -193,9 +193,7 @@ class UNetplus(nn.Module):
         self.conv_final = nn.Sequential(
             nn.Conv1d(outs, 4, kernel_size=5, stride=1, padding=2, dilation=1),
             nn.ReLU(),
-            nn.Conv1d(
-                4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1
-            ),
+            nn.Conv1d(4, nb_output_features, kernel_size=5, stride=1, padding=2, dilation=1),
         )
         # Near-zero (not exactly zero) initialized, so the network starts training at
         # out_h ~= prior_shape -- see DECISIONS.md -> Model architecture for why

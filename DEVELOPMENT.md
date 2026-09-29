@@ -82,12 +82,12 @@ remains is using them and closing their known gaps:
 The metric levels, for reference (all reported per species and per era, with skill scores vs.
 phenology and persistence):
 
-| level | headline metric(s) | computed, not headlined |
-|---|---|---|
-| 1. Row | **MAE** + **Bias**, birds/hr | Tweedie deviance itself (it's the loss; redundant as a metric) |
-| 2. Day (event) | **CSI** vs. a per-species-doy phenology threshold (e.g. p90) | full hit/miss/false-alarm/correct-rejection counts |
-| 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours) | Wasserstein/EMD distance (keep computing it, don't headline two shape numbers) |
-| 4. Season (phenology) | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates |
+| level                                       | headline metric(s)                                              | computed, not headlined                                                        |
+| ------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1. Row                                      | **MAE** + **Bias**, birds/hr                                    | Tweedie deviance itself (it's the loss; redundant as a metric)                 |
+| 2. Day (event)                              | **CSI** vs. a per-species-doy phenology threshold (e.g. p90)    | full hit/miss/false-alarm/correct-rejection counts                             |
+| 3. Intra-day shape (hourly-res. dates only) | **Peak-hour error** (hours)                                     | Wasserstein/EMD distance (keep computing it, don't headline two shape numbers) |
+| 4. Season (phenology)                       | **Median passage-date error** (days) + **seasonal total ratio** | 10%/90% passage dates                                                          |
 
 **Phase 2 — general modelling research, branch per experiment, not urgent to land quickly.**
 The main one: **location and variable selection.** `era5_main_variables`,
@@ -104,6 +104,7 @@ noisier against ERA5 than elsewhere, actually earning its place, or would nearby
 carry the same signal more reliably?)
 
 Also in scope for this phase:
+
 - **Year selection.** `data/count/readme.md` documents real protocol changes: sporadic
   pigeon-focused coverage before 1993, daily volunteer monitoring from 1993, a salaried
   observer 2008–2016, two salaried observers from 2017. Recording granularity changed too
@@ -158,6 +159,7 @@ path needs a defined fallback (observed-flag channel, carry on) rather than an e
 that kills the daily run.
 
 **Phase 4 — operational hardening**, independent small PRs, can run anytime in parallel:
+
 - Freshness check (assert the published file's date matches today) + failure notification.
   The publish guard (`DECISIONS.md` → Production safety) now makes a degenerate forecast fail
   the job rather than reach the app, but nobody is told when that happens, and the app keeps

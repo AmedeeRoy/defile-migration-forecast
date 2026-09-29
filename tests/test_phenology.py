@@ -1,6 +1,8 @@
-"""Tests for `Phenology.hourly_shape` (src/phenology.py) -- the smooth, astronomically
-night-anchored 24h shape used as UNetplus's out_h prior (see DECISIONS.md -> Model
-architecture and the `feature/phenology-shape-prior` plan). Built entirely from
+"""Tests for `Phenology.hourly_shape` (src/phenology.py) -- the smooth, astronomically night-
+anchored 24h shape used as UNetplus's out_h prior (see DECISIONS.md -> Model architecture and the
+`feature/phenology-shape-prior` plan).
+
+Built entirely from
 `Phenology.hourly_rate`, already tested indirectly via the real data file, plus
 `night_mask_by_doy_hour` -- these tests use a small synthetic `Phenology` instead, so they
 don't depend on `data/count/species_doy_statistics.json`'s actual content.
@@ -33,10 +35,9 @@ def test_hourly_shape_sums_to_one():
 
 
 def test_hourly_shape_is_zero_at_astronomical_night():
-    """Midwinter (doy 1) has the shortest day at this latitude -- RATIO_HOURS' fixed
-    6-17 window includes hours that are astronomically night that far into winter, and
-    hourly_shape must zero those out even though hourly_rate (pre-existing, unchanged)
-    does not."""
+    """Midwinter (doy 1) has the shortest day at this latitude -- RATIO_HOURS' fixed 6-17 window
+    includes hours that are astronomically night that far into winter, and hourly_shape must zero
+    those out even though hourly_rate (pre-existing, unchanged) does not."""
     phenology = _make_phenology({1: 10.0})
     shape = phenology.hourly_shape([1])[0]
     rate = phenology.hourly_rate([1])[0]
@@ -58,8 +59,8 @@ def test_hourly_shape_falls_back_to_uniform_on_a_zero_rate_day():
 
 
 def test_hourly_shape_matches_renormalised_hourly_rate_when_no_night_overlap():
-    """On a day where RATIO_HOURS is entirely daytime, hourly_shape should be exactly
-    hourly_rate renormalised to sum to 1 -- the night-zeroing step is then a no-op."""
+    """On a day where RATIO_HOURS is entirely daytime, hourly_shape should be exactly hourly_rate
+    renormalised to sum to 1 -- the night-zeroing step is then a no-op."""
     phenology = _make_phenology({200: 10.0})
     rate = phenology.hourly_rate([200])[0]
     shape = phenology.hourly_shape([200])[0]

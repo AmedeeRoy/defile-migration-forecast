@@ -28,8 +28,11 @@ import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 
-from src.metrics import ERA_LABELS, Phenology, MetricReport
-from src.plots.explanations import draw_explanations_locations, draw_explanations_metrics
+from src.metrics import ERA_LABELS, MetricReport, Phenology
+from src.plots.explanations import (
+    draw_explanations_locations,
+    draw_explanations_metrics,
+)
 from src.plots.panels import (
     draw_counts_distribution,
     draw_cumulative_passage,
@@ -236,9 +239,7 @@ def _page_season(pdf: PdfPages, report: MetricReport, phenology: Phenology) -> N
         else:
             ax.set_xticklabels([])
 
-        draw_cumulative_passage(
-            fig.add_subplot(grid[i, 1]), year_daily, show_xlabel=is_last
-        )
+        draw_cumulative_passage(fig.add_subplot(grid[i, 1]), year_daily, show_xlabel=is_last)
 
     _finish(pdf, fig)
 
@@ -269,10 +270,10 @@ def _page_shape(
 def _sample_days(frame: pd.DataFrame, mask: np.ndarray, pred_hourly: np.ndarray, n: int = 8):
     """Pick a spread of days to show: the biggest, some typical, some quiet.
 
-    Sampling only the busiest days would flatter the model (it is easiest to be roughly
-    right when a lot is moving) and sampling uniformly would show eight empty panels for a
-    species that is 90% zeros. A seeded generator keeps the same days across reruns of the
-    same split, so two reports are actually comparable.
+    Sampling only the busiest days would flatter the model (it is easiest to be roughly right when
+    a lot is moving) and sampling uniformly would show eight empty panels for a species that is 90%
+    zeros. A seeded generator keeps the same days across reruns of the same split, so two reports
+    are actually comparable.
     """
     daily_obs = frame.groupby("date")["obs"].mean().sort_values(ascending=False)
     if daily_obs.empty:
@@ -334,11 +335,11 @@ def build_report(
     """Write the whole report to `path` and return it.
 
     :param report: The scored predictions, from `src.metrics.evaluate`.
-    :param mask: `(24, n_rows)` survey coverage, in test-row order.
-    :param pred_hourly: `(n_rows, 24)` predicted log1p(birds/hr).
-    :param run_info: Free-form key/value lines printed on the summary page (checkpoint,
-        split years, dataset sizes) -- what you need to know to trust or reproduce the
-        numbers on the same page.
+    :param mask:`(24, n_rows)` survey coverage, in test-row order.
+    :param pred_hourly:`(n_rows, 24)` predicted log1p(birds/hr).
+    :param run_info: Free-form key/value lines printed on the summary page (checkpoint, split
+        years, dataset sizes) -- what you need to know to trust or reproduce the numbers on the
+        same page.
     :param explanations: Optional Captum attributions; the page is skipped without them.
     """
     with PdfPages(path) as pdf:

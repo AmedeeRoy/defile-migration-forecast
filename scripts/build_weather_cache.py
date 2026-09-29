@@ -60,9 +60,7 @@ DEFAULT_START = "1966-01-01"
 ARCHIVE_LAG_DAYS = 7
 
 # Variables available from the archive. CAPE is excluded: it is forecast-only.
-ARCHIVE_VARIABLES = [
-    name for name, spec in CONVERSION_DICT.items() if spec.get("archive", True)
-]
+ARCHIVE_VARIABLES = [name for name, spec in CONVERSION_DICT.items() if spec.get("archive", True)]
 
 
 def default_end_date():
@@ -81,14 +79,14 @@ CHUNK_EPOCH_YEAR = 1940
 def date_chunks(start, end, chunk_years):
     """Splits [start, end] into inclusive chunks aligned to fixed calendar blocks.
 
-    Fetching in chunks means a transient failure or a rate limit costs one chunk rather than
-    the whole history, and lets an interrupted backfill resume where it stopped.
+    Fetching in chunks means a transient failure or a rate limit costs one chunk rather than the
+    whole history, and lets an interrupted backfill resume where it stopped.
 
-    A block is always fetched whole rather than clipped to `start`, so the file for a block
-    always holds that block's entire contents. Clipping would write a partial block under
-    the full block's name, and a later run over a wider period would then skip it and leave
-    a permanent hole in the cache. The only partial block is the last one, which `end`
-    truncates; it is marked incomplete so later runs refetch it as ERA5 catches up.
+    A block is always fetched whole rather than clipped to `start`, so the file for a block always
+    holds that block's entire contents. Clipping would write a partial block under the full block's
+    name, and a later run over a wider period would then skip it and leave a permanent hole in the
+    cache. The only partial block is the last one, which `end` truncates; it is marked incomplete
+    so later runs refetch it as ERA5 catches up.
 
     Returns a list of ``(start, end, block_year, complete)`` tuples.
     """
@@ -118,8 +116,8 @@ def date_chunks(start, end, chunk_years):
 def chunk_path(cache_dir, location, block_year):
     """Path of the Parquet file holding one location's chunk.
 
-    `location` is encoded in the directory name rather than stored as a column, which is
-    what lets a read for one location skip every other location's files entirely.
+    `location` is encoded in the directory name rather than stored as a column, which is what lets
+    a read for one location skip every other location's files entirely.
     """
     return os.path.join(cache_dir, f"location={location}", f"part-{block_year}.parquet")
 
@@ -127,12 +125,11 @@ def chunk_path(cache_dir, location, block_year):
 def chunk_is_up_to_date(path, hi):
     """Whether an already-cached trailing chunk already covers through `hi`.
 
-    The trailing (current) chunk is deliberately marked incomplete by `date_chunks` so a
-    later run can extend it as ERA5 catches up -- but "incomplete" only means there is
-    something new to fetch if the requested end date has actually moved past what is
-    already on disk. Without this check, running the script twice within the same
-    ARCHIVE_LAG_DAYS window re-downloads the exact same range for no benefit, since
-    `default_end_date()` only changes once a day.
+    The trailing (current) chunk is deliberately marked incomplete by `date_chunks` so a later run
+    can extend it as ERA5 catches up -- but "incomplete" only means there is something new to fetch
+    if the requested end date has actually moved past what is already on disk. Without this check,
+    running the script twice within the same ARCHIVE_LAG_DAYS window re-downloads the exact same
+    range for no benefit, since `default_end_date()` only changes once a day.
     """
     if not os.path.exists(path):
         return False
@@ -187,8 +184,7 @@ def fetch_with_retry(max_retries=6, wait=90, **kwargs):
             if not rate_limited or attempt == max_retries:
                 raise
             print(
-                f"    rate limit hit, waiting {wait}s "
-                f"(attempt {attempt}/{max_retries - 1})..."
+                f"    rate limit hit, waiting {wait}s " f"(attempt {attempt}/{max_retries - 1})..."
             )
             time.sleep(wait)
     raise AssertionError("unreachable")
@@ -208,12 +204,8 @@ def main(argv=None):
         default=list(LOCATIONS),
         help="Locations to fetch. Defaults to all known locations.",
     )
-    parser.add_argument(
-        "--data-dir", default="data", help="Data directory holding the cache."
-    )
-    parser.add_argument(
-        "--chunk-years", type=int, default=5, help="Years of history per request."
-    )
+    parser.add_argument("--data-dir", default="data", help="Data directory holding the cache.")
+    parser.add_argument("--chunk-years", type=int, default=5, help="Years of history per request.")
     parser.add_argument(
         "--pace",
         type=float,
@@ -263,9 +255,7 @@ def main(argv=None):
         return 0
 
     est_calls = sum(
-        api_call_weight(
-            (pd.Timestamp(hi) - pd.Timestamp(lo)).days + 1, len(ARCHIVE_VARIABLES)
-        )
+        api_call_weight((pd.Timestamp(hi) - pd.Timestamp(lo)).days + 1, len(ARCHIVE_VARIABLES))
         for _, lo, hi, _, _ in jobs
     )
 
@@ -274,9 +264,7 @@ def main(argv=None):
     pace = args.pace
     if pace is None:
         heaviest = max(
-            api_call_weight(
-                (pd.Timestamp(hi) - pd.Timestamp(lo)).days + 1, len(ARCHIVE_VARIABLES)
-            )
+            api_call_weight((pd.Timestamp(hi) - pd.Timestamp(lo)).days + 1, len(ARCHIVE_VARIABLES))
             for _, lo, hi, _, _ in jobs
         )
         pace = round(3600 * heaviest / HOURLY_CALL_LIMIT, 1)
@@ -329,9 +317,7 @@ def main(argv=None):
         written += 1
         total_rows += len(df)
         flag = f"  WARNING: {n_missing} missing values" if n_missing else ""
-        print(
-            f"  {len(df):>7,} rows  {os.path.getsize(path) / 1e6:>6.1f} MB{flag}"
-        )
+        print(f"  {len(df):>7,} rows  {os.path.getsize(path) / 1e6:>6.1f} MB{flag}")
 
         if pace and n < len(jobs):
             time.sleep(pace)

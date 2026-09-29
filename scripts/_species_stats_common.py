@@ -1,10 +1,10 @@
 """Shared scaffolding for the `build_*_stats.py` scripts (`build_phenology_stats.py`,
-`build_trend_stats.py`): sourcing the species list and season range from the project's
-own Hydra configs rather than a second hardcoded copy, and writing output atomically.
+`build_trend_stats.py`): sourcing the species list and season range from the project's own Hydra
+configs rather than a second hardcoded copy, and writing output atomically.
 
-Not a processing/statistics module -- the actual fitting (GAM day-of-year/hour surfaces,
-Holt damped-trend smoothing, ...) stays in each script, since those have little in common
-beyond "read counts, fit something per species, write JSON."
+Not a processing/statistics module -- the actual fitting (GAM day-of-year/hour surfaces, Holt
+damped-trend smoothing, ...) stays in each script, since those have little in common beyond "read
+counts, fit something per species, write JSON."
 """
 
 import glob
@@ -37,9 +37,9 @@ def species_from_experiments(configs_dir: str) -> list:
 def default_doy_range(configs_dir: str) -> list:
     """The trained season, read from `configs/data/defile.yaml`'s `doy` field.
 
-    Fitting a per-species statistics file over a different season than the model is
-    trained on would make it a baseline/prior for a question nobody is asking; reading
-    the value rather than copying it keeps the two from silently diverging.
+    Fitting a per-species statistics file over a different season than the model is trained on
+    would make it a baseline/prior for a question nobody is asking; reading the value rather than
+    copying it keeps the two from silently diverging.
     """
     with open(os.path.join(configs_dir, "data", "defile.yaml")) as f:
         cfg = yaml.safe_load(f)
@@ -49,8 +49,8 @@ def default_doy_range(configs_dir: str) -> list:
 def write_json_atomic(records: list, out_path: str) -> None:
     """Writes `records` to `out_path` via a temp file + rename.
 
-    These files are read by every training/eval run and, once deployed, by defileViz or
-    the daily forecast job -- a reader must never observe a half-written file.
+    These files are read by every training/eval run and, once deployed, by defileViz or the daily
+    forecast job -- a reader must never observe a half-written file.
     """
     tmp_path = f"{out_path}.tmp"
     with open(tmp_path, "w") as f:

@@ -24,8 +24,8 @@ log = RankedLogger(__name__, rank_zero_only=True)
 
 
 def _years_str(years) -> str:
-    """Collapse a sorted year list to `1966-1992 (12)` -- 40 individual years do not fit
-    on a report line, and the range plus the count is what actually gets compared."""
+    """Collapse a sorted year list to `1966-1992 (12)` -- 40 individual years do not fit on a
+    report line, and the range plus the count is what actually gets compared."""
     if not len(years):
         return "none"
     return f"{years[0]}-{years[-1]} ({len(years)})" if len(years) > 1 else str(years[0])
@@ -78,14 +78,14 @@ class DefileLitModule(LightningModule):
         :param net: The model to train.
         :param optimizer: The optimizer to use for training.
         :param scheduler: The learning rate scheduler to use for training.
-        :param compute_saliency: Whether to compute Captum Saliency attributions during
-            testing for the contribution plots. Requires `trainer.inference_mode: False`.
-            Set to False to skip it entirely. Defaults to `True`.
-        :param saliency_max_batches: Saliency is computed on at most this many leading test
-            batches rather than the whole test set -- attributions are only ever consumed as
-            an average over samples (see `plt_explanations_*`), so a subsample is enough, and
-            it avoids paying the backward-pass cost and memory for every batch.
-            Ignored when `compute_saliency` is False.
+        :param compute_saliency: Whether to compute Captum Saliency attributions during testing for
+            the contribution plots. Requires `trainer.inference_mode: False`. Set to False to skip
+            it entirely. Defaults to `True`.
+        :param saliency_max_batches: Saliency is computed on at most this many leading test batches
+            rather than the whole test set -- attributions are only ever consumed as an average
+            over samples (see `plt_explanations_*`), so a subsample is enough, and it avoids paying
+            the backward-pass cost and memory for every batch. Ignored when `compute_saliency` is
+            False.
         """
         super().__init__()
 
@@ -133,7 +133,9 @@ class DefileLitModule(LightningModule):
         return self.net(yr, doy, prior_shape, era5_main, era5_hourly, era5_daily)
 
     def loss(self, count_pred, count, mask):
-        return torch.stack([c.forward(count_pred, count, mask) for c in self.criterion.values()]).sum()
+        return torch.stack(
+            [c.forward(count_pred, count, mask) for c in self.criterion.values()]
+        ).sum()
 
     def model_step(
         self, batch: Tuple[torch.Tensor, torch.Tensor]
@@ -222,7 +224,6 @@ class DefileLitModule(LightningModule):
             labels.
         :param batch_idx: The index of the current batch.
         """
-
         loss, count_pred = self.model_step(batch)
 
         # update and log metrics
@@ -285,9 +286,9 @@ class DefileLitModule(LightningModule):
     def _skill_vs_phenology(self, split: str, pred_hourly: np.ndarray) -> Optional[float]:
         """Row-level MAE skill against phenology for one split, or None if unavailable.
 
-        Returns None rather than raising whenever the predictions do not line up with the
-        split's rows -- Lightning's sanity check and `debug=limit` both run a truncated
-        loop, and a diagnostic metric must never be the thing that breaks a debug run.
+        Returns None rather than raising whenever the predictions do not line up with the split's
+        rows -- Lightning's sanity check and `debug=limit` both run a truncated loop, and a
+        diagnostic metric must never be the thing that breaks a debug run.
         """
         dataset = getattr(self.trainer.datamodule, f"data_{split}", None)
         if dataset is None or len(pred_hourly) != len(dataset.count):
@@ -406,18 +407,16 @@ class DefileLitModule(LightningModule):
     def save_test(self) -> None:
         """Score the test predictions and write the run's artefacts.
 
-        Three files per species per run, and no more: the scored predictions
-        (`<species>.nc`), the metrics in machine-readable form (`<species>_metrics.json`,
-        for comparing runs without reopening a PDF), and the consolidated report
-        (`<species>_report.pdf`). This replaced seven separate JPEGs that carried no
-        metrics and no ordering.
+        Three files per species per run, and no more: the scored predictions (`<species>.nc`), the
+        metrics in machine-readable form (`<species>_metrics.json`, for comparing runs without
+        reopening a PDF), and the consolidated report (`<species>_report.pdf`). This replaced seven
+        separate JPEGs that carried no metrics and no ordering.
 
-        `self.log_dict`/`print_metrics_table` run on every rank -- Lightning expects
-        `self.log` called the same number of times on every process, and it's cheap. The
-        file writes below run once, on the coordinating rank only: every rank has already
-        gathered the identical global `report`/`pred_hourly` by this point
-        (`on_test_epoch_end`/`_gather`), so writing from every rank would only race them
-        all against the same paths, never add anything.
+        `self.log_dict`/`print_metrics_table` run on every rank -- Lightning expects `self.log`
+        called the same number of times on every process, and it's cheap. The file writes below run
+        once, on the coordinating rank only: every rank has already gathered the identical global
+        `report`/`pred_hourly` by this point (`on_test_epoch_end`/`_gather`), so writing from every
+        rank would only race them all against the same paths, never add anything.
         """
         datamodule = self.trainer.datamodule
         dataset = datamodule.data_test
@@ -472,10 +471,10 @@ class DefileLitModule(LightningModule):
     ) -> None:
         """Write the test predictions alongside the untransformed weather they came from.
 
-        One vectorised `.sel` over the test dates rather than one `.sel` per row followed
-        by an `xr.concat` of thousands of single-date Datasets: the old form was quadratic
-        in the number of test rows (a full test split runs to several thousand) and took
-        longer than the test epoch itself.
+        One vectorised `.sel` over the test dates rather than one `.sel` per row followed by an
+        `xr.concat` of thousands of single-date Datasets: the old form was quadratic in the number
+        of test rows (a full test split runs to several thousand) and took longer than the test
+        epoch itself.
         """
         dates = xr.DataArray(pd.DatetimeIndex(dataset.count["date"]), dims="date")
         test = self.trainer.datamodule.era5_main.sel(date=dates)
@@ -493,9 +492,9 @@ class DefileLitModule(LightningModule):
     def _run_info(self) -> Dict[str, str]:
         """The provenance block printed on the report's first page.
 
-        Which years were held out, and how many rows each split holds, is the first thing
-        anyone comparing two reports needs -- and the first thing lost if it lives only in
-        a log file that the PDF does not travel with.
+        Which years were held out, and how many rows each split holds, is the first thing anyone
+        comparing two reports needs -- and the first thing lost if it lives only in a log file that
+        the PDF does not travel with.
         """
         datamodule = self.trainer.datamodule
         count = datamodule.count

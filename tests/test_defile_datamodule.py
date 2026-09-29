@@ -1,14 +1,19 @@
-"""Tests for the `prior_shape` plumbing in src/data/defile_datamodule.py -- see
-DECISIONS.md -> Model architecture. Previously only exercised by live smoke training
-runs; these pin down the two things that actually broke during that process (a missing
-tuple slot, and a symlink-shaped assumption about `data/weather` -- neither of which a
-live run always catches quickly).
+"""Tests for the `prior_shape` plumbing in src/data/defile_datamodule.py -- see DECISIONS.md ->
+Model architecture.
+
+Previously only exercised by live smoke training runs; these pin down the two things that actually
+broke during that process (a missing tuple slot, and a symlink-shaped assumption about
+`data/weather` -- neither of which a live run always catches quickly).
 """
 
 import numpy as np
 import pandas as pd
 
-from src.data.defile_datamodule import DefileDataset, ForecastDataset, _prior_shape_lookup
+from src.data.defile_datamodule import (
+    DefileDataset,
+    ForecastDataset,
+    _prior_shape_lookup,
+)
 
 
 def test_prior_shape_lookup_shape_and_normalisation():
@@ -56,9 +61,8 @@ def test_defile_dataset_getitem_includes_prior_shape_at_the_right_position():
 
 
 def test_forecast_dataset_getitem_matches_predict_step_unpacking():
-    """The non-return_original path is padded with zero placeholders to match
-    DefileDataset's tuple length -- see DefileLitModule.predict_step, which unpacks 8
-    names regardless of dataset."""
+    """The non-return_original path is padded with zero placeholders to match DefileDataset's tuple
+    length -- see DefileLitModule.predict_step, which unpacks 8 names regardless of dataset."""
     ds = object.__new__(ForecastDataset)
     ds.count = pd.DataFrame({"date": [pd.Timestamp("2020-07-20")], "doy": [202]})
     ds.prior_shape_lookup = _prior_shape_lookup("data", "Common Buzzard")
@@ -76,8 +80,8 @@ def test_forecast_dataset_getitem_matches_predict_step_unpacking():
 
 
 class _FakeXr:
-    """Minimal stand-in for an xarray Dataset's `.sel(date=...)`, just enough for
-    `sample2tensor`'s `hasattr(s, "to_array")` branch to see something array-like."""
+    """Minimal stand-in for an xarray Dataset's `.sel(date=...)`, just enough for `sample2tensor`'s
+    `hasattr(s, "to_array")` branch to see something array-like."""
 
     def sel(self, date):
         return self

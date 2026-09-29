@@ -1,12 +1,12 @@
 """Saliency (Captum) attribution panels.
 
-Axes-level, like `src/plots/panels.py`: the caller owns the figure. The attributions
-themselves are computed in `DefileLitModule.test_step` over a capped number of test
-batches and only ever consumed as a mean over samples, which is what makes that cap safe.
+Axes-level, like `src/plots/panels.py`: the caller owns the figure. The attributions themselves are
+computed in `DefileLitModule.test_step` over a capped number of test batches and only ever consumed
+as a mean over samples, which is what makes that cap safe.
 
-These panels are the starting point for the location/variable ablation in DEVELOPMENT.md
-Phase 2 -- a variable whose mean attribution is indistinguishable from zero across the
-test set is a candidate for removal, though attribution is a hint, not the ablation.
+These panels are the starting point for the location/variable ablation in DEVELOPMENT.md Phase 2 --
+a variable whose mean attribution is indistinguishable from zero across the test set is a candidate
+for removal, though attribution is a hint, not the ablation.
 """
 
 import numpy as np

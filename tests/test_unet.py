@@ -67,9 +67,11 @@ def test_logit_bias_puts_the_peak_hour_at_the_target_and_zero_hours_near_zero():
 
 
 def test_out_h_is_not_normalised_so_it_can_carry_magnitude():
-    """The whole point of using sigmoid rather than softmax: two samples with the *same*
-    prior shape must still be able to differ in overall level, not just in distribution.
-    A softmax would force both to sum to 1 and make this impossible."""
+    """The whole point of using sigmoid rather than softmax: two samples with the *same* prior
+    shape must still be able to differ in overall level, not just in distribution.
+
+    A softmax would force both to sum to 1 and make this impossible.
+    """
     prior_shape = torch.zeros(2, 24)
     prior_shape[:, 8:16] = 1.0 / 8  # identical, normalised prior for both samples
     bias = prior_shape_to_logit_bias(prior_shape)
@@ -104,9 +106,9 @@ def test_out_h_follows_the_prior_shape_at_init():
 
 
 def test_prior_shape_with_a_zero_hour_is_discouraged_not_forbidden():
-    """A hard 0 in prior_shape must not make that hour impossible (the old dawn/dusk
-    mask's exact failure mode) -- PRIOR_LOG_EPS keeps the bias finite, so a large enough
-    learned logit can still push probability there."""
+    """A hard 0 in prior_shape must not make that hour impossible (the old dawn/dusk mask's exact
+    failure mode) -- PRIOR_LOG_EPS keeps the bias finite, so a large enough learned logit can still
+    push probability there."""
     prior_shape = torch.zeros(1, 24)
     prior_shape[0, 12] = 1.0
 
@@ -120,8 +122,8 @@ def test_prior_shape_with_a_zero_hour_is_discouraged_not_forbidden():
 
 
 def test_forward_runs_with_multi_sample_batch():
-    """Guards the einops/broadcast plumbing around the prior_shape argument for a batch
-    size > 1 (a single-sample batch can silently hide a squeezed batch axis)."""
+    """Guards the einops/broadcast plumbing around the prior_shape argument for a batch size > 1 (a
+    single-sample batch can silently hide a squeezed batch axis)."""
     net = _make_net()
     out = net(**_random_inputs(batch_size=4))
     assert out.shape == (4, 1, 24)

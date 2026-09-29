@@ -1,36 +1,31 @@
 """Centralised weather access for both training and forecasting.
 
-Everything the model knows about the weather comes through :func:`get_weather`. There is
-one variable vocabulary (:data:`CONVERSION_DICT`), one set of unit conversions, one
-daily-aggregation rule per variable (:data:`DAILY_AGGREGATION`), and one code path that
-turns an Open-Meteo response into an ``xarray.Dataset``.
+Everything the model knows about the weather comes through :func:`get_weather`. There is one
+variable vocabulary (:data:`CONVERSION_DICT`), one set of unit conversions, one daily-aggregation
+rule per variable (:data:`DAILY_AGGREGATION`), and one code path that turns an Open-Meteo response
+into an ``xarray.Dataset``.
 
-That single-path property is the point of this module. The previous design had two
-independent implementations of "get the weather" — Google Earth Engine ERA5 CSV exports for
-training and the Open-Meteo forecast API for serving — and nothing compared them. Three
-separate defects (wind speeds inflated 3.6x, a scrambled wind-direction convention, and
-daily aggregation meaning three different things depending on the location) were all
-instances of the same structural problem. See DEVELOPMENT.md section 5.2.
+That single-path property is the point of this module. The previous design had two independent
+implementations of "get the weather" — Google Earth Engine ERA5 CSV exports for training and the
+Open-Meteo forecast API for serving — and nothing compared them. Three separate defects (wind
+speeds inflated 3.6x, a scrambled wind-direction convention, and daily aggregation meaning three
+different things depending on the location) were all instances of the same structural problem. See
+DEVELOPMENT.md section 5.2.
 
 Three sources are available, all speaking the same vocabulary:
 
-``"cache"``
-    A local Parquet store built by ``scripts/build_weather_cache.py``. This is what
-    training reads. No network access, so sweeps and repeated runs are fast and
-    reproducible.
-``"archive"``
-    The Open-Meteo ERA5 archive API. Used to build the cache; not called during training.
-``"forecast"``
-    The Open-Meteo forecast API. Used by the daily prediction job.
+``"cache"``     A local Parquet store built by ``scripts/build_weather_cache.py``. This is what
+training reads. No network access, so sweeps and repeated runs are fast and     reproducible.
+``"archive"``     The Open-Meteo ERA5 archive API. Used to build the cache; not called during
+training. ``"forecast"``     The Open-Meteo forecast API. Used by the daily prediction job.
 
-A note on what unification does and does not buy us. It removes the unit, naming and
-aggregation mismatches, and it removes a real elevation bias: Open-Meteo corrects
-temperature and pressure to the requested point's DEM elevation (417 m at Defile), while
-the GEE export returned the raw ERA5 cell (roughly 750 m), so the old training data sat
-about 1.8 K and 3151 Pa away from what the forecast path serves. Both Open-Meteo endpoints
-report the same elevation, so that bias is gone by construction. What unification does
-*not* fix is that ERA5 is a reanalysis and a five-day forecast is not — that distribution
-shift is a separate problem (DEVELOPMENT.md section 5.2).
+A note on what unification does and does not buy us. It removes the unit, naming and aggregation
+mismatches, and it removes a real elevation bias: Open-Meteo corrects temperature and pressure to
+the requested point's DEM elevation (417 m at Defile), while the GEE export returned the raw ERA5
+cell (roughly 750 m), so the old training data sat about 1.8 K and 3151 Pa away from what the
+forecast path serves. Both Open-Meteo endpoints report the same elevation, so that bias is gone by
+construction. What unification does *not* fix is that ERA5 is a reanalysis and a five-day forecast
+is not — that distribution shift is a separate problem (DEVELOPMENT.md section 5.2).
 """
 
 import warnings
@@ -154,23 +149,19 @@ CONVERSION_DICT = {
     # 10 m/s wind from due north (theta=0) gives u=0, v=-10.
     "u_component_of_wind_10m": {
         "var": ["wind_speed_10m", "wind_direction_10m"],
-        "conv": lambda df: -df["wind_speed_10m"]
-        * np.sin(np.radians(df["wind_direction_10m"])),
+        "conv": lambda df: -df["wind_speed_10m"] * np.sin(np.radians(df["wind_direction_10m"])),
     },
     "v_component_of_wind_10m": {
         "var": ["wind_speed_10m", "wind_direction_10m"],
-        "conv": lambda df: -df["wind_speed_10m"]
-        * np.cos(np.radians(df["wind_direction_10m"])),
+        "conv": lambda df: -df["wind_speed_10m"] * np.cos(np.radians(df["wind_direction_10m"])),
     },
     "u_component_of_wind_100m": {
         "var": ["wind_speed_100m", "wind_direction_100m"],
-        "conv": lambda df: -df["wind_speed_100m"]
-        * np.sin(np.radians(df["wind_direction_100m"])),
+        "conv": lambda df: -df["wind_speed_100m"] * np.sin(np.radians(df["wind_direction_100m"])),
     },
     "v_component_of_wind_100m": {
         "var": ["wind_speed_100m", "wind_direction_100m"],
-        "conv": lambda df: -df["wind_speed_100m"]
-        * np.cos(np.radians(df["wind_direction_100m"])),
+        "conv": lambda df: -df["wind_speed_100m"] * np.cos(np.radians(df["wind_direction_100m"])),
     },
     "instantaneous_10m_wind_gust": {
         "var": ["wind_gusts_10m"],
@@ -243,9 +234,7 @@ def _check_variables(variables, source):
         )
 
     if source in ("cache", "archive"):
-        unavailable = [
-            v for v in variables if not CONVERSION_DICT[v].get("archive", True)
-        ]
+        unavailable = [v for v in variables if not CONVERSION_DICT[v].get("archive", True)]
         if unavailable:
             raise ValueError(
                 f"Variable(s) {', '.join(unavailable)} are not available in the ERA5 "
@@ -253,9 +242,7 @@ def _check_variables(variables, source):
                 f"them for training would fill the feature with NaN."
             )
 
-    openmeteo_variables = sorted(
-        {om for v in variables for om in CONVERSION_DICT[v]["var"]}
-    )
+    openmeteo_variables = sorted({om for v in variables for om in CONVERSION_DICT[v]["var"]})
     return variables, openmeteo_variables
 
 
@@ -279,9 +266,9 @@ def _request_params(openmeteo_variables):
 class _CachedTimeoutSession(requests_cache.CachedSession):
     """A `CachedSession` that applies a default timeout, like `retry_requests.TSession`.
 
-    `retry_requests.retry()` only supplies a timeout when it creates the session itself; a
-    session passed in keeps `requests`' default of waiting forever. This makes the timeout
-    explicit on the cached path too.
+    `retry_requests.retry()` only supplies a timeout when it creates the session itself; a session
+    passed in keeps `requests`' default of waiting forever. This makes the timeout explicit on the
+    cached path too.
     """
 
     def __init__(self, *args, timeout, **kwargs):
@@ -296,12 +283,12 @@ class _CachedTimeoutSession(requests_cache.CachedSession):
 def _client(use_http_cache, timeout):
     """Open-Meteo client with retries, a timeout, and optionally an on-disk HTTP cache.
 
-    The HTTP cache is useful for the forecast path (the daily job and repeated dev runs hit
-    the same URL) but counter-productive for bulk archive fetches, where responses are tens
-    of megabytes each and are only ever read once.
+    The HTTP cache is useful for the forecast path (the daily job and repeated dev runs hit the
+    same URL) but counter-productive for bulk archive fetches, where responses are tens of
+    megabytes each and are only ever read once.
 
-    `timeout` is worth stating explicitly: `retry_requests` defaults to 5 seconds, which is
-    fine for a forecast request and far too short for a multi-year archive request.
+    `timeout` is worth stating explicitly: `retry_requests` defaults to 5 seconds, which is fine
+    for a forecast request and far too short for a multi-year archive request.
     """
     # The session has to be built here rather than left to `retry()`: `retry()` forwards
     # its extra keyword arguments to `urllib3.Retry`, and would otherwise fall back to
@@ -362,28 +349,23 @@ def _add_sun_position(df, location):
 
 
 def night_mask_by_doy_hour(threshold_deg=-6.0, location="Defile", reference_year=2001):
-    """`(366, 24)` bool array: True where the sun is below `threshold_deg` altitude (civil
-    twilight by default) at that UTC hour of that day-of-year, else False.
+    """`(366, 24)` bool array: True where the sun is below `threshold_deg` altitude (civil twilight
+    by default) at that UTC hour of that day-of-year, else False.
 
-    Deterministic and astronomically exact -- needs no observed data, unlike a statistical
-    fit over hours with very little of it. Used to zero out `Phenology.hourly_shape`'s
-    deep-night hours (`src/phenology.py`) directly, rather than asking the day-of-year x
-    hour GAM fit to cover territory it has ~no real observations for (`DEVELOPMENT.md`:
-    across every hourly-resolution dawn/dusk survey row in the dataset, the 11 modelled
-    raptor species account for only 2 individuals total). Day-of-year/hour resolution is
-    enough for this; sub-day drift between `reference_year` and a real observation's year
-    is negligible for a threshold this coarse.
+    Deterministic and astronomically exact -- needs no observed data, unlike a statistical fit over
+    hours with very little of it. Used to zero out `Phenology.hourly_shape`'s deep-night hours
+    (`src/phenology.py`) directly, rather than asking the day-of-year x hour GAM fit to cover
+    territory it has ~no real observations for (`DEVELOPMENT.md`: across every hourly-resolution
+    dawn/dusk survey row in the dataset, the 11 modelled raptor species account for only 2
+    individuals total). Day-of-year/hour resolution is enough for this; sub-day drift between
+    `reference_year` and a real observation's year is negligible for a threshold this coarse.
     """
     lat, lon = get_lat_lon(location)
     base = pd.Timestamp(f"{reference_year}-01-01")
     doys = np.arange(1, 367)
     hours = np.arange(24)
     timestamps = pd.DatetimeIndex(
-        [
-            base + pd.Timedelta(days=int(d) - 1, hours=int(h))
-            for d in doys
-            for h in hours
-        ]
+        [base + pd.Timedelta(days=int(d) - 1, hours=int(h)) for d in doys for h in hours]
     )
     position = get_position(timestamps, lon[0], lat[0])
     altitude_deg = np.degrees(np.asarray(position["altitude"], dtype="float64"))
@@ -442,9 +424,7 @@ def fetch_archive(locations, variables, start_date, end_date, add_sun=False):
         url=ARCHIVE_URL, params=params
     )
 
-    df = _responses_to_frame(
-        responses, locations, variables, openmeteo_variables, add_sun
-    )
+    df = _responses_to_frame(responses, locations, variables, openmeteo_variables, add_sun)
     return _to_hourly_dataset(df)
 
 
@@ -489,9 +469,7 @@ def fetch_forecast(locations, variables, lag_day=0, forecast_day=0, add_sun=Fals
         url=FORECAST_URL, params=params
     )
 
-    df = _responses_to_frame(
-        responses, locations, variables, openmeteo_variables, add_sun
-    )
+    df = _responses_to_frame(responses, locations, variables, openmeteo_variables, add_sun)
     return _to_hourly_dataset(df)
 
 
@@ -619,9 +597,7 @@ def to_daily(dataset, lag_day):
     # calendar first makes position and calendar day equivalent, and turns the gaps into
     # NaN that the `dropna` below removes. Daily data is small, so this is cheap.
     daily = daily.reindex(
-        date=pd.date_range(
-            daily.date.min().values, daily.date.max().values, freq="D"
-        )
+        date=pd.date_range(daily.date.min().values, daily.date.max().values, freq="D")
     )
 
     daily = daily.assign_coords(lag=[0])
@@ -710,16 +686,12 @@ def get_weather(
         hourly = load_cache(cache_dir, locations, variables, years, read_doy, add_sun)
     elif source == "archive":
         if start_date is None or end_date is None:
-            raise ValueError(
-                "start_date and end_date are required when source='archive'."
-            )
+            raise ValueError("start_date and end_date are required when source='archive'.")
         hourly = fetch_archive(locations, variables, start_date, end_date, add_sun)
     elif source == "forecast":
         hourly = fetch_forecast(locations, variables, lag_day, forecast_day, add_sun)
     else:
-        raise ValueError(
-            f"source must be 'cache', 'archive' or 'forecast', got {source!r}"
-        )
+        raise ValueError(f"source must be 'cache', 'archive' or 'forecast', got {source!r}")
 
     if resolution == "daily":
         daily = to_daily(hourly, lag_day)

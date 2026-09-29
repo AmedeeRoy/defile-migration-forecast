@@ -70,8 +70,7 @@ class TweedieLoss:
     p: float = 1.5
 
     def forward(self, y_pred, y, mask):
-        """
-        Compute the Tweedie loss.
+        """Compute the Tweedie loss.
 
         Args:
             y_pred (torch.Tensor): Predicted values with shape [batch_size, channels, time_steps].
@@ -93,9 +92,7 @@ class TweedieLoss:
             - Higher values of p increase the penalty for larger prediction errors
         """
         # Compute expected average hourly count during the survey period
-        y_masked = applyMask(
-            y_pred[:, 0, :], mask, return_hourly=True
-        )  # Average hourly count
+        y_masked = applyMask(y_pred[:, 0, :], mask, return_hourly=True)  # Average hourly count
 
         epsilon = 1e-8  # Avoid division errors and numerical instability
 
@@ -132,8 +129,7 @@ class ProbaRMSE:
     alpha: float = 1.0
 
     def forward(self, y_pred, y, mask):
-        """
-        Compute the masked RMSE loss.
+        """Compute the masked RMSE loss.
 
         Args:
             y_pred (torch.Tensor): Predicted values with shape [batch_size, 1, time_steps],

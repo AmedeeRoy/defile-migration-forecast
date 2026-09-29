@@ -60,11 +60,10 @@ def era_of(year: "int | np.ndarray") -> "str | np.ndarray":
 def year_period(year: "int | np.ndarray") -> "int | np.ndarray":
     """Map a year (or array of years) to its era's representative pseudo-year (`PERIOD_YEARS`).
 
-    Same boundaries as `era_of`, just encoded as a numeric placeholder year instead of a
-    string label -- this is what feeds `DefileDataModule`'s `year_used` column when
-    `year_used="period"`, so the model sees which era a sample is from without seeing the
-    specific year (which it never observed during those decades for most of the season
-    at hourly resolution anyway).
+    Same boundaries as `era_of`, just encoded as a numeric placeholder year instead of a string
+    label -- this is what feeds `DefileDataModule`'s `year_used` column when `year_used="period"`,
+    so the model sees which era a sample is from without seeing the specific year (which it never
+    observed during those decades for most of the season at hourly resolution anyway).
     """
     lo, hi = ERA_EDGES
     return np.where(
@@ -116,11 +115,11 @@ def _bias(obs: np.ndarray, pred: np.ndarray) -> float:
 def contingency(obs_event: np.ndarray, pred_event: np.ndarray) -> Dict[str, float]:
     """Full 2x2 contingency table plus CSI, POD and FAR.
 
-    CSI (critical success index, `H / (H + M + F)`) is the headline: it ignores correct
-    rejections, which dominate for a species whose survey rows are 61-95% zero and would
-    make accuracy-style scores look excellent for a model that never predicts an event.
-    The raw counts are kept because CSI alone cannot distinguish "misses everything" from
-    "cries wolf constantly", and that is exactly what you need to know when it looks wrong.
+    CSI (critical success index, `H / (H + M + F)`) is the headline: it ignores correct rejections,
+    which dominate for a species whose survey rows are 61-95% zero and would make accuracy-style
+    scores look excellent for a model that never predicts an event. The raw counts are kept because
+    CSI alone cannot distinguish "misses everything" from "cries wolf constantly", and that is
+    exactly what you need to know when it looks wrong.
     """
     hits = float(np.sum(obs_event & pred_event))
     misses = float(np.sum(obs_event & ~pred_event))
@@ -142,9 +141,9 @@ def contingency(obs_event: np.ndarray, pred_event: np.ndarray) -> Dict[str, floa
 def earth_movers_distance(obs_profile: np.ndarray, pred_profile: np.ndarray) -> float:
     """1-D Wasserstein distance between two 24-hour profiles, in hours.
 
-    Both profiles are normalised to sum to 1 first, so this measures *shape* disagreement
-    only, independent of the day's magnitude. On a regular unit grid the Wasserstein
-    distance reduces to the L1 distance between the two CDFs, so no optimisation is needed.
+    Both profiles are normalised to sum to 1 first, so this measures *shape* disagreement only,
+    independent of the day's magnitude. On a regular unit grid the Wasserstein distance reduces to
+    the L1 distance between the two CDFs, so no optimisation is needed.
     """
     o, p = np.asarray(obs_profile, float), np.asarray(pred_profile, float)
     if o.sum() <= 0 or p.sum() <= 0:
@@ -155,8 +154,8 @@ def earth_movers_distance(obs_profile: np.ndarray, pred_profile: np.ndarray) -> 
 def passage_dates(doy: np.ndarray, rate: np.ndarray, levels=(10, 50, 90)) -> Dict[int, float]:
     """Day-of-year at which each cumulative-passage level is reached.
 
-    Interpolated between days rather than snapped to one, so a half-day phenology shift is
-    visible instead of being quantised away.
+    Interpolated between days rather than snapped to one, so a half-day phenology shift is visible
+    instead of being quantised away.
     """
     order = np.argsort(doy)
     d, r = np.asarray(doy, float)[order], np.asarray(rate, float)[order]
@@ -181,9 +180,9 @@ def build_frame(
     """Assemble the tidy per-survey-row frame every metric below is computed from.
 
     :param count: The split's count rows, in dataloader order (`DefileDataset.count`).
-    :param mask: `(24, n_rows)` fraction of each hour covered by each survey row, in the
-        same order (`DefileDataset.mask`).
-    :param pred_hourly: `(n_rows, 24)` predicted log1p(birds/hr) per hour.
+    :param mask:`(24, n_rows)` fraction of each hour covered by each survey row, in the same order
+        (`DefileDataset.mask`).
+    :param pred_hourly:`(n_rows, 24)` predicted log1p(birds/hr) per hour.
     :param phenology: Optional baseline; adds a `phen` column.
     :return: One row per survey period, with observed and predicted rates in birds/hr.
     """
@@ -268,15 +267,15 @@ def hourly_profiles(
 ) -> pd.DataFrame:
     """Reconstruct true hour-by-hour profiles for the dates that actually have them.
 
-    A date recorded as several ~1-hour survey rows *is* an hour-by-hour count. Those dates
-    (common since 2014, near-universal since 2021) are the only ones where intra-day shape
-    can be scored at all; longer single-block surveys carry no shape information and are
-    excluded rather than compared against a flat line.
+    A date recorded as several ~1-hour survey rows *is* an hour-by-hour count. Those dates (common
+    since 2014, near-universal since 2021) are the only ones where intra-day shape can be scored at
+    all; longer single-block surveys carry no shape information and are excluded rather than
+    compared against a flat line.
 
     :param min_rows: Minimum number of survey rows on a date for it to qualify.
     :param max_span: Maximum hours covered by any one of those rows.
-    :return: One row per qualifying date, carrying the 24-element observed and predicted
-        profiles and the hours that were actually covered.
+    :return: One row per qualifying date, carrying the 24-element observed and predicted profiles
+        and the hours that were actually covered.
     """
     mask = np.asarray(mask, dtype=float)
     pred_count = np.expm1(np.asarray(pred_hourly, dtype=float))  # (n, 24) birds/hr
@@ -448,8 +447,8 @@ def season_level(daily: pd.DataFrame) -> Tuple[Dict[str, float], pd.DataFrame]:
 class MetricReport:
     """Everything computed for one species in one run.
 
-    `scalars` is the flat form for Lightning/CSV logging; the frames are what the PDF
-    report renders and what a Phase 2 experiment comparison would read back.
+    `scalars` is the flat form for Lightning/CSV logging; the frames are what the PDF report
+    renders and what a Phase 2 experiment comparison would read back.
     """
 
     species: str

@@ -37,15 +37,15 @@ RATIO_HOURS: np.ndarray = np.arange(6, 18)
 class Phenology:
     """Day-of-year phenology for one species, the primary naive baseline.
 
-    Loaded from `data/count/species_doy_statistics.json`, which holds, per day of year, a
-    7-day-smoothed distribution of the *daily* count rate (birds/hr) plus a fitted hourly
-    activity `ratio`.
+    Loaded from `data/count/species_doy_statistics.json`, which holds, per day of year, a 7-day-
+    smoothed distribution of the *daily* count rate (birds/hr) plus a fitted hourly activity
+    `ratio`.
 
-    Known caveat, carried from DEVELOPMENT.md: the file has no `year` field, so it is
-    pooled over all years including whichever ones land in the test split. That is a mild
-    leakage risk on the *baseline* side -- it can only make the baseline look better and
-    the model's skill score worse, so it is conservative, not flattering. Worth rebuilding
-    per-split if a skill score ever looks suspiciously good.
+    Known caveat, carried from DEVELOPMENT.md: the file has no `year` field, so it is pooled over
+    all years including whichever ones land in the test split. That is a mild leakage risk on the
+    *baseline* side -- it can only make the baseline look better and the model's skill score worse,
+    so it is conservative, not flattering. Worth rebuilding per-split if a skill score ever looks
+    suspiciously good.
     """
 
     species: str
@@ -101,16 +101,15 @@ class Phenology:
     def hourly_rate(self, doy: Sequence[int]) -> np.ndarray:
         """Phenological hourly profile, shape `(len(doy), 24)`, in birds/hr.
 
-        The daily rate scaled by the fitted hour-of-day `ratio`. Hours outside
-        `RATIO_HOURS` were never fitted and are returned as zero.
+        The daily rate scaled by the fitted hour-of-day `ratio`. Hours outside `RATIO_HOURS` were
+        never fitted and are returned as zero.
 
         `ratio` and `doy`/`mean` are aligned index-for-index (`scripts/build_phenology_stats.py`
-        builds both over the same inclusive doy range). Positions are still clipped
-        separately against `ratio`'s own length as defence-in-depth: a `species_doy_statistics.json`
-        built by something other than that script -- or an older copy of it -- is not
-        guaranteed to have fixed the historical one-day-short `ratio` array this once had,
-        and a doy landing on a missing last day should get the nearest available fit
-        rather than an IndexError.
+        builds both over the same inclusive doy range). Positions are still clipped separately
+        against `ratio`'s own length as defence-in-depth: a `species_doy_statistics.json` built by
+        something other than that script -- or an older copy of it -- is not guaranteed to have
+        fixed the historical one-day-short `ratio` array this once had, and a doy landing on a
+        missing last day should get the nearest available fit rather than an IndexError.
         """
         pos = self._positions(doy)
         ratio_pos = np.clip(pos, 0, len(self.ratio) - 1)
@@ -119,8 +118,8 @@ class Phenology:
         return profile
 
     def hourly_shape(self, doy: Sequence[int]) -> np.ndarray:
-        """The day's diurnal *shape* -- `hourly_rate`, normalised to sum to 1 across the
-        24 hours -- with every astronomically-night hour forced to exactly 0 first.
+        """The day's diurnal *shape* -- `hourly_rate`, normalised to sum to 1 across the 24 hours
+        -- with every astronomically-night hour forced to exactly 0 first.
 
         Deep night is forced by `night_mask_by_doy_hour` (`src/data/weather.py`), not
         fitted: `ratio`'s GAM already only ever sees real hourly-bin data (`RATIO_HOURS`,

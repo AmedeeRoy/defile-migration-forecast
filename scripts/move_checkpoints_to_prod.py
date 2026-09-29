@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script to move the latest trained model checkpoints to production folder.
+"""Script to move the latest trained model checkpoints to production folder.
 
 This script automatically finds the most recent training runs and moves the best.ckpt
 files to the production models folder while maintaining the correct folder structure.
@@ -23,11 +22,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-def find_latest_run_or_multirun(
-    logs_dir: Path, run_type: str = "both"
-) -> Optional[Path]:
-    """
-    Find the most recent training run or multirun directory.
+def find_latest_run_or_multirun(logs_dir: Path, run_type: str = "both") -> Optional[Path]:
+    """Find the most recent training run or multirun directory.
 
     Args:
         logs_dir: Path to the logs/train directory
@@ -59,9 +55,7 @@ def find_latest_run_or_multirun(
         for multirun_dir in multiruns_dir.iterdir():
             if multirun_dir.is_dir() and multirun_dir.name.startswith("20"):
                 try:
-                    timestamp = datetime.strptime(
-                        multirun_dir.name, "%Y-%m-%d_%H-%M-%S"
-                    )
+                    timestamp = datetime.strptime(multirun_dir.name, "%Y-%m-%d_%H-%M-%S")
                     if latest_timestamp is None or timestamp > latest_timestamp:
                         latest_timestamp = timestamp
                         latest_path = multirun_dir
@@ -72,8 +66,7 @@ def find_latest_run_or_multirun(
 
 
 def find_species_checkpoints(latest_run: Path) -> Dict[str, Path]:
-    """
-    Find all species checkpoint directories in the latest run.
+    """Find all species checkpoint directories in the latest run.
 
     Args:
         latest_run: Path to the latest run or multirun directory
@@ -107,8 +100,7 @@ def move_checkpoint_to_prod(
     dry_run: bool = False,
     force: bool = False,
 ) -> bool:
-    """
-    Move a species checkpoint to the production folder.
+    """Move a species checkpoint to the production folder.
 
     Args:
         species_name: Name of the species

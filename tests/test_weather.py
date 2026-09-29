@@ -1,13 +1,12 @@
 """Tests for the centralised weather module.
 
-The offline tests cover the conventions and aggregation rules that were previously wrong in
-ways no metric would have surfaced: the wind-direction convention, the unit conversions, and
-what "daily" means. The networked tests, marked `network`, check the train/serve contract
-against the live API and are the durable answer to "how do we know training and forecast
-features stay comparable" (DEVELOPMENT.md 5.2).
+The offline tests cover the conventions and aggregation rules that were previously wrong in ways no
+metric would have surfaced: the wind-direction convention, the unit conversions, and what "daily"
+means. The networked tests, marked `network`, check the train/serve contract against the live API
+and are the durable answer to "how do we know training and forecast features stay comparable"
+(DEVELOPMENT.md 5.2).
 
-    pytest tests/                    # offline only
-    pytest tests/ -m network         # hit the API too
+pytest tests/                    # offline only pytest tests/ -m network         # hit the API too
 """
 
 import numpy as np
@@ -67,9 +66,7 @@ def test_wind_components_follow_meteorological_convention(direction, expected_u,
     is one of the strongest drivers of raptor passage, so this mattered a great deal and was
     invisible in aggregate metrics.
     """
-    df = pd.DataFrame(
-        {"wind_speed_10m": [10.0], "wind_direction_10m": [float(direction)]}
-    )
+    df = pd.DataFrame({"wind_speed_10m": [10.0], "wind_direction_10m": [float(direction)]})
 
     u = CONVERSION_DICT["u_component_of_wind_10m"]["conv"](df).iloc[0]
     v = CONVERSION_DICT["v_component_of_wind_10m"]["conv"](df).iloc[0]
@@ -125,9 +122,9 @@ def test_unit_conversions_reach_era5_units():
 def test_request_pins_every_unit_the_conversions_assume():
     """Open-Meteo's wind default is km/h while ERA5 is m/s.
 
-    Leaving `wind_speed_unit` unset inflated all five wind features by 3.6 at forecast time,
-    which after normalisation put them far outside the trained range. Every unit the
-    conversions depend on is therefore pinned explicitly rather than left to a default.
+    Leaving `wind_speed_unit` unset inflated all five wind features by 3.6 at forecast time, which
+    after normalisation put them far outside the trained range. Every unit the conversions depend
+    on is therefore pinned explicitly rather than left to a default.
     """
     params = _request_params(["temperature_2m", "wind_speed_10m"])
 
@@ -146,8 +143,8 @@ def test_accumulations_sum_and_state_variables_average():
     """Precipitation and radiation are hourly accumulations; the rest are state variables.
 
     Averaging an accumulation understates a daily total by a factor of 24. The retired code
-    averaged everything, and separately fed daily *sums* for four of the seven daily
-    locations in training while computing 24-hour means at forecast time.
+    averaged everything, and separately fed daily *sums* for four of the seven daily locations in
+    training while computing 24-hour means at forecast time.
     """
     dates = pd.date_range("2024-09-01", "2024-09-10")
     ds = hourly_dataset(
@@ -166,19 +163,19 @@ def test_accumulations_sum_and_state_variables_average():
     assert DEFAULT_DAILY_AGGREGATION == "mean"
 
     assert float(daily.total_precipitation.isel(date=0, lag=0)) == pytest.approx(0.024)
-    assert float(
-        daily.surface_solar_radiation_downwards.isel(date=0, lag=0)
-    ) == pytest.approx(24000.0)
+    assert float(daily.surface_solar_radiation_downwards.isel(date=0, lag=0)) == pytest.approx(
+        24000.0
+    )
     assert float(daily.temperature_2m.isel(date=0, lag=0)) == pytest.approx(290.0)
 
 
 def test_lags_never_reach_across_a_gap_in_the_date_axis():
     """`xarray.shift` moves by position, not by calendar day.
 
-    Filtering to the migration season leaves a gap between one season's end and the next
-    season's start. Shifting positionally across that gap would give the first days of a
-    season a "yesterday" from the previous November. Dates without a full lag window must be
-    dropped instead.
+    Filtering to the migration season leaves a gap between one season's end and the next season's
+    start. Shifting positionally across that gap would give the first days of a season a
+    "yesterday" from the previous November. Dates without a full lag window must be dropped
+    instead.
     """
     dates = list(pd.date_range("2024-09-01", "2024-09-05")) + list(
         pd.date_range("2024-09-20", "2024-09-25")
@@ -215,9 +212,7 @@ def test_daily_requires_at_least_one_lag():
     ds = hourly_dataset(pd.date_range("2024-09-01", "2024-09-05"), {"temperature_2m": 1.0})
 
     with pytest.raises(ValueError, match="lag_day >= 1"):
-        get_weather(
-            "Defile", ["temperature_2m"], source="cache", resolution="daily", lag_day=0
-        )
+        get_weather("Defile", ["temperature_2m"], source="cache", resolution="daily", lag_day=0)
 
     # to_daily itself is happy with lag_day=1, which is the no-lag case.
     assert to_daily(ds, lag_day=1).sizes["lag"] == 1
@@ -239,9 +234,7 @@ def test_forecast_only_variables_are_refused_for_training():
     with pytest.raises(ValueError, match="not available in the ERA5 archive"):
         _check_variables(["convective_available_potential_energy"], "cache")
 
-    names, om_names = _check_variables(
-        ["convective_available_potential_energy"], "forecast"
-    )
+    names, om_names = _check_variables(["convective_available_potential_energy"], "forecast")
     assert om_names == ["cape"]
 
 
@@ -380,9 +373,7 @@ def compare_paths(location, variables):
         stats[var] = dict(
             bias=float(np.mean(f - a)),
             std_ratio=float(f.std() / a.std()) if a.std() > 0 else float("nan"),
-            corr=(
-                float(np.corrcoef(a, f)[0, 1]) if a.std() > 0 and f.std() > 0 else 1.0
-            ),
+            corr=(float(np.corrcoef(a, f)[0, 1]) if a.std() > 0 and f.std() > 0 else 1.0),
         )
     return stats
 
@@ -391,11 +382,11 @@ def compare_paths(location, variables):
 def test_archive_and_forecast_paths_agree_on_scale():
     """The train/serve parity check.
 
-    Builds every feature for the same recent days through both paths and compares mean offset
-    and spread. A renamed variable, a changed Open-Meteo default or a unit slip shows up here
-    immediately; this is what would have caught the historical wind-unit bug (km/h read as
-    m/s, a factor of 3.6) and the historical daily-aggregation bug (daily sums compared
-    against 24-hour means, a factor of 24).
+    Builds every feature for the same recent days through both paths and compares mean offset and
+    spread. A renamed variable, a changed Open-Meteo default or a unit slip shows up here
+    immediately; this is what would have caught the historical wind-unit bug (km/h read as m/s, a
+    factor of 3.6) and the historical daily-aggregation bug (daily sums compared against 24-hour
+    means, a factor of 24).
     """
     stats = compare_paths("Defile", PARITY_VARIABLES)
 
@@ -417,8 +408,8 @@ def test_archive_and_forecast_paths_agree_on_scale():
 def test_synoptic_fields_track_each_other():
     """Temperature, pressure and radiation are set by the large-scale flow.
 
-    Both products must follow them closely everywhere. If one of these correlations collapses,
-    a variable has been mismapped somewhere in `CONVERSION_DICT`.
+    Both products must follow them closely everywhere. If one of these correlations collapses, a
+    variable has been mismapped somewhere in `CONVERSION_DICT`.
     """
     stats = compare_paths("Defile", list(SYNOPTIC_MIN_CORR))
 
@@ -434,10 +425,9 @@ def test_synoptic_fields_track_each_other():
 def test_wind_convention_holds_against_the_live_api_over_flat_terrain():
     """Guards the wind convention end to end, at a site where terrain does not confound it.
 
-    The offline test pins the formulas; this one checks that the components the two live
-    endpoints produce actually agree, which they only can if both are being decoded with the
-    same convention. A swapped or sign-flipped conversion on one path would send these
-    correlations to about zero.
+    The offline test pins the formulas; this one checks that the components the two live endpoints
+    produce actually agree, which they only can if both are being decoded with the same convention.
+    A swapped or sign-flipped conversion on one path would send these correlations to about zero.
     """
     wind = [
         "u_component_of_wind_10m",

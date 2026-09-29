@@ -171,9 +171,9 @@ class PhenologyBuilder:
     def _hourly_ratio_samples(self, species: str) -> pd.DataFrame:
         """Rows usable for fitting the hour-of-day ratio: (doy, hour, ratio) triples.
 
-        Only dates split into several periods carry hour-of-day information at all -- a
-        date recorded as one dawn-to-dusk block constrains the day's *total*, not its
-        shape, so it cannot supply a ratio and would only add noise if it did.
+        Only dates split into several periods carry hour-of-day information at all -- a date
+        recorded as one dawn-to-dusk block constrains the day's *total*, not its shape, so it
+        cannot supply a ratio and would only add noise if it did.
         """
         count = self._count_species(species)
         daily = self._daily_count(species)[["date", "count_rate"]]
@@ -186,11 +186,15 @@ class PhenologyBuilder:
         return df.loc[df["n_periods"] > 1, ["doy", "hour", "ratio"]].dropna()
 
     @staticmethod
-    def _fit_gam_with_lam_ladder(term, X, y, species: str, lam_ladder=GAM_LAM_LADDER) -> PoissonGAM:
-        """Fits `term` against `(X, y)`, retrying with progressively stronger
-        regularization from `lam_ladder` if PIRLS diverges -- see `GAM_LAM_LADDER`'s
-        module-level comment for why some species need this at all. Shared between the
-        additive and tensor-interaction fits below rather than duplicated per fit.
+    def _fit_gam_with_lam_ladder(
+        term, X, y, species: str, lam_ladder=GAM_LAM_LADDER
+    ) -> PoissonGAM:
+        """Fits `term` against `(X, y)`, retrying with progressively stronger regularization from
+        `lam_ladder` if PIRLS diverges -- see `GAM_LAM_LADDER`'s module-level comment for why some
+        species need this at all.
+
+        Shared between the additive and tensor-interaction fits below rather than duplicated per
+        fit.
         """
         for lam in lam_ladder:
             try:
@@ -242,7 +246,11 @@ class PhenologyBuilder:
         samples = self._hourly_ratio_samples(species)
         X, y = samples[["doy", "hour"]].to_numpy(), samples["ratio"].to_numpy()
 
-        term = te(0, 1, n_splines=[k0, k1]) if interaction else s(0, n_splines=k0) + s(1, n_splines=k1)
+        term = (
+            te(0, 1, n_splines=[k0, k1])
+            if interaction
+            else s(0, n_splines=k0) + s(1, n_splines=k1)
+        )
         gam = self._fit_gam_with_lam_ladder(term, X, y, species)
 
         doy_grid = np.arange(self.doy[0], self.doy[1] + 1)
@@ -298,9 +306,9 @@ class PhenologyBuilder:
     def _smooth(stats: pd.DataFrame, window: int) -> pd.DataFrame:
         """Rolling mean over doy for every statistic except the raw observation count.
 
-        `quantiles` is a column of arrays rather than a scalar, so it is smoothed
-        separately by stacking into a 2-D array, rolling, and unstacking back -- pandas'
-        own `.rolling().mean()` does not average object-dtype columns elementwise.
+        `quantiles` is a column of arrays rather than a scalar, so it is smoothed separately by
+        stacking into a 2-D array, rolling, and unstacking back -- pandas' own `.rolling().mean()`
+        does not average object-dtype columns elementwise.
         """
         stats = stats.sort_values("doy").reset_index(drop=True)
         scalar_cols = ["min", "max", "mean"]
@@ -324,10 +332,10 @@ class PhenologyBuilder:
 
 
 def _phenology_from_record(record: dict) -> Phenology:
-    """Builds a `Phenology` directly from a freshly-fitted `build()` record, without a
-    round trip through the JSON file -- so `--plot-dir` can render a species' diagnostic
-    page from the same in-memory fit that's about to be written (or, on `--dry-run`,
-    the fit that would have been written)."""
+    """Builds a `Phenology` directly from a freshly-fitted `build()` record, without a round trip
+    through the JSON file -- so `--plot-dir` can render a species' diagnostic page from the same
+    in-memory fit that's about to be written (or, on `--dry-run`, the fit that would have been
+    written)."""
     return Phenology(
         species=record["species"],
         doy=np.asarray(record["doy"]),
@@ -339,9 +347,9 @@ def _phenology_from_record(record: dict) -> Phenology:
 
 
 def _draw_shape_row(fig: Figure, row: int, n_rows: int, phenology: Phenology, title: str) -> None:
-    """One row of panels (heatmap + representative-day lines) for `phenology`, at grid
-    row `row` of `n_rows` -- shared between the additive and tensor-interaction fits so
-    they render identically and are easy to compare directly, page over page."""
+    """One row of panels (heatmap + representative-day lines) for `phenology`, at grid row `row` of
+    `n_rows` -- shared between the additive and tensor-interaction fits so they render identically
+    and are easy to compare directly, page over page."""
     doy = phenology.doy
     shape = phenology.hourly_shape(doy)  # (D, 24), each row sums to 1
 
@@ -363,18 +371,23 @@ def _draw_shape_row(fig: Figure, row: int, n_rows: int, phenology: Phenology, ti
     sample_doys = sorted({int(doy[0]), int(doy[len(doy) // 2]), int(doy[-1])})
     colors = ["#0072B2", "#E69F00", "#009E73"]  # matches src/plots/panels.py's palette
     for d, color in zip(sample_doys, colors):
-        ax_lines.plot(range(24), phenology.hourly_shape([d])[0], color=color, marker="o", ms=3, label=f"doy {d}")
+        ax_lines.plot(
+            range(24),
+            phenology.hourly_shape([d])[0],
+            color=color,
+            marker="o",
+            ms=3,
+            label=f"doy {d}",
+        )
     ax_lines.set_xlabel("Hour (UTC)")
     ax_lines.set_ylabel("shape")
     ax_lines.set_title(f"{title}: representative days")
     ax_lines.legend(fontsize=7)
 
 
-def draw_species_diagnostic(
-    fig: Figure, record: dict, ratio_additive: np.ndarray = None
-) -> None:
-    """One diagnostic page for `record`: does the fitted `ratio` / `hourly_shape` look
-    like a real migration day, and does night actually go to zero?
+def draw_species_diagnostic(fig: Figure, record: dict, ratio_additive: np.ndarray = None) -> None:
+    """One diagnostic page for `record`: does the fitted `ratio` / `hourly_shape` look like a real
+    migration day, and does night actually go to zero?
 
     Top row: `record["ratio"]` as fitted (the tensor-interaction `te(0, 1)`, default
     since the comparison below) -- can express real within-season shape drift, unlike
@@ -404,7 +417,8 @@ def write_diagnostic_pdf(
     -- see the module docstring for why this replaces the plot-only role of
     `notebooks/phenology_baseline.ipynb`. `ratio_additive_by_species`, if given, adds
     the additive-fit comparison row (see `draw_species_diagnostic`) -- e.g. from
-    `{r["species"]: builder.fit_hourly_ratio(r["species"], interaction=False) for r in records}`."""
+    `{r["species"]: builder.fit_hourly_ratio(r["species"], interaction=False) for r in records}`.
+    """
     ratio_additive_by_species = ratio_additive_by_species or {}
     os.makedirs(plot_dir, exist_ok=True)
     out_path = os.path.join(plot_dir, "species_doy_statistics_diagnostic.pdf")
@@ -412,9 +426,7 @@ def write_diagnostic_pdf(
         for record in records:
             has_comparison = record["species"] in ratio_additive_by_species
             fig = Figure(figsize=(11.69, 11 if has_comparison else 6), constrained_layout=True)
-            draw_species_diagnostic(
-                fig, record, ratio_additive_by_species.get(record["species"])
-            )
+            draw_species_diagnostic(fig, record, ratio_additive_by_species.get(record["species"]))
             pdf.savefig(fig)
     return out_path
 

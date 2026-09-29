@@ -6,10 +6,10 @@ defaults:
   - override /data: defile
   - override /model: unet
 
-data :
+data:
   species: "Black Kite"
   # "Milan noir"
-  
+
 model:
   optimizer:
     _target_: torch.optim.Adam

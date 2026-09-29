@@ -6,7 +6,7 @@ defaults:
   - override /data: defile
   - override /model: unet
 
-data :
+data:
   species: "Red Kite"
   # "Milan royal"
 

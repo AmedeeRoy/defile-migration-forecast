@@ -88,9 +88,9 @@ class DefileDataset(Dataset):
 
     @staticmethod
     def _materialize(ds):
-        """Stack every variable of an ERA5 xarray Dataset into one float32 array ordered
-        (variable, date, ...), so a single sample is a plain `arr[:, position]` instead of
-        an xarray `.sel(date=...)` call."""
+        """Stack every variable of an ERA5 xarray Dataset into one float32 array ordered (variable,
+        date, ...), so a single sample is a plain `arr[:, position]` instead of an xarray
+        `.sel(date=...)` call."""
         da = ds.to_array()
         rest = [d for d in da.dims if d not in ("variable", "date")]
         arr = da.transpose("variable", "date", *rest).values.astype(np.float32, copy=False)
@@ -334,12 +334,16 @@ class DefileDataModule(LightningDataModule):
         :param doy: Range (min and max) of the day of year considered in the model
         :param lag_day: The number of lag day to consider in the model. Defaults to `7`.
         :param forecast_day: Number of day ahead used for prediction
-        :param train_val_test_cum_ratio: The train, validation and test split defined as the cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
-        :param train_val_test: The type of train, validation and test split. Defaults to `"period"`.
-        :param year_used: The type of year variable used in the model. Defaults to `"none"`.  "constant" for no information of year included in the model, "none" for the exact year or "period" where only a broad category of year period is included
-        :param split_seed: Seed for the train/val/test split. The split is drawn from a
-            dedicated generator seeded with this value, so it is identical on every call
-            to `setup()` regardless of global RNG state. Defaults to `0`.
+        :param train_val_test_cum_ratio: The train, validation and test split defined as the
+            cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
+        :param train_val_test: The type of train, validation and test split. Defaults to
+            `"period"`.
+        :param year_used: The type of year variable used in the model. Defaults to `"none"`.
+            "constant" for no information of year included in the model, "none" for the exact year
+            or "period" where only a broad category of year period is included
+        :param split_seed: Seed for the train/val/test split. The split is drawn from a dedicated
+            generator seeded with this value, so it is identical on every call to `setup()`
+            regardless of global RNG state. Defaults to `0`.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -610,11 +614,10 @@ class DefileDataModule(LightningDataModule):
     def _build_dataset(self, split: str) -> DefileDataset:
         """Build the `DefileDataset` for one split of `self.count`.
 
-        Row order is preserved from `self.count`, and `self.mask` is sliced with the same
-        boolean index, so column `i` of the dataset's mask belongs to its row `i`. Every
-        consumer downstream -- the loss, `src/metrics.py`, the report -- relies on that
-        alignment plus `shuffle=False` on the val/test loaders to line predictions back up
-        with dates.
+        Row order is preserved from `self.count`, and `self.mask` is sliced with the same boolean
+        index, so column `i` of the dataset's mask belongs to its row `i`. Every consumer
+        downstream -- the loss, `src/metrics.py`, the report -- relies on that alignment plus
+        `shuffle=False` on the val/test loaders to line predictions back up with dates.
         """
         idx = (self.count["tvt"] == split).to_numpy()
         count = self.count[idx]

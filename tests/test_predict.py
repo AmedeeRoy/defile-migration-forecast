@@ -1,8 +1,8 @@
 """Tests for the season guard (DEVELOPMENT.md 4.11).
 
 Training is restricted to a day-of-year window; the daily cron runs every day of the year
-regardless. `is_in_season` is what stops the job from publishing a confident extrapolation
-for the seven months a year the model has never seen.
+regardless. `is_in_season` is what stops the job from publishing a confident extrapolation for the
+seven months a year the model has never seen.
 """
 
 from datetime import datetime, timezone

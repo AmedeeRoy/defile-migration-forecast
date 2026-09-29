@@ -94,8 +94,8 @@ def draw_counts_distribution(ax, obs, pred, phen=None) -> None:
 def draw_residuals(ax, daily: pd.DataFrame) -> None:
     """Daily prediction error against observed rate -- where the bias actually lives.
 
-    Plotted per day rather than per row so the hourly-recording era does not contribute
-    fifteen near-duplicate points for every one from the daily-totals era.
+    Plotted per day rather than per row so the hourly-recording era does not contribute fifteen
+    near-duplicate points for every one from the daily-totals era.
     """
     if daily.empty:
         return _empty(ax)
@@ -141,14 +141,13 @@ def draw_doy_year(ax, year_daily: pd.DataFrame, phenology=None, threshold=None) 
 def draw_cumulative_passage(ax, year_daily: pd.DataFrame, show_xlabel: bool = True) -> None:
     """Cumulative share of the season's passage -- the phenology view of level 4.
 
-    Normalised to 1, so a curve shifted left or right is a timing error and a curve of the
-    wrong shape is a within-season distribution error; magnitude errors, which the
-    seasonal-total ratio already reports, are deliberately divided out.
+    Normalised to 1, so a curve shifted left or right is a timing error and a curve of the wrong
+    shape is a within-season distribution error; magnitude errors, which the seasonal-total ratio
+    already reports, are deliberately divided out.
 
-    The year is already labelled on the row's left-hand panel (`draw_doy_year`), so it is
-    not repeated here as a title -- with one row per test year, a title on every row
-    collided with the `set_ylabel` below it once more than a handful of years are stacked
-    on one page.
+    The year is already labelled on the row's left-hand panel (`draw_doy_year`), so it is not
+    repeated here as a title -- with one row per test year, a title on every row collided with the
+    `set_ylabel` below it once more than a handful of years are stacked on one page.
     """
     if year_daily.empty:
         return _empty(ax)
@@ -176,8 +175,8 @@ def draw_cumulative_passage(ax, year_daily: pd.DataFrame, show_xlabel: bool = Tr
 def draw_diurnal_profile(ax, profiles: pd.DataFrame, phenology=None) -> None:
     """Mean shape of the day, observed vs predicted, over the hourly-resolution dates.
 
-    Each day is normalised to sum 1 before averaging, so a handful of huge days cannot
-    define the mean shape on their own.
+    Each day is normalised to sum 1 before averaging, so a handful of huge days cannot define the
+    mean shape on their own.
     """
     if profiles.empty:
         return _empty(ax, "no hourly-resolution dates")
@@ -301,9 +300,9 @@ def draw_sample_day(ax, date, obs_rows, masks, pred_profile, label: Optional[str
 def format_cell(value) -> str:
     """Format one table cell for print.
 
-    matplotlib's default float repr turns a year into `2.02e+03` and a row count into
-    `1.56e+03`, which is worse than useless in a report meant to be read at a glance.
-    Whole numbers print as whole numbers; everything else gets three significant digits.
+    matplotlib's default float repr turns a year into `2.02e+03` and a row count into `1.56e+03`,
+    which is worse than useless in a report meant to be read at a glance. Whole numbers print as
+    whole numbers; everything else gets three significant digits.
     """
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return ""
