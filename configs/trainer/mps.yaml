@@ -3,3 +3,10 @@ defaults:
 
 accelerator: mps
 devices: 1
+
+# torch 2.5.1 on MPS returns NaN gradients for the first hourly BatchNorm when
+# deterministic algorithms are on (default.yaml), silently killing the hourly branch:
+# MPS kernels then still produce finite outputs from the NaN weights, so train/val/test
+# look normal, but the checkpoint is NaN on CPU/CUDA (i.e. in production). Runs on MPS
+# are therefore not bit-reproducible; use trainer=cpu when a rerun must match exactly.
+deterministic: False
