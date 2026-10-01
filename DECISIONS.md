@@ -79,6 +79,34 @@ notebook drifted from the committed schema and had a one-day off-by-one in the h
 
 **Metrics are gathered across DDP ranks, and files written by rank 0 only.**
 
+**The season total ratio is pooled over years, not a mean of yearly ratios (2026-10).** The
+"season over-prediction" of Hobby, Kestrel, Sparrowhawk, Osprey and Red Kite was mostly the
+metric. All species share 8 test years (1967, 1981, 1990, 2001, 2005, 2008, 2019, 2023), and the
+three pre-1993 ones have 14–50 survey days and a handful of birds: Red Kite 1967 is 1.5 birds
+observed, 81 predicted, ratio 52. Averaging ratios let those years dominate. Pooled
+(Σ predicted / Σ observed), seed 0, BN-fixed checkpoints:
+
+| species        | mean of years | pooled | phenology pooled |
+| -------------- | ------------- | ------ | ---------------- |
+| Red Kite       | 13.6          | 1.44   | 0.97             |
+| Sparrowhawk    | 2.78          | 1.51   | 1.11             |
+| Hobby          | 2.13          | 1.29   | 1.21             |
+| Kestrel        | 1.81          | 1.28   | 1.25             |
+| Osprey         | 1.52          | 1.11   | 1.09             |
+| Common Buzzard | 1.46          | 1.23   | 1.05             |
+| Merlin         | 0.68          | 0.47   | 0.92             |
+
+The phenology baseline's own pooled ratio is reported next to it (`season_total_ratio_phen`).
+Where the two are close (Hobby, Kestrel, Osprey), the test years were below climatology, not
+something the weather model added. What is left is not concentrated on a few spike days (the
+top 5% of days hold 24–76% of the excess, 34% for Red Kite and Sparrowhawk). It is an era
+pattern: Red Kite is 2.0–3.3× over in 2001/2005/2008 and 0.5–0.7× under in 2019/2023, and
+Kestrel is 1.9–2.9× over and 0.66× under. Phenology has the same pattern, weaker (Red Kite
+1.05–1.81 and 0.53–0.62), so the model amplifies a population trend it cannot see under
+`year_used: "constant"`. A warm-season explanation was checked and rejected: across the 8
+years, the correlation between seasonal temperature anomaly and log(pred/phenology) changes
+sign from species to species.
+
 ## Training reproducibility
 
 **Training is deterministic for a given seed, config and thread count.** Changing the number

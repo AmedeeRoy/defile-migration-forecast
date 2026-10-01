@@ -401,8 +401,8 @@ def shape_level(profiles: pd.DataFrame) -> Dict[str, float]:
 def season_level(daily: pd.DataFrame) -> Tuple[Dict[str, float], pd.DataFrame]:
     """Level 4 -- median-passage-date error (days) and seasonal total ratio, per year.
 
-    Returned per year as well as aggregated: with only ~3 test years under the current
-    random-period split, a single averaged phenology number is not something to lean on.
+    Returned per year as well as aggregated: with only 8 test years (2-3 per era) under the
+    current random-period split, a single averaged phenology number is not something to lean on.
     Making this trustworthy needs leave-one-year-out or rolling-origin CV (DEVELOPMENT.md
     Phase 1), which is a change to the eval harness, not to this function.
     """
@@ -431,11 +431,24 @@ def season_level(daily: pd.DataFrame) -> Tuple[Dict[str, float], pd.DataFrame]:
     if per_year.empty:
         return {}, per_year
 
-    return {
+    # The total ratio is pooled over years (sum of predicted / sum of observed), not the mean
+    # of each year's ratio: the pre-1993 test years have 14-50 survey days and a handful of
+    # birds, so their ratios (Red Kite 1967: 1.5 birds observed, ratio 52) dominated the mean
+    # and reported a 13.6x over-prediction for a model that is 1.4x over overall. The per-year
+    # ratios stay in `per_year` for the report's season table.
+    obs_sum = daily["obs"].sum()
+    out = {
         "season_n_years": float(len(per_year)),
         "season_median_date_mae": float(np.nanmean(np.abs(per_year["median_error_days"]))),
-        "season_total_ratio": float(np.nanmean(per_year["total_ratio"])),
-    }, per_year
+        "season_total_ratio": float(daily["pred"].sum() / obs_sum) if obs_sum > 0 else np.nan,
+    }
+    # Same ratio for the phenology baseline: when it is as far off as the model, the test
+    # years were simply unlike the climatology, not something the weather model added.
+    if "phen" in daily:
+        out["season_total_ratio_phen"] = (
+            float(daily["phen"].sum() / obs_sum) if obs_sum > 0 else np.nan
+        )
+    return out, per_year
 
 
 # --------------------------------------------------------------------------------------

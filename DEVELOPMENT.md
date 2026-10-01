@@ -20,10 +20,11 @@ seed 0) and promoted to `prod/models/`. The hyperparameters in `configs/experime
 were tuned on an older architecture and loss and have not been re-tuned. Single-seed skill
 moves by ±0.1 from seed alone, so no model comparison should rest on one seed.
 
-Where the models stand (seed 0, skill vs phenology / season total ratio): Hen Harrier,
-Merlin, Common Buzzard, Honey Buzzard and Black Kite are reasonable (skill 0.18–0.35, ratio
-0.7–1.5). Hobby, Kestrel, Sparrowhawk and Osprey over-predict the season 1.5–2.8×. Red Kite
-over-predicts 13.6×. Marsh Harrier has the lowest skill (0.09).
+Where the models stand (seed 0, skill vs phenology / season total ratio pooled over the test
+years): skill is 0.09 (Marsh Harrier) to 0.35 (Common Buzzard). Season totals are within
+0.74–1.51× for every species except Merlin (0.47×, under-predicted). The 13.6× Red Kite figure
+quoted before was a mean of yearly ratios dominated by near-empty pre-1993 years
+(`DECISIONS.md` → Evaluation).
 
 ## Plan
 
@@ -34,8 +35,11 @@ over-predicts 13.6×. Marsh Harrier has the lowest skill (0.09).
   Training reproducibility).
 - **Re-tune the hyperparameters** (learning rate, weight decay, Tweedie `p`, the `8 *` output
   scale) on the current architecture, per species, against multi-seed skill.
-- **Season over-prediction** (Hobby, Kestrel, Sparrowhawk, Osprey, Red Kite): find whether it
-  is particular eras, years or days.
+- **Era bias from population trends.** With the year withheld (`year_used: "constant"`), Red
+  Kite and Kestrel are over-predicted 2–3× in 1993–2013 and under-predicted ~0.5–0.7× from
+  2014, more than phenology is (`DECISIONS.md` → Evaluation). Merlin is under-predicted 0.47×
+  overall. Candidates: `year_used: "period"`, trend-adjusted rates, or hourly-era years only (the
+  year-subset ladder in Phase 2).
 - **`ProbaRMSE` ablation** against the Tweedie-only baseline.
 - **Row weighting**, behind a config flag, not implemented. Raw-duration weighting favours long
   surveys whose extra hours are mostly empty. Options: `"none"` (status quo),
@@ -47,7 +51,7 @@ over-predicts 13.6×. Marsh Harrier has the lowest skill (0.09).
 
 Reporting gaps:
 
-- The random-period split yields ~3 test years per era, too few for year-to-year skill. That
+- The random-period split yields 8 test years (2–3 per era), too few for year-to-year skill. That
   needs leave-one-year-out or rolling-origin cross-validation.
 - The phenology baseline is pooled over all years, test split included: mild leakage on the
   baseline side. Rebuild it per split if a skill score looks suspiciously good.
@@ -71,9 +75,6 @@ Reporting gaps:
   (1966+/1993+/2008+/2014+/2017+) on a **chronological** holdout, and include
   `year_used: "period"`. Follow-up idea: predict each day's *share* of the season and the
   annual total separately.
-- **Red Kite magnitude.** Pre-1993 test years over-predicted 22–37×, recent years
-  under-predicted (0.4–0.7×). Likely its strong population trend, trained with the year
-  withheld (`year_used: "constant"`). Try trend-adjusted rates, or hourly-era years only.
 - **Lower priority: uncertainty from the Tweedie variance** (`Var(Y) = φ·μ^p`) instead of the
   climatological quantile band defileViz shows now.
 
