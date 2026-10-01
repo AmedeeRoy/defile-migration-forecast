@@ -83,7 +83,9 @@ notebook drifted from the committed schema and had a one-day off-by-one in the h
 
 **Training is deterministic for a given seed, config and thread count.** Changing the number
 of CPU threads changes the model (Hen Harrier seed 0: skill −1.34 with default threads, −0.27
-with 2). Compare runs only within one sweep. `trainer=mps` gives NaN gradients in
+with 2). The thread count is therefore pinned in `configs/train.yaml` (`num_threads: 2`, what
+the promoted checkpoints were trained with), rather than left to `OMP_NUM_THREADS` and the
+machine. `trainer=mps` gives NaN gradients in
 deterministic mode; use `trainer=cpu`.
 
 ## Production safety
