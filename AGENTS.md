@@ -130,10 +130,11 @@ installed locally: run `pre-commit install` once per clone.
 - **Daily branch** — a 1-D conv stack over the lag axis (`lag_day` days of history) on the
   daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*.
 - Combined multiplicatively: `out = 8 * out_h * out_d`, both sigmoid-bounded, so output is
-  in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). There is deliberately **no hard hour
-  mask**: night is discouraged by the prior, never architecturally impossible. Don't
-  reintroduce one, and don't normalise `out_h` over the day (both were tried; see
-  `DECISIONS.md` → Model architecture).
+  in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). Night is defined once, by the sun
+  (below −6°, `night_mask_by_doy_hour`): `prior_shape` is zero exactly then, and `forward`
+  zeros `out_h` wherever `prior_shape` is zero. Don't reintroduce a fixed-UTC-hour mask, and
+  don't normalise `out_h` over the day (both were tried; see `DECISIONS.md` → Model
+  architecture).
 
 Targets are hourly rates (`count / survey duration`), with a 24-element `mask` giving the
 fraction of each hour covered by the survey. Loss is `TweedieLoss` alone
@@ -189,7 +190,7 @@ of a constant recreates at any size, not just at the scale of a whole module.
 
 Concretely:
 
-- **Before writing a literal, grep for it.** `1993`, `"#0072B2"`, `range(6, 18)` each
+- **Before writing a literal, grep for it.** `1993`, `"#0072B2"`, `range(4, 19)` each
   already have an owner somewhere in this codebase — a repeated literal is the signal
   to import the existing constant, not retype it. `src/metrics.py`'s `ERA_EDGES`
   (`(1993, 2014)`) is the one definition of the era boundaries; `DefileDataModule`'s
@@ -211,7 +212,7 @@ Concretely:
   deliberately not Hydra-configurable for this reason.
 - **Cross-module reuse goes through the owning module's public name**, not a copy —
   `from src.phenology import RATIO_HOURS`, `from src.plots.panels import C_PRED`, not a
-  second `RATIO_HOURS = np.arange(6, 18)` or `C_ATTR = "#0072B2"` a few files away.
+  second `RATIO_HOURS = np.arange(4, 19)` or `C_ATTR = "#0072B2"` a few files away.
 
 ## Roadmap and decisions — read before making changes
 
@@ -232,7 +233,7 @@ remaining limit on forecast skill (`DECISIONS.md` → Weather).
 
 Tests live in `tests/`: the weather layer (`test_weather.py`), the datamodule's `prior_shape`
 plumbing, `UNetplus`'s shape-prior anchoring, the phenology baseline, and the predict-time
-season and publish guards. Metrics, plots and the rest of the training loop have none;
+season guard. Metrics, plots and the rest of the training loop have none;
 `debug=default` is the smoke test for those.
 
 ## Species / experiment pattern
@@ -317,8 +318,10 @@ benefit:
 Runs daily at 03:00 UTC (cron), on every push to `main`, and on manual dispatch:
 
 1. Installs the pinned environment with `uv sync --locked`.
-2. Runs `uv run python src/predict.py --multirun experiment=<all 11 species>`, producing
-   NetCDF forecast files under `prod/forecasts/`.
+2. Runs `uv run python src/predict.py experiment=<species>` once per species (a failed
+   species is reported and fails the job, but doesn't stop the others), producing NetCDF
+   forecast files under `prod/forecasts/`. Off-season, nothing is written and the deploy
+   jobs are skipped.
 3. Uploads those forecasts to a GCE host via SCP (`secrets.GCE_HOST/USER/SSH_KEY`) —
    this is what actually serves the files defileViz consumes (see below).
 4. Also deploys `www/` (this repo's own minimal page) to this repo's GitHub Pages.
@@ -327,9 +330,10 @@ A second workflow, `.github/workflows/test_gce.yml` (manual dispatch only), uplo
 `test.txt` to the GCE host via SCP: a connectivity check for the deploy step, not part of
 the pipeline.
 
-Safeguards in `predict.py` / `DefileLitModule.save_predict`: the job skips out-of-season days
-and fails rather than publish a non-finite or all-but-zero forecast (`DECISIONS.md` →
-Production safety). Nothing yet notifies a human when it fails.
+`predict.py` skips out-of-season days. There is deliberately no automatic check on forecast
+values — a model is reviewed by a human before promotion (`DECISIONS.md` → Production
+safety). Each NetCDF records its checkpoint hash and git SHA. A failed run fails the job,
+which is GitHub's email notification and nothing more.
 
 ## Related repo
 

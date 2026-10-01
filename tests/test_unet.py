@@ -105,20 +105,24 @@ def test_out_h_follows_the_prior_shape_at_init():
     assert torch.allclose(out_shape, expected, atol=1e-2)
 
 
-def test_prior_shape_with_a_zero_hour_is_discouraged_not_forbidden():
-    """A hard 0 in prior_shape must not make that hour impossible (the old dawn/dusk mask's exact
-    failure mode) -- PRIOR_LOG_EPS keeps the bias finite, so a large enough learned logit can still
-    push probability there."""
-    prior_shape = torch.zeros(1, 24)
-    prior_shape[0, 12] = 1.0
+def test_prior_zero_hours_are_forbidden_in_the_output():
+    """prior_shape is zero exactly at night (sun < -6 deg), and forward() zeros those hours however
+    large the learned logit gets -- the runaway that put ~50% of Red Kite's predicted birds at
+    night.
 
-    bias = prior_shape_to_logit_bias(prior_shape)
-    assert torch.isfinite(bias).all()
-
-    z = torch.zeros(1, 24)
-    z[0, 0] = 50.0  # strong evidence at an hour the prior says is impossible
-    out_h = torch.sigmoid(z + bias)
-    assert out_h[0, 0] > 0.99
+    The bias itself stays finite, so the masked product is 0, never NaN.
+    """
+    net = _make_net()
+    inputs = _random_inputs(batch_size=2)
+    inputs["prior_shape"][:, :5] = 0.0
+    inputs["prior_shape"] = inputs["prior_shape"] / inputs["prior_shape"].sum(dim=1, keepdim=True)
+    assert torch.isfinite(prior_shape_to_logit_bias(inputs["prior_shape"])).all()
+    with torch.no_grad():
+        net.conv_final[-1].bias.fill_(50.0)  # force a saturated logit everywhere
+        out = net(**inputs)
+    assert torch.isfinite(out).all()
+    assert (out[:, 0, :5] == 0).all()
+    assert (out[:, 0, 5:] > 0).all()
 
 
 def test_forward_runs_with_multi_sample_batch():

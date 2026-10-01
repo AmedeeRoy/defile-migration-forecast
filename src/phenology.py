@@ -28,9 +28,10 @@ PHENOLOGY_FILE = os.path.join("count", "species_doy_statistics.json")
 
 # `ratio` in the phenology file is a GAM fit of (hourly period rate / that day's rate)
 # over this hour grid -- see `PhenologyBuilder.fit_hourly_ratio` in
-# `scripts/build_phenology_stats.py`, which generated the file. Hours outside it were
-# never fitted, so the hourly phenology is zero there rather than extrapolated.
-RATIO_HOURS: np.ndarray = np.arange(6, 18)
+# `scripts/build_phenology_stats.py`, which generated the file. 04-18 UTC is every hour with
+# survey data to fit (hour 4: ~40 survey days per species, hour 19: 1-2); it was 06-17,
+# which left the surveyed 05 and 18 UTC to a copy of the edge hour that overstated both.
+RATIO_HOURS: np.ndarray = np.arange(4, 19)
 
 
 @dataclass
@@ -123,10 +124,15 @@ class Phenology:
 
         Deep night is forced by `night_mask_by_doy_hour` (`src/data/weather.py`), not
         fitted: `ratio`'s GAM already only ever sees real hourly-bin data (`RATIO_HOURS`,
-        6-17), and per DEVELOPMENT.md there is essentially none at night to fit against
+        4-18), and per DEVELOPMENT.md there is essentially none at night to fit against
         anyway (2 individuals total, dataset-wide, across all 11 modelled species) --
         a deterministic astronomical fact is both cheaper and more reliable than
         extrapolating a spline into territory it has no real data for.
+
+        That mask is the *only* thing that zeros an hour. The few daylight hours outside
+        `RATIO_HOURS` (03 and 19 UTC in July, never surveyed) hold the nearest fitted hour's
+        value -- already close to 0 there -- instead of 0, because `UNetplus.forward` forbids
+        any prediction where the prior is 0, and only the sun should decide that.
 
         Used as the shape prior `UNetplus`'s `out_h` defaults to before any weather
         evidence shifts it (see DECISIONS.md -> Model architecture) -- unlike every other
@@ -134,18 +140,20 @@ class Phenology:
         evaluation time.
 
         Days with a phenological rate of exactly zero (season edges) fall back to a
-        uniform shape over `RATIO_HOURS`, rather than an all-zero vector that is
-        undefined once normalised.
+        uniform shape over that day's daylight hours, rather than an all-zero vector that is
+        undefined once normalised -- so on every day, an hour is zero iff it is night, which
+        `UNetplus.forward` relies on to mask its output.
         """
         profile = self.hourly_rate(doy)
+        first, last = RATIO_HOURS[0], RATIO_HOURS[-1]
+        profile[:, :first] = profile[:, [first]]
+        profile[:, last + 1 :] = profile[:, [last]]
         doy_arr = np.clip(np.asarray(doy), 1, 366)
         profile = np.where(night_mask_by_doy_hour()[doy_arr - 1], 0.0, profile)
 
-        flat_fallback = np.zeros(24)
-        flat_fallback[RATIO_HOURS] = 1.0 / len(RATIO_HOURS)
         total = profile.sum(axis=1)
         zero_days = total == 0
-        profile[zero_days] = flat_fallback
-        total[zero_days] = 1.0
+        profile[zero_days] = ~night_mask_by_doy_hour()[doy_arr[zero_days] - 1]
+        total[zero_days] = profile[zero_days].sum(axis=1)
 
         return profile / total[:, None]

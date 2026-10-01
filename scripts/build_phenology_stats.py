@@ -24,7 +24,7 @@ top to bottom today would *not* reproduce that file's schema. This script is the
 `pygam` is now pinned in `pyproject.toml`, the species list is read from
 `configs/experiment/*.yaml` (the actual set of modelled species) instead of a second
 hardcoded copy, and the hour grid for `ratio` (`RATIO_HOURS`) is imported from
-`src.phenology` instead of a third copy of `range(6, 18)` -- so a change to either can no
+`src.phenology` instead of a third copy of the hour range -- so a change to either can no
 longer silently disagree with this file's shape.
 
 Usage:
@@ -95,6 +95,14 @@ HOUR_SPLINES = 12
 GAM_LAM_LADDER = [(100, 10), (1000, 100), (10_000, 1_000), (100_000, 10_000)]
 
 SMOOTH_WINDOW = 7
+
+# Each day's hourly-ratio samples are weighted by (that day's bird count) ** this in the GAM
+# fit. 0 is the historical fit -- every day equal, so a 2-bird day shapes the curve as much as
+# a 2 000-bird one; 1 is the unbiased estimator of the *expected* hourly rate the model
+# predicts, but lets a handful of huge days dominate. 0.5 was best on held-out years (fit on
+# even years, L1 to odd years' count-weighted hourly profile, 7 species): 0.253 / 0.213 /
+# 0.229 for 0 / 0.5 / 1 -- 1 lost on Honey Buzzard, whose shape a few huge days dominate.
+RATIO_WEIGHT_POWER = 0.5
 
 
 class PhenologyBuilder:
@@ -182,12 +190,13 @@ class PhenologyBuilder:
         df["ratio"] = df["count_rate"] / df["count_rate_daily"]
         df["hour"] = (df["start"] + (df["end"] - df["start"]) / 2).dt.hour
         df["n_periods"] = df.groupby("date")["count_rate"].transform("count")
+        df["count_daily"] = df.groupby("date")["count"].transform("sum")
 
-        return df.loc[df["n_periods"] > 1, ["doy", "hour", "ratio"]].dropna()
+        return df.loc[df["n_periods"] > 1, ["doy", "hour", "ratio", "count_daily"]].dropna()
 
     @staticmethod
     def _fit_gam_with_lam_ladder(
-        term, X, y, species: str, lam_ladder=GAM_LAM_LADDER
+        term, X, y, species: str, lam_ladder=GAM_LAM_LADDER, weights=None
     ) -> PoissonGAM:
         """Fits `term` against `(X, y)`, retrying with progressively stronger regularization from
         `lam_ladder` if PIRLS diverges -- see `GAM_LAM_LADDER`'s module-level comment for why some
@@ -198,7 +207,7 @@ class PhenologyBuilder:
         """
         for lam in lam_ladder:
             try:
-                gam = PoissonGAM(term, lam=list(lam)).fit(X, y)
+                gam = PoissonGAM(term, lam=list(lam)).fit(X, y, weights=weights)
                 if lam != lam_ladder[0]:
                     print(f"  {species}: PIRLS needed lam={lam} to converge")
                 return gam
@@ -212,6 +221,7 @@ class PhenologyBuilder:
         k0: int = DOY_SPLINES,
         k1: int = HOUR_SPLINES,
         interaction: bool = True,
+        weight_power: float = RATIO_WEIGHT_POWER,
     ) -> np.ndarray:
         """GAM-fitted `ratio(doy, hour)` over the full `self.doy` range x `RATIO_HOURS`.
 
@@ -245,13 +255,14 @@ class PhenologyBuilder:
         """
         samples = self._hourly_ratio_samples(species)
         X, y = samples[["doy", "hour"]].to_numpy(), samples["ratio"].to_numpy()
+        weights = samples["count_daily"].to_numpy() ** weight_power
 
         term = (
             te(0, 1, n_splines=[k0, k1])
             if interaction
             else s(0, n_splines=k0) + s(1, n_splines=k1)
         )
-        gam = self._fit_gam_with_lam_ladder(term, X, y, species)
+        gam = self._fit_gam_with_lam_ladder(term, X, y, species, weights=weights)
 
         doy_grid = np.arange(self.doy[0], self.doy[1] + 1)
         grid = np.column_stack(

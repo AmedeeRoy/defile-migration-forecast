@@ -125,17 +125,13 @@ Also in scope for this phase:
   - Shape accuracy came out slightly, consistently lower than the previous architecture.
     The learning rate and the `out_h`/`out_d` output scale were tuned for the old
     architecture; retune deliberately once retrained more broadly.
-  - **Red Kite reproduces a different, still-open collapse under this fix, on every seed
-    tested** — the hourly shape goes flat within a day (though it still varies normally
-    between days), even though its own climatological prior looks fine. Not present on the
-    previous architecture. Best guess: Red Kite has by far the strongest multi-year
-    population trend of any species and is trained with year information withheld
-    (`year_used: "constant"`), so a large, systematic part of the variation in count is
-    unexplainable from the model's inputs, and saturating the hourly output is a shortcut.
-    The annual-trend-correction work (a separate branch) only corrects the model's *output*
-    after prediction, so it likely doesn't fix this alone. Worth testing whether training
-    against trend-adjusted rates removes the unexplainable variance. Until understood, don't
-    retrain or promote Red Kite against this architecture.
+  - **Red Kite's flat-shape collapse is fixed** (`DECISIONS.md` → Model architecture,
+    "Revisited"): it was the hourly logit running away into night, which nothing bounded.
+    What remains is magnitude: its pre-1993 test years are over-predicted 22–37x and recent
+    years under-predicted (0.4–0.7x). Best guess, unchanged: the strongest multi-year
+    population trend of any species, trained with the year withheld
+    (`year_used: "constant"`). Worth testing whether training against trend-adjusted rates,
+    or on the hourly-era years only, removes it.
 - **For later, lower priority: a probability envelope from the Tweedie loss itself**,
   rather than a second model-predicted output channel (the approach already dropped for
   being untrained). The Tweedie distribution already has a defined variance-mean
@@ -161,9 +157,8 @@ that kills the daily run.
 **Phase 4 — operational hardening**, independent small PRs, can run anytime in parallel:
 
 - Freshness check (assert the published file's date matches today) + failure notification.
-  The publish guard (`DECISIONS.md` → Production safety) now makes a degenerate forecast fail
-  the job rather than reach the app, but nobody is told when that happens, and the app keeps
-  serving yesterday's file with no indication.
+  A failed run fails the job (GitHub's email), but the app keeps serving the last file it
+  has with no indication that it is stale.
 - Transform-in-checkpoint: `data/transform_data.pickle` is a single global file that must
   correspond to the promoted checkpoints, with nothing enforcing that and retraining
   silently rewriting it. Saving transform parameters inside the checkpoint removes the

@@ -72,8 +72,7 @@ to zero from sun position rather than fitted, since there's essentially no real 
 fit against there), with the network free to override that default wherever real
 weather evidence justifies it. At initialization the network reproduces the
 climatological shape almost exactly, removing the flat/constant state that training
-could fall into when it has little else to go on. Night is discouraged, not forbidden — no
-hour is ever architecturally impossible to predict, which is the mistake the hard mask made.
+could fall into when it has little else to go on.
 
 **First attempt at anchoring was wrong and rejected**: normalizing the hourly output
 into a probability distribution over the day (a softmax) forced all magnitude information
@@ -89,6 +88,48 @@ consistently tight across seeds instead of varying widely as they did when a col
 occurred. Overall magnitude was comparable to before; shape accuracy was slightly,
 consistently a bit lower — a small tradeoff, accepted for now, worth revisiting (see
 `DEVELOPMENT.md`).
+
+**Revisited (2026-10): night is now forbidden, by the sun, not by the clock.** The first
+retrain of all 11 species showed the prior alone does not hold night: night hours are never
+surveyed, so they get no gradient and nothing bounds the logit there. Red Kite, Sparrowhawk
+and Marsh Harrier ran away into it (50%, 38% and 18% of predicted test-set birds at night),
+which also flattened their daytime shape. Two fixes, each measured on its own commit:
+
+- The prior was zero outside its 6–17 UTC fit grid at every time of year, so 05/18 UTC got
+  midnight's −13.8 logit bias although hour 5 is surveyed on 608 days and carries real birds.
+  It is now zero *only* where the sun is below −6°; daylight hours outside the grid hold the
+  nearest fitted value. This alone cured Marsh Harrier, but not Red Kite or Sparrowhawk.
+- `UNetplus.forward` multiplies `out_h` by `prior_shape > 0`. One rule (sun < −6°) defines
+  night for both the prior and the output, with no extra input. This is a hard mask, but not
+  the one rejected above: that one used fixed UTC hours and cut July's dawn surveys, this one
+  follows the season. Red Kite went from −0.28 to +0.16 skill vs phenology and from 6.4 h to
+  1.9 h peak-hour error; Sparrowhawk's season total ratio from 4.0 to 1.9.
+
+Cost, not yet sized: Common Buzzard, which had no night problem, scores 0.33–0.44 skill vs
+phenology over 3 seeds on this architecture against 0.47 for one seed before it, with a
+season total ratio of 1.33–1.45 against 1.13. The seed spread is as large as the gap, so this
+needs seeds on both sides before it is called a regression.
+
+Two follow-ups after checking the prior against the raw counts:
+
+- The night mask sampled the sun at the *start* of each hour, so a mostly-twilight dawn hour was
+  night, and with the hard mask unpredictable: 482 Red Kites counted in ≤1 h periods at 05 UTC
+  in October fell there. An hour is now night only if the sun stays below −6° for all of it
+  (0 birds left in night hours). Model metrics moved within seed noise (Red Kite, 3 seeds:
+  0.16/0.17/0.16 → 0.04/0.16/0.14, seed 0 an outlier).
+- The `ratio` GAM was predicted on 06–17 UTC only, though it was fitted on samples from every
+  surveyed hour, and the edge hour was copied into 05/18, overstating both (Marsh Harrier hour
+  18: observed 0.15 of the daily rate, prior 0.85). `RATIO_HOURS` is now 04–18, every hour with
+  data. The fit also weighted a 2-bird day like a 2 000-bird one, which pulled Honey Buzzard's
+  peak to 09 UTC against an observed 13; days are now weighted by √count. Fit on even years,
+  scored on odd years' observed hourly profile (L1, 7 species): 0.277 before, 0.253 with the
+  wider grid, 0.213 with both (full count weighting: 0.229, a few huge days dominate). Model,
+  seed 0 unless noted: Common Buzzard 0.41 → 0.46 skill and season total ratio 1.30 → 1.07;
+  Sparrowhawk 0.28 → 0.29 (ratio 2.37 → 1.86); Red Kite 3 seeds 0.04/0.16/0.14 →
+  0.15/0.14/0.12; Marsh Harrier 0.21 → 0.15, the one regression, unsized.
+
+Red Kite's remaining over-prediction is its pre-1993 test years (the species was rare then and
+`year_used: "constant"` hides the year), not night — see `DEVELOPMENT.md`.
 
 ## Evaluation
 
@@ -119,9 +160,9 @@ with the same seed now produce identical results.
 **The daily job refuses to run out of season.** The model has never seen the seven months
 outside `data.doy`, so a forecast then is ungrounded; the job skips it rather than publish one.
 
-**The daily job refuses to publish a degenerate forecast.** A non-finite forecast, or one
-whose peak is below ~1e-6 log1p(birds/h), fails the job instead of being written: to site
-visitors it would look like a confident "no birds today", whereas a failed job leaves
-yesterday's file in place. Motivated by the stale-checkpoint forecast of 2026-08-06, which
-peaked at ~1e-10. Failure is still *silent to a human* — notification is open in
-`DEVELOPMENT.md`, Phase 4.
+**No automatic publish guard, deliberately.** A check refusing non-finite or all-but-zero
+forecasts was written and dropped: during development, deciding whether a model is fit to
+publish is a human review of its test report before promotion, not a threshold in the daily
+job. What the job does instead is make each forecast traceable — every NetCDF carries
+`species`, `issued_at`, `weather_model`, `checkpoint_sha256` and `git_sha` — and run each
+species in its own process, so one failure neither hides nor blocks the rest.
