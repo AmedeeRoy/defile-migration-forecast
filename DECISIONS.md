@@ -72,8 +72,7 @@ to zero from sun position rather than fitted, since there's essentially no real 
 fit against there), with the network free to override that default wherever real
 weather evidence justifies it. At initialization the network reproduces the
 climatological shape almost exactly, removing the flat/constant state that training
-could fall into when it has little else to go on. Night is discouraged, not forbidden — no
-hour is ever architecturally impossible to predict, which is the mistake the hard mask made.
+could fall into when it has little else to go on.
 
 **First attempt at anchoring was wrong and rejected**: normalizing the hourly output
 into a probability distribution over the day (a softmax) forced all magnitude information
@@ -89,6 +88,30 @@ consistently tight across seeds instead of varying widely as they did when a col
 occurred. Overall magnitude was comparable to before; shape accuracy was slightly,
 consistently a bit lower — a small tradeoff, accepted for now, worth revisiting (see
 `DEVELOPMENT.md`).
+
+**Revisited (2026-10): night is now forbidden, by the sun, not by the clock.** The first
+retrain of all 11 species showed the prior alone does not hold night: night hours are never
+surveyed, so they get no gradient and nothing bounds the logit there. Red Kite, Sparrowhawk
+and Marsh Harrier ran away into it (50%, 38% and 18% of predicted test-set birds at night),
+which also flattened their daytime shape. Two fixes, each measured on its own commit:
+
+- The prior was zero outside its 6–17 UTC fit grid at every time of year, so 05/18 UTC got
+  midnight's −13.8 logit bias although hour 5 is surveyed on 608 days and carries real birds.
+  It is now zero *only* where the sun is below −6°; daylight hours outside the grid hold the
+  nearest fitted value. This alone cured Marsh Harrier, but not Red Kite or Sparrowhawk.
+- `UNetplus.forward` multiplies `out_h` by `prior_shape > 0`. One rule (sun < −6°) defines
+  night for both the prior and the output, with no extra input. This is a hard mask, but not
+  the one rejected above: that one used fixed UTC hours and cut July's dawn surveys, this one
+  follows the season. Red Kite went from −0.28 to +0.16 skill vs phenology and from 6.4 h to
+  1.9 h peak-hour error; Sparrowhawk's season total ratio from 4.0 to 1.9.
+
+Cost, not yet sized: Common Buzzard, which had no night problem, scores 0.33–0.44 skill vs
+phenology over 3 seeds on this architecture against 0.47 for one seed before it, with a
+season total ratio of 1.33–1.45 against 1.13. The seed spread is as large as the gap, so this
+needs seeds on both sides before it is called a regression.
+
+Red Kite's remaining over-prediction is its pre-1993 test years (the species was rare then and
+`year_used: "constant"` hides the year), not night — see `DEVELOPMENT.md`.
 
 ## Evaluation
 
@@ -119,9 +142,9 @@ with the same seed now produce identical results.
 **The daily job refuses to run out of season.** The model has never seen the seven months
 outside `data.doy`, so a forecast then is ungrounded; the job skips it rather than publish one.
 
-**The daily job refuses to publish a degenerate forecast.** A non-finite forecast, or one
-whose peak is below ~1e-6 log1p(birds/h), fails the job instead of being written: to site
-visitors it would look like a confident "no birds today", whereas a failed job leaves
-yesterday's file in place. Motivated by the stale-checkpoint forecast of 2026-08-06, which
-peaked at ~1e-10. Failure is still *silent to a human* — notification is open in
-`DEVELOPMENT.md`, Phase 4.
+**No automatic publish guard, deliberately.** A check refusing non-finite or all-but-zero
+forecasts was written and dropped: during development, deciding whether a model is fit to
+publish is a human review of its test report before promotion, not a threshold in the daily
+job. What the job does instead is make each forecast traceable — every NetCDF carries
+`species`, `issued_at`, `weather_model`, `checkpoint_sha256` and `git_sha` — and run each
+species in its own process, so one failure neither hides nor blocks the rest.
