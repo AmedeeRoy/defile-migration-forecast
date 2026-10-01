@@ -42,6 +42,8 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     # set seed for random number generators in pytorch, numpy and python.random
     L.seed_everything(cfg.seed, workers=True)
+    if cfg.get("num_threads"):
+        torch.set_num_threads(cfg.num_threads)
 
     log.info(f"Instantiating datamodule <{cfg.data._target_}>")
     datamodule: LightningDataModule = hydra.utils.instantiate(cfg.data)

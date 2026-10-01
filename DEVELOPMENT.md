@@ -30,8 +30,8 @@ over-predicts 13.6×. Marsh Harrier has the lowest skill (0.09).
 **Phase 1 — make "model quality" trustworthy.**
 
 - **Multi-seed evaluation by default.** Report the mean and spread over ≥3 seeds
-  (`hydra=seed_sweep`), and fix the thread count so runs are comparable (`DECISIONS.md` →
-  Training reproducibility).
+  (`hydra=seed_sweep`). The thread count is now pinned (`num_threads`), so runs on different
+  machines are comparable.
 - **Re-tune the hyperparameters** (learning rate, weight decay, Tweedie `p`, the `8 *` output
   scale) on the current architecture, per species, against multi-seed skill.
 - **Season over-prediction** (Hobby, Kestrel, Sparrowhawk, Osprey, Red Kite): find whether it
