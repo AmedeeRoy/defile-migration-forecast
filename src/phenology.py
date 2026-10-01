@@ -141,8 +141,9 @@ class Phenology:
         evaluation time.
 
         Days with a phenological rate of exactly zero (season edges) fall back to a
-        uniform shape over `RATIO_HOURS`, rather than an all-zero vector that is
-        undefined once normalised.
+        uniform shape over that day's daylight hours, rather than an all-zero vector that is
+        undefined once normalised -- so on every day, an hour is zero iff it is night, which
+        `UNetplus.forward` relies on to mask its output.
         """
         profile = self.hourly_rate(doy)
         first, last = RATIO_HOURS[0], RATIO_HOURS[-1]
@@ -151,11 +152,9 @@ class Phenology:
         doy_arr = np.clip(np.asarray(doy), 1, 366)
         profile = np.where(night_mask_by_doy_hour()[doy_arr - 1], 0.0, profile)
 
-        flat_fallback = np.zeros(24)
-        flat_fallback[RATIO_HOURS] = 1.0 / len(RATIO_HOURS)
         total = profile.sum(axis=1)
         zero_days = total == 0
-        profile[zero_days] = flat_fallback
-        total[zero_days] = 1.0
+        profile[zero_days] = ~night_mask_by_doy_hour()[doy_arr[zero_days] - 1]
+        total[zero_days] = profile[zero_days].sum(axis=1)
 
         return profile / total[:, None]

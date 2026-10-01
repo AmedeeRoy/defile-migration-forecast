@@ -313,6 +313,12 @@ class UNetplus(nn.Module):
         # `out_d` is not left carrying all of it alone.
         prior_bias = prior_shape_to_logit_bias(prior_shape).unsqueeze(1)
         out_h = torch.sigmoid(z + prior_bias)
+        # Night is forbidden, not just discouraged: prior_shape is zero exactly where the sun
+        # is below -6 deg (`Phenology.hourly_shape`), and no survey has ever counted a raptor
+        # there, so those hours get no gradient and nothing stopped `z` running away into them
+        # (Red Kite, Sparrowhawk: ~50% of predicted birds at night). Unlike the old fixed-UTC
+        # mask this follows the season, so July's 04-05 UTC dawn surveys stay predictable.
+        out_h = out_h * (prior_shape > 0).unsqueeze(1)
 
         # Daily weather
         doy_ = doy.repeat(1, self.nb_lag_day).unsqueeze(1)
