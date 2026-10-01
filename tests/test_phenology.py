@@ -82,3 +82,12 @@ def test_daylight_shoulder_hours_hold_the_nearest_fitted_hour():
     assert not night[first - 1] and not night[last + 1]  # premise: both are daylight in July
     assert np.isclose(shape[first - 1], shape[first])
     assert np.isclose(shape[last + 1], shape[last])
+
+
+def test_night_mask_keeps_partly_light_dawn_hours_predictable():
+    """Doy 277 (early October): the sun is below -6 deg at 05:00 UTC but above it by 06:00, and
+    dawn surveys in that hour count Red Kites -- so 05 UTC must not be night (it was, when the
+    mask sampled only the start of each hour). Midnight stays night."""
+    night = night_mask_by_doy_hour()[277 - 1]
+    assert not night[5]
+    assert night[0] and night[23]

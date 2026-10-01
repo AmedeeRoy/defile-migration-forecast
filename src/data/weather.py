@@ -349,8 +349,14 @@ def _add_sun_position(df, location):
 
 
 def night_mask_by_doy_hour(threshold_deg=-6.0, location="Defile", reference_year=2001):
-    """`(366, 24)` bool array: True where the sun is below `threshold_deg` altitude (civil twilight
-    by default) at that UTC hour of that day-of-year, else False.
+    """`(366, 24)` bool array: True where the sun stays below `threshold_deg` altitude (civil
+    twilight by default) for the *whole* UTC hour `[h, h+1)` of that day-of-year, else False.
+
+    Whole hour, not the hour's start: `UNetplus` forbids any prediction in a night hour, so an
+    hour that is only partly dark must stay predictable. Sampling at `h:00` alone called 05 UTC
+    night in October although the sun clears -6 deg by ~05:20, and dawn surveys there count Red
+    Kites leaving the roost (482 birds in <=1 h periods, 2015-2025). Altitude is monotonic within
+    an hour away from solar noon/midnight, so checking both ends of the hour is enough.
 
     Deterministic and astronomically exact -- needs no observed data, unlike a statistical fit over
     hours with very little of it. Used to zero out `Phenology.hourly_shape`'s deep-night hours
@@ -363,13 +369,14 @@ def night_mask_by_doy_hour(threshold_deg=-6.0, location="Defile", reference_year
     lat, lon = get_lat_lon(location)
     base = pd.Timestamp(f"{reference_year}-01-01")
     doys = np.arange(1, 367)
-    hours = np.arange(24)
+    # 25 samples per day: h:00 for h = 0..24, so hour h is bounded by samples h and h+1.
     timestamps = pd.DatetimeIndex(
-        [base + pd.Timedelta(days=int(d) - 1, hours=int(h)) for d in doys for h in hours]
+        [base + pd.Timedelta(days=int(d) - 1, hours=int(h)) for d in doys for h in range(25)]
     )
     position = get_position(timestamps, lon[0], lat[0])
     altitude_deg = np.degrees(np.asarray(position["altitude"], dtype="float64"))
-    return (altitude_deg < threshold_deg).reshape(len(doys), 24)
+    below = (altitude_deg < threshold_deg).reshape(len(doys), 25)
+    return below[:, :24] & below[:, 1:]
 
 
 def _to_hourly_dataset(df):
