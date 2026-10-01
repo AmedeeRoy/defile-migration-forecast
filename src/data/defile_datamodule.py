@@ -264,6 +264,57 @@ class ForecastDataset(Dataset):
         self.return_original = value
 
 
+def assign_split(
+    count: pd.DataFrame,
+    mode: str,
+    rng: np.random.Generator,
+    cum_ratio=(0.7, 0.9),
+    val_years: Optional[list] = None,
+    test_years: Optional[list] = None,
+) -> np.ndarray:
+    """Assign each survey row of `count` to "train", "val" or "test".
+
+    - `"period"`: the years of each era (`count["year_period"]`) are shuffled and cut at
+      `cum_ratio`, so every split holds years from every era.
+    - `"years"`: `val_years` and `test_years` as given, every other year trains. This is the
+      chronological holdout: with the most recent seasons as test, the score measures the
+      forecast the daily job actually makes, a season or two past the training data.
+    - anything else: each row independently at random, in `cum_ratio` proportions.
+
+    The split must be identical on every `setup()` call, so `rng` is a dedicated generator
+    seeded by the caller, never the global one.
+    """
+    tvt = np.full(len(count), "train", dtype=object)
+    year = count["year"].to_numpy()
+
+    if mode == "years":
+        if not test_years or not val_years:
+            raise ValueError('train_val_test="years" needs both val_years and test_years.')
+        overlap = set(val_years) & set(test_years)
+        if overlap:
+            raise ValueError(f"Years in both val_years and test_years: {sorted(overlap)}")
+        missing = sorted((set(val_years) | set(test_years)) - set(np.unique(year)))
+        if missing:
+            raise ValueError(f"val/test years with no data in the selected years: {missing}")
+        tvt[np.isin(year, val_years)] = "val"
+        tvt[np.isin(year, test_years)] = "test"
+    elif mode == "period":
+        for period in PERIOD_YEARS:
+            # np.unique returns sorted years, so a freshly seeded generator is deterministic
+            y = np.unique(year[count["year_period"].to_numpy() == period])
+            rng.shuffle(y)
+            y_train, y_val, y_test = np.split(y, (len(y) * np.asarray(cum_ratio)).astype(int))
+            tvt[np.isin(year, y_val)] = "val"
+            tvt[np.isin(year, y_test)] = "test"
+    else:
+        tvt = rng.choice(
+            ["train", "val", "test"],
+            size=len(count),
+            p=np.diff(np.concatenate(([0], cum_ratio, [1]))),
+        ).astype(object)
+    return tvt
+
+
 class DefileDataModule(LightningDataModule):
     """`LightningDataModule` for the Defile dataset.
 
@@ -319,6 +370,8 @@ class DefileDataModule(LightningDataModule):
         forecast_day: int = 5,
         train_val_test_cum_ratio: Tuple[float, float] = (0.7, 0.9),
         train_val_test: str = "period",
+        val_years: Optional[list] = None,
+        test_years: Optional[list] = None,
         year_used: str = "none",
         compute_transform_data: bool = True,
         transform_data_path: Optional[str] = None,
@@ -337,8 +390,12 @@ class DefileDataModule(LightningDataModule):
         :param forecast_day: Number of day ahead used for prediction
         :param train_val_test_cum_ratio: The train, validation and test split defined as the
             cumulative ratio of the total dataset. Defaults to `(0.7, 0.9)`.
-        :param train_val_test: The type of train, validation and test split. Defaults to
+        :param train_val_test: The type of train, validation and test split, see `assign_split`:
+            `"period"` (random years within each era), `"years"` (the explicit `val_years` and
+            `test_years`, every other year trains) or anything else (random rows). Defaults to
             `"period"`.
+        :param val_years: Validation years, used only by `train_val_test="years"`.
+        :param test_years: Test years, used only by `train_val_test="years"`.
         :param year_used: The type of year variable used in the model. Defaults to `"none"`.
             "constant" for no information of year included in the model, "none" for the exact year
             or "period" where only a broad category of year period is included
@@ -378,6 +435,8 @@ class DefileDataModule(LightningDataModule):
         self.forecast_day = forecast_day
         self.train_val_test = train_val_test
         self.train_val_test_cum_ratio = np.array(train_val_test_cum_ratio)
+        self.val_years = list(val_years) if val_years is not None else None
+        self.test_years = list(test_years) if test_years is not None else None
         self.year_used = year_used
         self.compute_transform_data = compute_transform_data
         self.transform_data_path = transform_data_path or os.path.join(
@@ -520,42 +579,18 @@ class DefileDataModule(LightningDataModule):
             # Using a generator seeded from `split_seed` (rather than the global numpy
             # RNG, whose state advances during training) makes every call identical.
             rng = np.random.default_rng(self.split_seed)
-
-            # OPTION 1: split dataset years based on type of data collected
-            if self.train_val_test == "period":
-                # Get unique years for each period
-                yr_grp = {
-                    period: np.unique(count.loc[count["year_period"] == period, "year"])
-                    for period in PERIOD_YEARS
-                }
-
-                # Shuffle order of the year in each group (np.unique returns sorted
-                # years, so a freshly seeded generator gives a deterministic result)
-                [rng.shuffle(y) for y in yr_grp.values()]
-
-                # Assign years to each group according to the cumulative ratio defined
-                for period, y in yr_grp.items():
-                    sz = (len(y) * self.train_val_test_cum_ratio).astype(int)
-                    y_train, y_val, y_test = np.split(y, sz)
-                    count.loc[count["year"].isin(y_train), "tvt"] = "train"
-                    count.loc[count["year"].isin(y_val), "tvt"] = "val"
-                    count.loc[count["year"].isin(y_test), "tvt"] = "test"
-
+            count["tvt"] = assign_split(
+                count,
+                self.train_val_test,
+                rng,
+                cum_ratio=self.train_val_test_cum_ratio,
+                val_years=self.val_years,
+                test_years=self.test_years,
+            )
+            for split in ("train", "val", "test"):
                 log.info(
-                    f"Train dataset: selected years - {sorted(count.loc[count['tvt'] == 'train', 'year'].unique())}"
-                )
-                log.info(
-                    f"Validation dataset: selected years - {sorted(count.loc[count['tvt'] == 'val', 'year'].unique())}"
-                )
-                log.info(
-                    f"Test dataset: selected years - {sorted(count.loc[count['tvt'] == 'test', 'year'].unique())}"
-                )
-            else:
-                # Assign each row in count["tvt"] randomly based on proportions
-                count["tvt"] = rng.choice(
-                    ["train", "val", "test"],
-                    size=len(count),
-                    p=np.diff(np.concatenate(([0], self.train_val_test_cum_ratio, [1]))),
+                    f"{split.capitalize()} dataset: selected years - "
+                    f"{sorted(count.loc[count['tvt'] == split, 'year'].unique())}"
                 )
 
             # Compute transformation

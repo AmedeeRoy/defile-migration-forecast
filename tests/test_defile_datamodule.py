@@ -92,3 +92,59 @@ class _FakeXr:
     @property
     def values(self):
         return np.zeros(3)
+
+
+def _count_for_years(years):
+    """Three survey rows per year, with the era bucket the datamodule derives from the year."""
+    from src.metrics import year_period
+
+    year = np.repeat(np.asarray(years), 3)
+    return pd.DataFrame({"year": year, "year_period": year_period(pd.Series(year))})
+
+
+def test_assign_split_years_is_exact_and_chronological():
+    from src.data.defile_datamodule import assign_split
+
+    count = _count_for_years(range(2010, 2026))
+    tvt = assign_split(
+        count,
+        "years",
+        np.random.default_rng(0),
+        val_years=[2021, 2022],
+        test_years=[2023, 2024, 2025],
+    )
+    by_year = pd.Series(tvt).groupby(count["year"]).unique().map(lambda s: s[0])
+    assert list(by_year[by_year == "test"].index) == [2023, 2024, 2025]
+    assert list(by_year[by_year == "val"].index) == [2021, 2022]
+    assert by_year[by_year == "train"].index.max() == 2020
+
+
+def test_assign_split_years_rejects_bad_years():
+    import pytest
+
+    from src.data.defile_datamodule import assign_split
+
+    count = _count_for_years(range(2010, 2024))
+    rng = np.random.default_rng(0)
+    with pytest.raises(ValueError, match="no data"):
+        assign_split(count, "years", rng, val_years=[2021], test_years=[2025])
+    with pytest.raises(ValueError, match="both"):
+        assign_split(count, "years", rng, val_years=[2021, 2022], test_years=[2022])
+    with pytest.raises(ValueError, match="needs"):
+        assign_split(count, "years", rng, val_years=None, test_years=[2022])
+
+
+def test_assign_split_period_unchanged():
+    """The refactor into assign_split must keep the "period" split the promoted checkpoints
+    were trained on: these are the years logged by the 2026-10-01 runs (1966-2025, split_seed 0).
+    """
+    from src.data.defile_datamodule import assign_split
+
+    count = _count_for_years(range(1966, 2026))
+    tvt = assign_split(count, "period", np.random.default_rng(0))
+
+    def years(split):
+        return sorted(int(y) for y in np.unique(count["year"][tvt == split]))
+
+    assert years("test") == [1967, 1981, 1990, 2001, 2005, 2008, 2019, 2023]
+    assert years("val") == [1971, 1973, 1975, 1980, 1983, 1988, 1993, 2002, 2004, 2011, 2015, 2022]

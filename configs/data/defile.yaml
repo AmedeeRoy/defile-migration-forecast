@@ -76,6 +76,10 @@ forecast_day: 5
 train_val_test_cum_ratio: [0.7, 0.9]
 years: ${eval:"list(range(1966, 2026))"}
 doy: [196, 335]
-train_val_test: "period"
+train_val_test: "period" # "period", "years" (val_years/test_years below) or "random"
+# Used only by train_val_test: "years". The most recent seasons as test, so the score measures
+# what the daily forecast does: predict the season or two after the training data.
+val_years: [2021, 2022]
+test_years: [2023, 2024, 2025]
 year_used: "constant" # "constant" or "none" or "period"
 compute_transform_data: True

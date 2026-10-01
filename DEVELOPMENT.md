@@ -13,6 +13,10 @@ Keep in view: the unit is an **hourly rate**, so the shape of the day matters as
 daily total. The system runs **unattended**, so a silently wrong or stale forecast is as bad
 as a crash. Only features available at 03:00 UTC on the day exist.
 
+**The target is the next one or two seasons (2026, 2027), not the historical record.** Old
+years are worth training on only for what they teach about weather and migration; a model is
+judged on how well it forecasts recent seasons.
+
 ## Status
 
 All 11 species were retrained on the current architecture on 2026-10-01 (`trainer=cpu`,
@@ -30,6 +34,14 @@ quoted before was a mean of yearly ratios dominated by near-empty pre-1993 years
 
 **Phase 1 — make "model quality" trustworthy.**
 
+- **Judge models on the most recent seasons.** `data.train_val_test=years` holds out
+  `test_years` (2023–2025) and `val_years` (2021–2022) and trains on every other year in
+  `data.years`, the situation the daily forecast is in. The `"period"` split (random years per
+  era, test years from 1967 to 2023) stays the default only until the comparison below picks a
+  setup. Compare on it, 11 species × 3 seeds each: (a) the current setup, (b)
+  `year_used: "period"`, (c) recent years only (`data.years` from 2008 or 2014). Trend-adjusted
+  targets only if (a)–(c) leave a level bias in 2023–2025. The production model is then
+  retrained with the chosen setup on every year to 2025.
 - **Multi-seed evaluation by default.** Report the mean and spread over ≥3 seeds
   (`hydra=seed_sweep`), and fix the thread count so runs are comparable (`DECISIONS.md` →
   Training reproducibility).
@@ -38,8 +50,8 @@ quoted before was a mean of yearly ratios dominated by near-empty pre-1993 years
 - **Era bias from population trends.** With the year withheld (`year_used: "constant"`), Red
   Kite and Kestrel are over-predicted 2–3× in 1993–2013 and under-predicted ~0.5–0.7× from
   2014, more than phenology is (`DECISIONS.md` → Evaluation). Merlin is under-predicted 0.47×
-  overall. Candidates: `year_used: "period"`, trend-adjusted rates, or hourly-era years only (the
-  year-subset ladder in Phase 2).
+  overall. Measured on the random-period split; re-check on the recent-seasons split above,
+  which is the one that matters.
 - **`ProbaRMSE` ablation** against the Tweedie-only baseline.
 - **Row weighting**, behind a config flag, not implemented. Raw-duration weighting favours long
   surveys whose extra hours are mostly empty. Options: `"none"` (status quo),
@@ -53,8 +65,11 @@ Reporting gaps:
 
 - The random-period split yields 8 test years (2–3 per era), too few for year-to-year skill. That
   needs leave-one-year-out or rolling-origin cross-validation.
-- The phenology baseline is pooled over all years, test split included: mild leakage on the
-  baseline side. Rebuild it per split if a skill score looks suspiciously good.
+- The phenology baseline is pooled over all years, test split included. On the recent-seasons
+  split this matters more: it leaks 2023–2025, and its level is the 1966–2025 average, far
+  below today's for a growing species like Red Kite, so beating it says little. Build it from
+  the training years (or recent training years) before trusting skill on that split. The same
+  file sets the hourly prior and defileViz's band.
 - Consider logging `val/skill_vs_phenology` every validation epoch.
 
 | level          | headline metric(s)                                     | computed, not headlined     |
