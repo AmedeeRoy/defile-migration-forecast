@@ -9,7 +9,9 @@ don't depend on `data/count/species_doy_statistics.json`'s actual content.
 """
 
 import numpy as np
+import pytest
 
+from src.data.weather import night_mask_by_doy_hour
 from src.phenology import RATIO_HOURS, Phenology
 
 
@@ -58,13 +60,25 @@ def test_hourly_shape_falls_back_to_uniform_on_a_zero_rate_day():
     assert (shape[RATIO_HOURS] > 0).all()
 
 
-def test_hourly_shape_matches_renormalised_hourly_rate_when_no_night_overlap():
-    """On a day where RATIO_HOURS is entirely daytime, hourly_shape should be exactly hourly_rate
-    renormalised to sum to 1 -- the night-zeroing step is then a no-op."""
-    phenology = _make_phenology({200: 10.0})
-    rate = phenology.hourly_rate([200])[0]
-    shape = phenology.hourly_shape([200])[0]
+@pytest.mark.parametrize("doy", [200, 260, 330])
+def test_hourly_shape_is_zero_exactly_at_astronomical_night(doy):
+    """The sun mask is the only thing that zeros an hour: every night hour is 0 and every daylight
+    hour is not -- including daylight hours outside RATIO_HOURS (05/18 UTC in summer), which are
+    surveyed and carry birds."""
+    phenology = _make_phenology({doy: 10.0})
+    shape = phenology.hourly_shape([doy])[0]
+    night = night_mask_by_doy_hour()[doy - 1]
+    assert np.array_equal(shape == 0, night)
 
-    # doy 200 (mid-July) at Defile's latitude: 6-17 UTC is entirely daylight, so nothing
-    # should have been zeroed.
-    assert np.allclose(shape, rate / rate.sum())
+
+def test_daylight_shoulder_hours_hold_the_nearest_fitted_hour():
+    """Doy 200 (mid-July): 05 and 18 UTC are daylight but outside RATIO_HOURS -- they take the edge
+    hour's value rather than 0."""
+    doy = 200
+    phenology = _make_phenology({doy: 10.0})
+    shape = phenology.hourly_shape([doy])[0]
+    night = night_mask_by_doy_hour()[doy - 1]
+    first, last = RATIO_HOURS[0], RATIO_HOURS[-1]
+    assert not night[first - 1] and not night[last + 1]  # premise: both are daylight in July
+    assert np.isclose(shape[first - 1], shape[first])
+    assert np.isclose(shape[last + 1], shape[last])

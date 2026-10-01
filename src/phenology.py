@@ -128,6 +128,13 @@ class Phenology:
         a deterministic astronomical fact is both cheaper and more reliable than
         extrapolating a spline into territory it has no real data for.
 
+        That mask is the *only* thing that zeros an hour. Daylight hours outside
+        `RATIO_HOURS` (05 UTC on summer mornings, 18 UTC on summer evenings) hold the nearest
+        fitted hour's value instead of 0: they are surveyed on hundreds of days and do carry
+        birds (hour 5 alone: 608 covered days, 762 Red Kites), and a zero prior there gives the
+        same -13.8 logit bias as midnight, which the hourly branch can only overcome by
+        driving its logits to the saturated, flat state it was meant to be anchored out of.
+
         Used as the shape prior `UNetplus`'s `out_h` defaults to before any weather
         evidence shifts it (see DECISIONS.md -> Model architecture) -- unlike every other
         method on this class, this one is read at training/forecast time, not only at
@@ -138,6 +145,9 @@ class Phenology:
         undefined once normalised.
         """
         profile = self.hourly_rate(doy)
+        first, last = RATIO_HOURS[0], RATIO_HOURS[-1]
+        profile[:, :first] = profile[:, [first]]
+        profile[:, last + 1 :] = profile[:, [last]]
         doy_arr = np.clip(np.asarray(doy), 1, 366)
         profile = np.where(night_mask_by_doy_hour()[doy_arr - 1], 0.0, profile)
 
