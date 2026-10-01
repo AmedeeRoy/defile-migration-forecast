@@ -128,7 +128,9 @@ installed locally: run `pre-commit install` once per clone.
   Learns the *shape* of the day, as a deviation from a climatological `prior_shape`
   (phenology-derived, passed through the datamodule) that anchors its default output.
 - **Daily branch** — a 1-D conv stack over the lag axis (`lag_day` days of history) on the
-  daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*.
+  daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*. Each block is
+  Conv → BatchNorm → ReLU; don't put BatchNorm after the ReLU (it saturated `out_d`, see
+  `DECISIONS.md` → Model architecture).
 - Combined multiplicatively: `out = 8 * out_h * out_d`, both sigmoid-bounded, so output is
   in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). Night is defined once, by the sun
   (below −6°, `night_mask_by_doy_hour`): `prior_shape` is zero exactly then, and `forward`
@@ -139,7 +141,7 @@ installed locally: run `pre-commit install` once per clone.
 Targets are hourly rates (`count / survey duration`), with a 24-element `mask` giving the
 fraction of each hour covered by the survey. Loss is `TweedieLoss` alone
 (`src/models/criterion.py`; `ProbaRMSE` still exists but is off by default), with `p` tuned
-per species in `configs/experiment/*.yaml`. Training is deterministic for a given seed.
+per species in `configs/experiment/*.yaml`. Training is deterministic for a given seed and CPU thread count.
 
 Feature-count expressions in `configs/model/unet.yaml` are derived from the data config via
 Hydra resolvers (`${len:...}`, `${eval:...}`) — if you change the variable/location lists
@@ -222,8 +224,9 @@ Concretely:
   add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
 **Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
-checkpoints in `prod/models/` and the values in `configs/experiment/*.yaml` predate several
-fixes and the weather migration, and should be considered void until retrained.
+checkpoints in `prod/models/` are retrained on the current architecture, but the values in
+`configs/experiment/*.yaml` were tuned on an older one, and single-seed skill moves by ±0.1
+from seed alone.
 
 The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
 25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and
