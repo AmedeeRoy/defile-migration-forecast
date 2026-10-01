@@ -37,7 +37,7 @@ def test_hourly_shape_sums_to_one():
 
 
 def test_hourly_shape_is_zero_at_astronomical_night():
-    """Midwinter (doy 1) has the shortest day at this latitude -- RATIO_HOURS' fixed 6-17 window
+    """Midwinter (doy 1) has the shortest day at this latitude -- RATIO_HOURS' fixed 4-18 window
     includes hours that are astronomically night that far into winter, and hourly_shape must zero
     those out even though hourly_rate (pre-existing, unchanged) does not."""
     phenology = _make_phenology({1: 10.0})
@@ -63,8 +63,8 @@ def test_hourly_shape_falls_back_to_uniform_on_a_zero_rate_day():
 @pytest.mark.parametrize("doy", [200, 260, 330])
 def test_hourly_shape_is_zero_exactly_at_astronomical_night(doy):
     """The sun mask is the only thing that zeros an hour: every night hour is 0 and every daylight
-    hour is not -- including daylight hours outside RATIO_HOURS (05/18 UTC in summer), which are
-    surveyed and carry birds."""
+    hour is not -- including daylight hours outside RATIO_HOURS (03/19 UTC in July), which UNetplus
+    would otherwise be forbidden to predict."""
     phenology = _make_phenology({doy: 10.0})
     shape = phenology.hourly_shape([doy])[0]
     night = night_mask_by_doy_hour()[doy - 1]
@@ -72,8 +72,8 @@ def test_hourly_shape_is_zero_exactly_at_astronomical_night(doy):
 
 
 def test_daylight_shoulder_hours_hold_the_nearest_fitted_hour():
-    """Doy 200 (mid-July): 05 and 18 UTC are daylight but outside RATIO_HOURS -- they take the edge
-    hour's value rather than 0."""
+    """Doy 200 (mid-July): 03 and 19 UTC are partly daylight but outside RATIO_HOURS -- they take
+    the edge hour's value rather than 0."""
     doy = 200
     phenology = _make_phenology({doy: 10.0})
     shape = phenology.hourly_shape([doy])[0]
@@ -86,8 +86,11 @@ def test_daylight_shoulder_hours_hold_the_nearest_fitted_hour():
 
 def test_night_mask_keeps_partly_light_dawn_hours_predictable():
     """Doy 277 (early October): the sun is below -6 deg at 05:00 UTC but above it by 06:00, and
-    dawn surveys in that hour count Red Kites -- so 05 UTC must not be night (it was, when the
-    mask sampled only the start of each hour). Midnight stays night."""
+    dawn surveys in that hour count Red Kites -- so 05 UTC must not be night (it was, when the mask
+    sampled only the start of each hour).
+
+    Midnight stays night.
+    """
     night = night_mask_by_doy_hour()[277 - 1]
     assert not night[5]
     assert night[0] and night[23]

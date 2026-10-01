@@ -190,7 +190,7 @@ of a constant recreates at any size, not just at the scale of a whole module.
 
 Concretely:
 
-- **Before writing a literal, grep for it.** `1993`, `"#0072B2"`, `range(6, 18)` each
+- **Before writing a literal, grep for it.** `1993`, `"#0072B2"`, `range(4, 19)` each
   already have an owner somewhere in this codebase — a repeated literal is the signal
   to import the existing constant, not retype it. `src/metrics.py`'s `ERA_EDGES`
   (`(1993, 2014)`) is the one definition of the era boundaries; `DefileDataModule`'s
@@ -212,7 +212,7 @@ Concretely:
   deliberately not Hydra-configurable for this reason.
 - **Cross-module reuse goes through the owning module's public name**, not a copy —
   `from src.phenology import RATIO_HOURS`, `from src.plots.panels import C_PRED`, not a
-  second `RATIO_HOURS = np.arange(6, 18)` or `C_ATTR = "#0072B2"` a few files away.
+  second `RATIO_HOURS = np.arange(4, 19)` or `C_ATTR = "#0072B2"` a few files away.
 
 ## Roadmap and decisions — read before making changes
 

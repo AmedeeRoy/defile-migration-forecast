@@ -110,6 +110,24 @@ phenology over 3 seeds on this architecture against 0.47 for one seed before it,
 season total ratio of 1.33–1.45 against 1.13. The seed spread is as large as the gap, so this
 needs seeds on both sides before it is called a regression.
 
+Two follow-ups after checking the prior against the raw counts:
+
+- The night mask sampled the sun at the *start* of each hour, so a mostly-twilight dawn hour was
+  night, and with the hard mask unpredictable: 482 Red Kites counted in ≤1 h periods at 05 UTC
+  in October fell there. An hour is now night only if the sun stays below −6° for all of it
+  (0 birds left in night hours). Model metrics moved within seed noise (Red Kite, 3 seeds:
+  0.16/0.17/0.16 → 0.04/0.16/0.14, seed 0 an outlier).
+- The `ratio` GAM was predicted on 06–17 UTC only, though it was fitted on samples from every
+  surveyed hour, and the edge hour was copied into 05/18, overstating both (Marsh Harrier hour
+  18: observed 0.15 of the daily rate, prior 0.85). `RATIO_HOURS` is now 04–18, every hour with
+  data. The fit also weighted a 2-bird day like a 2 000-bird one, which pulled Honey Buzzard's
+  peak to 09 UTC against an observed 13; days are now weighted by √count. Fit on even years,
+  scored on odd years' observed hourly profile (L1, 7 species): 0.277 before, 0.253 with the
+  wider grid, 0.213 with both (full count weighting: 0.229, a few huge days dominate). Model,
+  seed 0 unless noted: Common Buzzard 0.41 → 0.46 skill and season total ratio 1.30 → 1.07;
+  Sparrowhawk 0.28 → 0.29 (ratio 2.37 → 1.86); Red Kite 3 seeds 0.04/0.16/0.14 →
+  0.15/0.14/0.12; Marsh Harrier 0.21 → 0.15, the one regression, unsized.
+
 Red Kite's remaining over-prediction is its pre-1993 test years (the species was rare then and
 `year_used: "constant"` hides the year), not night — see `DEVELOPMENT.md`.
 
