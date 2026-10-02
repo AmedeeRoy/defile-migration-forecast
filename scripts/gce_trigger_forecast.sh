@@ -6,7 +6,7 @@
 # cron is kept only as a fallback if the VM is down (see the workflow file).
 #
 # Times (UTC) are set from when ECMWF IFS runs reach Open-Meteo (~7.3 h after their start,
-# measured with scripts/measure_openmeteo_delay.py):
+# measured from Open-Meteo's model metadata):
 #   04:30  morning forecast, on the previous day's 18z run (available ~01:15)
 #   09:00  update, on today's 00z run (available ~08:00-08:30)
 # Forecast files are named by run date and a later run overwrites the earlier one.
