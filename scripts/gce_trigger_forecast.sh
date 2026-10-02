@@ -12,9 +12,12 @@
 # Forecast files are named by run date and a later run overwrites the earlier one.
 #
 # Setup on the VM (once):
-#   1. Create a fine-grained token at https://github.com/settings/personal-access-tokens:
-#      repository access = AmedeeRoy/defile-migration-forecast only,
-#      permissions = Actions: Read and write (nothing else).
+#   1. The repo owner (AmedeeRoy) creates a fine-grained token: a fine-grained token can only
+#      reach repos its creator's account or org owns, so a collaborator cannot make one here.
+#      At https://github.com/settings/personal-access-tokens/new: resource owner = AmedeeRoy,
+#      repository access = only defile-migration-forecast, permissions = Actions: Read and
+#      write (nothing else), expiry <= 1 year. Hand it over privately, never in an issue or PR.
+#      When it expires dispatches log "FAILED HTTP 401" and only the fallback crons run.
 #   2. mkdir -p ~/.config/defile && install -m 600 /dev/null ~/.config/defile/github_token
 #      then paste the token into that file.
 #   3. Copy this script to ~/bin/gce_trigger_forecast.sh and chmod +x it.
