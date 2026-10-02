@@ -56,6 +56,10 @@ The count is `direction1` (birds moving in the main migration direction).
 5. Periods shorter than 10 min are dropped, with their birds. This is mostly the partial last hour of a split period.
 6. Entries of the same species in the same period are summed.
 
+### Both sources
+
+- **Empty surveys.** A survey with no entry at all (`no_entries` in the dataset) gets a `No species` row with count 0 only if the same day has other entries: an hour counted with nothing seen. A whole day entered as one empty count is a day without counting ("Hors protocole": rain, low cloud), not effort; zero-filling it would teach the model that bad weather means no birds, when nobody was watching. Surveys flagged `records_deleted`, or shorter than 10 min, are not used either.
+
 ## Checks
 
 Run on every build and listed at the top of the report: every bird of the dataset is either in

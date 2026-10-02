@@ -36,7 +36,8 @@ def _trektellen(entries: list[tuple], surveys: list[tuple]):
     s = pd.DataFrame(surveys, columns=["survey_id", "start", "end"])
     s["start"] = s["start"].map(lambda t: utc(f"{DAY} {t}"))
     s["end"] = s["end"].map(lambda t: utc(f"{DAY} {t}"))
-    s["source"] = "trektellen"
+    s["source"], s["flags"], s["duplicate_of"] = "trektellen", "", None
+    s["date"] = pd.Timestamp(DAY)
     return s, o.drop(columns="t")
 
 
@@ -50,7 +51,8 @@ def _historical(rows: list[tuple], day=("08:00", "12:00")):
     for c in ("start", "end"):
         s[c] = s[c].map(lambda t: utc(f"2015-09-15 {t}"))
     s["day_start"], s["day_end"] = utc(f"2015-09-15 {day[0]}"), utc(f"2015-09-15 {day[1]}")
-    s["source"] = "historical"
+    s["source"], s["flags"], s["duplicate_of"] = "historical", "", None
+    s["date"] = pd.Timestamp("2015-09-15")
     return s, o.drop(columns=["start", "end"])
 
 
@@ -173,3 +175,21 @@ def test_checks_pass_on_clean_input():
     assert status["Birds accounted for"] == "pass"
     assert status["No overlapping periods"] == "pass"
     assert status["Surveyed hours with no row"] == "pass"
+
+
+def test_empty_survey_is_a_zero_only_on_a_counted_day():
+    surveys, obs = _trektellen(
+        [("T10", "06:30", "Red Kite", 5, "")],
+        [("T10", "06:00", "07:00"), ("T11", "07:00", "08:00"), ("T12", "06:00", "18:00")],
+    )
+    surveys.loc[surveys["survey_id"].isin(["T11", "T12"]), "flags"] = C.FLAG_NO_ENTRIES
+    alone = surveys["survey_id"] == "T12"  # the next day, alone on it
+    surveys.loc[alone, "date"] = pd.Timestamp("2023-08-02")
+    surveys.loc[alone, ["start", "end"]] += pd.Timedelta(days=1)
+    log = C.ProcessingLog()
+    counts, _ = C.trektellen_model_counts(obs, surveys, log)
+    out = C.zero_fill_empty_surveys(counts, surveys, "trektellen", log)
+    zeros = out[out["species"] == C.NO_SPECIES]
+    assert zeros["start"].tolist() == [utc(f"{DAY} 07:00")]  # T11; not the empty day T12
+    not_used = next(s for s in log.steps if s.name == "Empty survey on a day not counted")
+    assert not_used.rows["survey_id"].tolist() == ["T12"]

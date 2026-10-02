@@ -47,6 +47,10 @@ EXCLUDED_FLAGS = {
     "time_outside_survey": "Timestamp more than 10 min outside its count period.",
 }
 
+# Dataset survey flags (defile-dataset `build.py`).
+FLAG_NO_ENTRIES = "no_entries"  # survey with no observation at all
+FLAG_RECORDS_DELETED = "records_deleted"  # its records were deleted in the manual cleaning
+
 # A period is split into clock hours only if it is longer than this ...
 SPLIT_MIN_DURATION = pd.Timedelta(hours=2)
 # ... and (Trektellen) fewer than this share of its sightings with migrating birds lack a
@@ -83,6 +87,7 @@ def read_dataset(data_dir: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     for c in ("start", "end", "start_original", "end_original", "day_start", "day_end"):
         surveys[c] = pd.to_datetime(surveys[c], utc=True)
     surveys["date"] = pd.to_datetime(surveys["date"])
+    surveys["flags"] = surveys["flags"].fillna("")
     observations = pd.read_csv(os.path.join(folder, "observations.csv"), low_memory=False)
     for c in ("datetime", "datetime_original"):
         observations[c] = pd.to_datetime(observations[c], utc=True, format="ISO8601")
@@ -344,6 +349,44 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     return out[OUTPUT_COLUMNS], windows
 
 
+def zero_fill_empty_surveys(
+    counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog
+) -> pd.DataFrame:
+    """Surveys with no entry at all: a zero only where the day was counted.
+
+    An empty hour among a day's hourly counts (2022-09-05) is a real zero. A whole day entered as
+    one empty count is a day without counting ("Hors protocole": rain, low cloud), not a day with
+    nothing seen, so it is not effort -- zero-filling those would teach the model that bad weather
+    means no birds, when nobody was watching.
+    """
+    flags = surveys["flags"].str.split(";")
+    empty = surveys[
+        flags.apply(lambda f: FLAG_NO_ENTRIES in f and FLAG_RECORDS_DELETED not in f)
+        & surveys["duplicate_of"].isna()
+        & ((surveys["end"] - surveys["start"]) >= MIN_PERIOD_DURATION)
+    ]
+    free = ~overlaps_any(empty["start"], empty["end"], counts["start"], counts["end"])
+    counted_day = empty["date"].isin(counts["date"])
+    zeros = empty[free & counted_day][["date", "start", "end"]].assign(species=NO_SPECIES, count=0)
+    log.record(
+        src,
+        "Zero-fill empty surveys",
+        "added",
+        f"A survey with no entry, on a day with other entries, gets a '{NO_SPECIES}' row with "
+        "count 0: an hour counted with nothing seen.",
+        zeros,
+    )
+    log.record(
+        src,
+        "Empty survey on a day not counted",
+        "not used",
+        "A survey with no entry on a day with no other entry is a day without counting "
+        "(e.g. 'Hors protocole' in rain), not a day with nothing seen: not effort.",
+        empty[free & ~counted_day][["survey_id", "date", "start", "end", "flags"]],
+    )
+    return pd.concat([counts, zeros[OUTPUT_COLUMNS]], ignore_index=True) if len(zeros) else counts
+
+
 def model_species(obs: pd.DataFrame) -> pd.Series:
     """The model's name for each observation's taxon.
 
@@ -377,7 +420,9 @@ def build_model_counts(surveys: pd.DataFrame, observations: pd.DataFrame) -> Mod
         ("trektellen", trektellen_model_counts),
     ):
         obs = observations[observations["source"] == src]
-        counts, windows[src] = fn(obs, surveys[surveys["source"] == src], log)
+        src_surveys = surveys[surveys["source"] == src]
+        counts, windows[src] = fn(obs, src_surveys, log)
+        counts = zero_fill_empty_surveys(counts, src_surveys, src, log)
         parts.append(counts)
         raw[src] = obs.groupby(obs["date"].dt.year)["count"].sum()
     out = (
