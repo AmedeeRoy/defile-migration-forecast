@@ -34,6 +34,9 @@ DATASET_FILES = ("surveys.csv", "observations.csv", "metadata.json")
 
 # Effort placeholder for an hour surveyed with no bird recorded.
 NO_SPECIES = "No species"
+# One name for every non-bird taxon recorded (butterflies, dragonflies, ...): never modelled,
+# but their entries still mark their period as surveyed.
+NON_BIRD = "Non-bird"
 
 # Dataset flags (defile-dataset `build.py`) whose observations the model cannot use.
 EXCLUDED_FLAGS = {
@@ -198,9 +201,9 @@ def historical_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     df = _drop_flagged(obs, src, log)
     df = _with_survey(df, surveys, ["start", "end", "day_start", "day_end"])
 
-    # Grouped by the original (French) name: two names mapping to one English name would
-    # stay two rows, which the "One row per species and period" check would catch.
-    keys = ["taxon_name_original", "english_name", "date", "start", "end", "day_start", "day_end"]
+    # Grouped by the original (French) name: two names mapping to one species would stay two
+    # rows, which the "One row per species and period" check would catch.
+    keys = ["taxon_name_original", "species", "date", "start", "end", "day_start", "day_end"]
     merged = df.groupby(keys, as_index=False, dropna=False).agg(count=("count", "sum"))
     log.record(
         src,
@@ -229,7 +232,7 @@ def historical_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     )
     slots = hourly_slots(windows)
     empty = ~overlaps_any(slots["start"], slots["end"], df["start"], df["end"])
-    zeros = slots[empty].assign(english_name=NO_SPECIES, count=0)
+    zeros = slots[empty].assign(species=NO_SPECIES, count=0)
     log.record(
         src,
         "Zero-fill empty hours",
@@ -241,7 +244,7 @@ def historical_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     )
     if len(zeros):
         df = pd.concat([df, zeros], ignore_index=True)
-    return df.rename(columns={"english_name": "species"})[OUTPUT_COLUMNS], windows
+    return df[OUTPUT_COLUMNS], windows
 
 
 def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: ProcessingLog):
@@ -302,7 +305,7 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     slots = hourly_slots(windows)
     slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
     empty = ~overlaps_any(slots["start"], slots["end"], df["start"], df["end"])
-    zeros = slots[empty].assign(english_name=NO_SPECIES, count=0)
+    zeros = slots[empty].assign(species=NO_SPECIES, count=0)
     log.record(
         src,
         "Zero-fill empty hours",
@@ -323,7 +326,7 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
         "short for a reliable hourly rate. Mostly the partial last hour of a split period.",
         df[short],
     )
-    df = df[~short].rename(columns={"english_name": "species"})
+    df = df[~short]
 
     mapped = df[df["species"].notna()]
     merged = mapped.groupby(["species", "date", "start", "end"], as_index=False)["count"].sum()
@@ -341,8 +344,33 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     return out[OUTPUT_COLUMNS], windows
 
 
+def model_species(obs: pd.DataFrame) -> pd.Series:
+    """The model's name for each observation's taxon.
+
+    The eBird English name, which `configs/experiment/*.yaml` and defileViz use (the dataset's
+    `english_name` follows AviList, which renames e.g. Eurasian Kestrel to Common Kestrel), else
+    the AviList one; `No species` for effort markers; `Non-bird` for non-birds.
+    """
+    name = obs["ebird_english_name"].fillna(obs["english_name"]).where(obs["taxon_kind"] == "bird")
+    name = name.mask(obs["taxon_kind"] == "no_species", NO_SPECIES)
+    return name.mask(obs["taxon_kind"] == "non_bird", NON_BIRD)
+
+
+def trektellen_species_ids(observations: pd.DataFrame) -> dict[str, int]:
+    """Model species name -> Trektellen species id, from the dataset's Trektellen observations.
+
+    Where one name has several ids, the most frequent one.
+    """
+    t = observations[observations["source"] == "trektellen"]
+    t = t.assign(species=model_species(t)).dropna(subset=["species", "trektellen_species_id"])
+    top = t.groupby(["species", "trektellen_species_id"]).size().reset_index(name="n")
+    top = top.sort_values("n", ascending=False).drop_duplicates("species")
+    return dict(zip(top["species"], top["trektellen_species_id"].astype(int)))
+
+
 def build_model_counts(surveys: pd.DataFrame, observations: pd.DataFrame) -> ModelCounts:
     log = ProcessingLog()
+    observations = observations.assign(species=model_species(observations))
     parts, windows, raw = [], {}, {}
     for src, fn in (
         ("historical", historical_model_counts),

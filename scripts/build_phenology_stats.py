@@ -50,7 +50,6 @@ pre-smoothing ratio samples), use this module's `PhenologyBuilder` directly.
 """
 
 import argparse
-import math
 import os
 import sys
 
@@ -69,6 +68,7 @@ from scripts._species_stats_common import (  # noqa: E402
     species_from_experiments,
     write_json_atomic,
 )
+from src.data.counts import read_dataset, trektellen_species_ids  # noqa: E402
 from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
 
 # Percentiles baked into the currently-committed file (`quantile_levels`); kept as the
@@ -138,17 +138,10 @@ class PhenologyBuilder:
 
     @staticmethod
     def _load_trektellen_ids(data_dir: str) -> dict:
-        taxonomy = pd.read_csv(os.path.join(data_dir, "taxonomy.csv"))
-        taxonomy["trektellen_species_id"] = pd.to_numeric(
-            taxonomy["trektellen_species_id"], errors="coerce"
-        )
-        return {
-            name: int(tid)
-            for name, tid in taxonomy[["English name", "trektellen_species_id"]].itertuples(
-                index=False
-            )
-            if not (isinstance(tid, float) and math.isnan(tid))
-        }
+        """Species name -> Trektellen species id, from the defile-dataset tables (in
+        data/count/dataset/, copied by scripts/build_counts.py)."""
+        _, observations, _ = read_dataset(data_dir)
+        return trektellen_species_ids(observations)
 
     def _count_species(self, species: str) -> pd.DataFrame:
         """Every observation period, zero-filled for periods with no record of `species`."""

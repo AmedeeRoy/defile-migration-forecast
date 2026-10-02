@@ -17,12 +17,20 @@ def utc(local: str) -> pd.Timestamp:
     return pd.Timestamp(local).tz_localize(C.TIMEZONE).tz_convert("UTC")
 
 
+def _taxon(o: pd.DataFrame) -> pd.DataFrame:
+    """The dataset's taxon columns, from a `species` column (the model's name)."""
+    o["taxon_name_original"] = o["ebird_english_name"] = o["species"]
+    o["english_name"] = None
+    o["taxon_kind"] = "bird"
+    return o
+
+
 def _trektellen(entries: list[tuple], surveys: list[tuple]):
     """entries: (survey id, local time or None, english name, count, flags);
     surveys: (survey id, local start, local end)."""
-    o = pd.DataFrame(entries, columns=["survey_id", "t", "english_name", "count", "flags"])
+    o = pd.DataFrame(entries, columns=["survey_id", "t", "species", "count", "flags"])
     o["source"], o["date"] = "trektellen", pd.Timestamp(DAY)
-    o["taxon_name_original"] = o["english_name"]
+    o = _taxon(o)
     local = pd.to_datetime(DAY + " " + o["t"].fillna("00:00")).where(o["t"].notna())
     o["datetime"] = local.dt.tz_localize(C.TIMEZONE).dt.tz_convert("UTC")
     s = pd.DataFrame(surveys, columns=["survey_id", "start", "end"])
@@ -34,8 +42,8 @@ def _trektellen(entries: list[tuple], surveys: list[tuple]):
 
 def _historical(rows: list[tuple], day=("08:00", "12:00")):
     """Rows: (English name, local start, local end, count), all on one day."""
-    o = pd.DataFrame(rows, columns=["english_name", "start", "end", "count"])
-    o["taxon_name_original"] = o["english_name"]
+    o = pd.DataFrame(rows, columns=["species", "start", "end", "count"])
+    o = _taxon(o)
     o["source"], o["date"], o["flags"] = "historical", pd.Timestamp("2015-09-15"), ""
     o["survey_id"] = "H" + o["start"] + o["end"]
     s = o[["survey_id", "start", "end"]].drop_duplicates().copy()
@@ -137,13 +145,30 @@ def test_historical_whole_day_record_is_not_zero_filled():
     assert list(out["species"]) == ["Red Kite"]
 
 
+def test_model_species_prefers_ebird_names():
+    obs = pd.DataFrame(
+        {
+            "ebird_english_name": ["Eurasian Kestrel", None, None, None],
+            "english_name": ["Common Kestrel", "Carrion Crow (cornix)", None, None],
+            "taxon_kind": ["bird", "bird", "no_species", "non_bird"],
+        }
+    )
+    assert C.model_species(obs).tolist() == [
+        "Eurasian Kestrel",
+        "Carrion Crow (cornix)",
+        C.NO_SPECIES,
+        C.NON_BIRD,
+    ]
+
+
 def test_checks_pass_on_clean_input():
     hs, ho = _historical([("Red Kite", "08:00", "09:00", 3), ("Red Kite", "10:00", "11:00", 1)])
     ts, to = _trektellen(
         [("T10", "06:30", "Red Kite", 5, ""), ("T10", "08:30", "Red Kite", 1, "")],
         [("T10", "06:00", "09:00")],
     )
-    mc = C.build_model_counts(pd.concat([hs, ts]), pd.concat([ho, to]))
+    obs = pd.concat([ho, to]).drop(columns="species")
+    mc = C.build_model_counts(pd.concat([hs, ts]), obs)
     status = {c.name: c.status for c in C.check_model_counts(mc)}
     assert status["Birds accounted for"] == "pass"
     assert status["No overlapping periods"] == "pass"

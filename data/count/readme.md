@@ -21,15 +21,15 @@ rows and birds it touched.
 
 ## What the model needs
 
-`all_count_processed.csv` has one row per species per survey period: `species` (English name),
+`all_count_processed.csv` has one row per species per survey period: `species` (the eBird English name of the dataset's `avibase_id`, as `configs/experiment/` and defileViz use them; the AviList name where eBird has none; `No species` and `Non-bird` placeholders),
 `date` (local), `count`, `start`/`end` (UTC). Effort is not stored separately: **a survey period
 is any `(start, end)` that appears on at least one row**, and a species absent from a period is
 counted as zero there. Two consequences:
 
 - An hour surveyed with no bird of any species must still get a row, or it is not effort at
   all. These rows have species `No species` and count 0.
-- Rows of taxa without an English name are kept without a name: they count for no species but
-  still mark their period as surveyed.
+- Rows of non-birds (butterflies, dragonflies) are kept as `Non-bird`: they count for no
+  species but still mark their period as surveyed.
 
 The model works on clock hours (UTC). Data recorded hour by hour is kept as hours; data recorded
 as one total for a long period stays one long period (the datamodule uses its mean hourly rate,

@@ -84,14 +84,12 @@ def _badge(status: str) -> str:
 
 
 def _species_label(rows: pd.DataFrame) -> pd.Series:
-    if "english_name" in rows:
-        return rows["english_name"].fillna(rows["taxon_name_original"])
-    return rows["species"].fillna("(no species)")
+    return rows["species"].fillna(rows.get("taxon_name_original", "(no species)"))
 
 
 def _breakdown(rows: pd.DataFrame) -> str:
     """Rows and birds per species and per year, for a step's rows."""
-    if rows.empty or "count" not in rows or not {"species", "english_name"} & set(rows):
+    if rows.empty or "count" not in rows or "species" not in rows:
         return ""
     r = rows.assign(_species=_species_label(rows), _year=rows["date"].dt.year)
     by_sp = (
