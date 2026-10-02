@@ -181,7 +181,7 @@ Everything the model reads or writes is in **UTC**, end to end:
   offset zero, unaffected by daylight saving), so both the hourly `time` coordinate
   (0–23) and the `date` coordinate are UTC.
 - **Counts** are recorded in the field in local time (Europe/Paris, CET/CEST) and
-  converted once, in `notebooks/processing_count_data.ipynb`, via
+  converted once, in the defile-dataset repo (`read.py`), via
   `tz_localize("Europe/Paris", ambiguous="NaT")` followed by `tz_convert("UTC")`. The
   resulting `all_count_processed.csv` stores `start`/`end` as UTC timestamps; the hourly
   coverage `mask` built from them in `DefileDataModule.read_counts` (`src/data/defile_datamodule.py`)

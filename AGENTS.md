@@ -38,14 +38,15 @@ scripts/
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
-tests/                            pytest suite (weather, predict guards, unet prior, phenology, datamodule)
+  build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
+tests/                            pytest suite (weather, counts, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
   metrics.py                      row/day/shape/season metrics + the phenology baseline
-  data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform
+  data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform, model processing of the counts (counts.py)
   models/                          LightningModule, criterion (Tweedie loss, etc.), components/ (unet/transformer/convnet)
   phenology.py                    Phenology baseline + the 24h shape prior fed to the UNet
-  plots/                           per-species PDF test report + prediction plots
+  plots/                           per-species PDF test report, prediction plots, count QA report
   utils/                           logging, instantiators, misc helpers
 ```
 
@@ -231,7 +232,8 @@ serving products there (~0.93 over flat terrain), even with the forecast pinned 
 `ecmwf_ifs025`. It is a real train/serve distribution shift and plausibly the biggest
 remaining limit on forecast skill (`DECISIONS.md` → Weather).
 
-Tests live in `tests/`: the weather layer (`test_weather.py`), the datamodule's `prior_shape`
+Tests live in `tests/`: the weather layer (`test_weather.py`), the count processing
+(`test_counts.py`), the datamodule's `prior_shape`
 plumbing, `UNetplus`'s shape-prior anchoring, the phenology baseline, and the predict-time
 season guard. Metrics, plots and the rest of the training loop have none;
 `debug=default` is the smoke test for those.
@@ -249,9 +251,16 @@ rather than editing `configs/data/defile.yaml` directly.
 ## Data pipeline notes
 
 - Counts: `data/count/all_count_processed.csv`, one row per species per survey period,
-  1966–2025, `start`/`end` in UTC. Survey protocol and recording granularity changed
-  repeatedly over that span — `data/count/readme.md` documents the history and is
-  essential reading before making modelling decisions about which years to use.
+  1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
+  in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
+  locally), which builds `surveys.csv` + `observations.csv` (every record and field kept,
+  corrections flagged, never removed) and a report of Trektellen entry errors.
+  `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
+  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: hour
+  splitting, zero-fill, dropping the flagged rows the model cannot use); its HTML report in
+  `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
+  choices here. Survey protocol and recording granularity changed repeatedly over the years:
+  defile-dataset's README has the history, essential before choosing which years to use.
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field

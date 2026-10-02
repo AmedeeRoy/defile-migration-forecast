@@ -17,6 +17,9 @@ __pycache__/
 *.csv
 *.sqlite
 
+# count tables copied from defile-dataset by scripts/build_counts.py --dataset
+data/count/dataset/
+
 # weather cache, rebuilt with scripts/build_weather_cache.py
 data/weather/
 .cache.sqlite
