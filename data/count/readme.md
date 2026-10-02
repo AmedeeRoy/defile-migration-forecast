@@ -49,7 +49,7 @@ Observations the dataset flags `no_time`, `no_survey`, `duplicate_survey` or
 
 The count is `direction1` (birds moving in the main migration direction).
 
-1. **Splitting.** A count period is split into clock hours if it lasts more than 2 h and fewer than half of its entries lack a timestamp. Otherwise it stays one period.
+1. **Splitting.** A count period is split into clock hours if it lasts more than 2 h and fewer than half of its entries with migrating birds (`count > 0`) lack a timestamp. Otherwise it stays one period. Entries of local birds only are left out of that share: they are often untimed even in a timed count.
 2. In a split period, entries without a timestamp are dropped: they cannot be placed in an hour. They are mostly local birds, or totals entered at the end of the day.
 3. Each entry of a split period gets the clock hour of its timestamp as its period, clipped to the count period.
 4. **Zero-fill.** Each clock hour (at least 10 min) of a split period with no entry of any species gets a `No species` row with count 0.

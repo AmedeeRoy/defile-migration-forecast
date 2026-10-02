@@ -46,7 +46,8 @@ EXCLUDED_FLAGS = {
 
 # A period is split into clock hours only if it is longer than this ...
 SPLIT_MIN_DURATION = pd.Timedelta(hours=2)
-# ... and (Trektellen) fewer than this share of its sightings lack a timestamp.
+# ... and (Trektellen) fewer than this share of its sightings with migrating birds lack a
+# timestamp.
 SPLIT_MAX_UNTIMED_SHARE = 0.5
 # Periods shorter than this are dropped, with their birds (Trektellen only).
 MIN_PERIOD_DURATION = pd.Timedelta(minutes=10)
@@ -252,9 +253,12 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     df = _drop_flagged(obs, src, log)
     df = _with_survey(df, surveys, ["start", "end"])
 
-    # Which periods to split into hours: long enough, and mostly timestamped.
+    # Which periods to split into hours: long enough, and mostly timestamped. The share is over
+    # entries with migrating birds: untimed entries of local birds only (count 0) say nothing
+    # about whether the count was timed, and would otherwise un-split a timed count.
     stats = (
-        df.groupby(["survey_id", "date", "start", "end"])
+        df[df["count"] > 0]
+        .groupby(["survey_id", "date", "start", "end"])
         .agg(n=("datetime", "size"), untimed=("datetime", lambda x: x.isna().sum()))
         .reset_index()
     )
