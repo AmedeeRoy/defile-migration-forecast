@@ -240,8 +240,9 @@ python src/predict.py --multirun experiment=common_buzzard,red_kite,black_kite,h
 
 ## Operational pipeline
 
-`.github/workflows/predict_and_deploy_forecasts.yml` runs daily at 03:00 UTC (and on push
-to `main`, or manually). It installs the pinned environment with `uv sync`, runs prediction
+`.github/workflows/predict_and_deploy_forecasts.yml` runs twice a day, dispatched at 04:30 and 09:00 UTC
+by the GCE host's cron (`scripts/gce_trigger_forecast.sh`), with GitHub crons as a fallback
+(and on push to `main`, or manually). It installs the pinned environment with `uv sync`, runs prediction
 for all eleven species, and uploads the resulting NetCDF files to a GCE host, from which the
 defileViz front end fetches them directly at
 `https://defile.raphaelnussbaumer.com/forecasts/<Species_Name>/<YYYYMMDD>_<Species_Name>.nc`.
