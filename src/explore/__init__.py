@@ -4,7 +4,9 @@ Contained here on purpose, so the forecast does not grow into a tool for the Exp
 
 - `export`: a raw aggregation of the defile-dataset release tables (daily totals, effort, taxa,
   reports), written as JSON by `scripts/build_explore.py`. No model processing.
-- `profile`: the effort adjustment (time-of-day profile, coverage, annual index), variant A.
+- `profile`: the effort adjustment (time-of-day profile, coverage, annual index).
+- `trend`: a taxon's smooth trend, season and phenology shift, and gap-filled annual totals; a
+  GAM and a Gaussian-process variant, benchmarked by `scripts/benchmark_trend.py`.
 
 The boundary runs one way. This package may import the forecast's shared pieces
 (`src.data.counts` to read the release, `src.phenology.fit_ratio_surface`, `src.metrics`), but

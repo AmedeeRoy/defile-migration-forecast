@@ -13,7 +13,9 @@ Files, written by `scripts/build_explore.py` (one `build_*` function each):
 - `manifest.json`: when and from which dataset build it was made, the date range, partial years,
   the default window and the tier thresholds.
 - `taxa.json`: one entry per taxon, with names (French from the eBird taxonomy), rank,
-  occurrence tier, totals, and `start_year`, the first year its counts are comparable from.
+  occurrence tier, totals, and `start_year`, the first year its counts are comparable from. Combined
+  series (`COMBINED`: all Columba pigeons, all swallows and martins) are taxa too, with rank
+  `combined` and their `members`, and a `species/` file of their own.
 - `effort.json`: one entry per local day with any survey: counted hours (union of `complete`
   survey intervals), first/last counted time, hours counted per local clock hour, and the hours of
   `partial`, `unknown` and `none` (not counted) surveys.
@@ -63,11 +65,14 @@ TIER_RARE_MAX_DAYS = 10
 # Start year: the first year a taxon's counts are comparable from (`start_year`); earlier years
 # are exported raw but get no adjusted value, and defileViz crops its annual series there.
 # Systematic daily counting began in 1993. Its targets were always raptors, herons and egrets,
-# pigeons and corvids (and other large birds, counted individually); passerines were hardly
+# storks, pigeons and corvids, and other large birds counted individually (cranes, geese, ducks); passerines were hardly
 # recorded before 2007, when the number of passerine taxa doubles and their birds rise 15-fold
 # (defile-dataset docs/sampling-history.md). Targets start in 1993 even when rare then (Peregrine
 # recovered); any other taxon starts in 1993 only if recorded in at least `START_MIN_SHARE` as
-# large a share of the 1993-2006 years as of the later ones, else in 2007.
+# large a share of the 1993-2006 years as of the later ones, else in 2007. A year counts as
+# recorded only with at least `START_MIN_YEAR_BIRDS` of the taxon's median year since 2007: a few
+# birds noted in a year it was not counted (swallows 2000-2006: under 1% of a year since) are not
+# a series. A floor relative to recent years also penalises a real increase, so it stays low.
 SYSTEMATIC_FROM = ERA_EDGES[0]
 ALL_GROUPS_FROM = 2007
 TARGET_ORDERS = {
@@ -76,9 +81,39 @@ TARGET_ORDERS = {
     "Pelecaniformes",
     "Ciconiiformes",
     "Columbiformes",
+    "Gruiformes",
+    "Anseriformes",
 }
 TARGET_FAMILIES = {"Corvidae"}
 START_MIN_SHARE = 0.75
+START_MIN_YEAR_BIRDS = 0.02
+
+# Combined series: taxa whose split between names changed over the years, so a member's series
+# shifts while the sum does not. Wood Pigeon has a "Columba sp." beside it only from 2014 (a
+# quarter of the pigeons since); swallows were "swallow sp." in 1993-1999, and are increasingly
+# identified since 2021. Each is exported like a taxon (`add_combined`), with its `members`, and
+# gets a start year by the same rule. Feral and Rock Pigeons are local birds, not included.
+COMBINED = {
+    "combined-columba": {
+        "english_name": "All pigeons (Columba)",
+        "french_name": "Tous les pigeons (Columba)",
+        "scientific_name": "Columba",
+        "members": ["Columba palumbus", "Columba oenas", "Columba sp."],
+    },
+    "combined-hirundinidae": {
+        "english_name": "All swallows and martins",
+        "french_name": "Toutes les hirondelles",
+        "scientific_name": "Hirundinidae",
+        "members": [
+            "Hirundo rustica",
+            "Delichon urbicum",
+            "Riparia riparia",
+            "Ptyonoprogne rupestris",
+            "Hirundinidae sp.",
+        ],
+    },
+}
+COMBINED_RANK = "combined"
 
 # French names: the eBird taxonomy in French (France), joined on `ebird_code`; no API key needed.
 # Downloaded once into the data dir by `scripts/build_explore.py` (`--refresh-names` to update).
@@ -291,11 +326,14 @@ def tier_of(years: int, days: int) -> str:
     return "short"
 
 
-def start_year(order: str, family: str, years: set[int], last_year: int) -> int:
-    """First comparable year of a taxon (see `SYSTEMATIC_FROM`), from its order, family and the
-    years with migrating birds; `last_year` is the last year of the data."""
+def start_year(order: str, family: str, birds: dict[int, float], last_year: int) -> int:
+    """First comparable year of a taxon (see `SYSTEMATIC_FROM`), from its order, family and birds
+    per year (years with migrating birds only); `last_year` is the last year of the data."""
     if order in TARGET_ORDERS or family in TARGET_FAMILIES:
         return SYSTEMATIC_FROM
+    after = [n for y, n in birds.items() if ALL_GROUPS_FROM <= y <= last_year]
+    floor = START_MIN_YEAR_BIRDS * np.median(after) if after else 0
+    years = [y for y, n in birds.items() if n >= floor]
     before = sum(SYSTEMATIC_FROM <= y < ALL_GROUPS_FROM for y in years)
     after = sum(ALL_GROUPS_FROM <= y <= last_year for y in years)
     share_before = before / (ALL_GROUPS_FROM - SYSTEMATIC_FROM)
@@ -308,7 +346,8 @@ def french_names(taxonomy: pd.DataFrame, ebird: pd.DataFrame) -> pd.Series:
     """French name of each taxon (eBird `COMMON_NAME` by `ebird_code`), first letter capitalised
     ("labbe sp." -> "Labbe sp."), with `FRENCH_NAME_OVERRIDES`."""
     names = taxonomy["ebird_code"].map(ebird.set_index("SPECIES_CODE")["COMMON_NAME"])
-    names = names.fillna(taxonomy["taxon_id"].map(FRENCH_NAME_OVERRIDES))
+    overrides = FRENCH_NAME_OVERRIDES | {k: v["french_name"] for k, v in COMBINED.items()}
+    names = names.fillna(taxonomy["taxon_id"].map(overrides))
     return names.str[:1].str.upper() + names.str[1:]
 
 
@@ -325,19 +364,65 @@ def build_taxa(
         days=("date", "size"),
         birds=("count", "sum"),
     )
-    t = taxonomy[
-        ["taxon_id", "english_name", "scientific_name", "taxon_rank", "order", "family"]
-    ].join(occ, on="taxon_id")
+    cols = ["taxon_id", "english_name", "scientific_name", "taxon_rank", "order", "family"]
+    t = taxonomy[cols + (["members"] if "members" in taxonomy else [])].join(occ, on="taxon_id")
     if ebird is not None:
         t.insert(1, "french_name", french_names(taxonomy, ebird))
     t["tier"] = [tier_of(y, n) if pd.notna(n) else "rare" for y, n in zip(t["years"], t["days"])]
-    recorded = d.groupby("taxon_id")["date"].agg(lambda x: set(x.dt.year))
+    per_year = d.groupby(["taxon_id", d["date"].dt.year])["count"].sum()
+    recorded = {i: g.droplevel(0).to_dict() for i, g in per_year.groupby(level=0)}
     last = int(days["date"].max().year)
     t["start_year"] = [
-        start_year(o, f, recorded.get(i, set()), last)
+        start_year(o, f, recorded.get(i, {}), last)
         for i, o, f in zip(t["taxon_id"], t["order"], t["family"])
     ]
     return t.sort_values(["order", "family", "scientific_name"], na_position="last")
+
+
+def add_combined(
+    taxonomy: pd.DataFrame, days: pd.DataFrame, hourly: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """`taxonomy`, `days` and `hourly` with the `COMBINED` series appended as taxa: summed counts
+    (`count`, `reverse`, `local` NaN only when no member has one), merged qualifiers and the birds-
+    weighted `timed` share; `members` (taxon ids) in `taxonomy`.
+
+    Sums of all taxa no longer reconcile with `count.csv` once these are added, so the
+    reconciliation uses the release taxa.
+    """
+    rows, d_parts, h_parts = [], [days], [hourly]
+    for cid, spec in COMBINED.items():
+        m = taxonomy[taxonomy["scientific_name"].isin(spec["members"])]
+        missing = set(spec["members"]) - set(m["scientific_name"])
+        if missing:
+            raise KeyError(f"{cid}: no taxon {sorted(missing)} in the release taxonomy")
+        ids = m["taxon_id"].tolist()
+        rows.append(
+            {
+                "taxon_id": cid,
+                "english_name": spec["english_name"],
+                "scientific_name": spec["scientific_name"],
+                "taxon_rank": COMBINED_RANK,
+                "order": m["order"].iloc[0],
+                "family": m["family"].iloc[0],
+                "members": ids,
+            }
+        )
+        dm = days[days["taxon_id"].isin(ids)].assign(timed_birds=lambda x: x["timed"] * x["count"])
+        g = dm.groupby("date")
+        dc = g[["count", "reverse", "local", "timed_birds"]].sum(min_count=1)
+        dc["qualifiers"] = g["qualifiers"].agg(lambda x: "".join(sorted(set("".join(x)))))
+        dc["timed"] = (dc["timed_birds"].fillna(0) / dc["count"]).where(dc["count"] > 0)
+        d_parts.append(dc.drop(columns="timed_birds").reset_index().assign(taxon_id=cid))
+        hm = hourly[hourly["taxon_id"].isin(ids)]
+        h_parts.append(
+            hm.groupby(["date", "hour"])["count"].sum().reset_index().assign(taxon_id=cid)
+        )
+    t = pd.concat([taxonomy.assign(members=None), pd.DataFrame(rows)], ignore_index=True)
+    return (
+        t,
+        pd.concat(d_parts, ignore_index=True)[days.columns],
+        pd.concat(h_parts, ignore_index=True)[hourly.columns],
+    )
 
 
 # --- assembly ---------------------------------------------------------------

@@ -55,6 +55,7 @@ def main(argv=None) -> int:
     effort = E.build_effort(surveys)
     days = E.daily_counts(counts)
     hourly = E.hourly_counts(counts)
+    taxonomy, days, hourly = E.add_combined(taxonomy, days, hourly)
     taxa = E.build_taxa(taxonomy, days, ebird)
     profiles, source = P.build_profiles(taxa, days, hourly, effort)
     taxa["profile"] = taxa["taxon_id"].map(source)
@@ -112,6 +113,8 @@ def main(argv=None) -> int:
     print("  profiles:", taxa["profile"].value_counts().to_dict())
     full = taxa[taxa["tier"] == "full"]
     print("  start years (full tier):", full["start_year"].value_counts().to_dict())
+    combined = taxa[taxa["taxon_rank"] == E.COMBINED_RANK]
+    print("  combined:", dict(zip(combined["english_name"], combined["start_year"])))
     missing = taxa.loc[taxa["french_name"].isna(), "english_name"].tolist()
     if missing:
         print(f"  no French name ({len(missing)}): {', '.join(missing)}")

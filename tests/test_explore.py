@@ -13,6 +13,7 @@ import pytest
 from src.data import counts as C
 from src.explore import export as E
 from src.explore import profile as P
+from src.explore import trend as T
 
 DAY = "2023-08-01"
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -306,13 +307,68 @@ def test_profile_table_steps_through_the_season():
 
 
 def test_start_year_targets_from_1993_others_when_recorded_systematically():
-    every = set(range(1993, 2026))
-    late = set(range(E.ALL_GROUPS_FROM, 2026))
+    every = dict.fromkeys(range(1993, 2026), 100)
+    late = dict.fromkeys(range(E.ALL_GROUPS_FROM, 2026), 100)
     assert E.start_year("Falconiformes", "Falconidae", late, 2025) == E.SYSTEMATIC_FROM
     assert E.start_year("Passeriformes", "Corvidae", late, 2025) == E.SYSTEMATIC_FROM
     assert E.start_year("Passeriformes", "Fringillidae", late, 2025) == E.ALL_GROUPS_FROM
     assert E.start_year("Passeriformes", "Alaudidae", every, 2025) == E.SYSTEMATIC_FROM
-    assert E.start_year("Gruiformes", "Gruidae", set(), 2025) == E.ALL_GROUPS_FROM
+    assert E.start_year("Charadriiformes", "Scolopacidae", {}, 2025) == E.ALL_GROUPS_FROM
+    # a few birds in the years it was not counted are not a series
+    trickle = every | dict.fromkeys(range(1993, E.ALL_GROUPS_FROM), 1)
+    assert E.start_year("Passeriformes", "Hirundinidae", trickle, 2025) == E.ALL_GROUPS_FROM
+
+
+def test_combined_series_sum_their_members():
+    taxonomy = pd.DataFrame(
+        {
+            "taxon_id": ["a", "b", "c", "x"],
+            "scientific_name": ["Columba palumbus", "Columba oenas", "Columba sp.", "Other"],
+            "english_name": ["A", "B", "C", "X"],
+            "taxon_rank": ["species", "species", "spuh", "species"],
+            "order": ["Columbiformes"] * 4,
+            "family": ["Columbidae"] * 4,
+        }
+    )
+    taxonomy = pd.concat(
+        [
+            taxonomy,
+            pd.DataFrame(
+                {
+                    "taxon_id": [f"h{i}" for i in range(5)],
+                    "scientific_name": E.COMBINED["combined-hirundinidae"]["members"],
+                    "english_name": list("HIJKL"),
+                    "taxon_rank": "species",
+                    "order": "Passeriformes",
+                    "family": "Hirundinidae",
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
+    day = pd.Timestamp("2020-09-01")
+    days = pd.DataFrame(
+        {
+            "taxon_id": ["a", "c", "x"],
+            "date": [day] * 3,
+            "count": [10.0, 30.0, 99.0],
+            "reverse": [np.nan, 2.0, np.nan],
+            "local": [np.nan] * 3,
+            "qualifiers": [">", "~", ""],
+            "timed": [1.0, 0.0, 1.0],
+        }
+    )
+    hourly = pd.DataFrame(
+        {"taxon_id": ["a", "x"], "date": [day] * 2, "hour": [9, 9], "count": [10, 99]}
+    )
+    t, d, h = E.add_combined(taxonomy, days, hourly)
+    row = d[d["taxon_id"] == "combined-columba"].iloc[0]
+    assert row["count"] == 40 and row["reverse"] == 2 and np.isnan(row["local"])
+    assert row["qualifiers"] == ">~" and row["timed"] == pytest.approx(0.25)
+    assert h.loc[h["taxon_id"] == "combined-columba", "count"].tolist() == [10]
+    members = t.set_index("taxon_id").loc["combined-columba", "members"]
+    assert members == ["a", "b", "c"]
+    assert len(d) == len(days) + 1  # no swallow records, no combined swallow days
 
 
 def test_nothing_adjusted_before_start_year():
@@ -334,7 +390,11 @@ def test_nothing_adjusted_before_start_year():
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPLORE_USERS = {"scripts/build_explore.py", "scripts/analyse_explore_effort.py"}
+EXPLORE_USERS = {
+    "scripts/build_explore.py",
+    "scripts/analyse_explore_effort.py",
+    "scripts/benchmark_trend.py",
+}
 
 
 def test_forecast_code_does_not_import_explore():
@@ -356,3 +416,52 @@ def test_forecast_code_does_not_import_explore():
             if any(n == "src.explore" or n.startswith("src.explore.") for n in names):
                 offenders.append(rel)
     assert not offenders, f"forecast code importing src.explore: {offenders}"
+
+
+# --- trend ------------------------------------------------------------------
+
+
+def _synthetic_frame(trend: float, seed: int = 0) -> pd.DataFrame:
+    """Window days of 2005-2016 with a log-linear trend, a Gaussian season and half the days half
+    counted."""
+    rng = np.random.default_rng(seed)
+    dates = pd.date_range("2005-01-01", "2016-12-31")
+    dates = dates[E.in_window(pd.Series(dates)).to_numpy()]
+    f = pd.DataFrame({"date": dates, "year": dates.year, "doy": dates.dayofyear})
+    mu = np.exp(3 + trend * (f["year"] - 2005) - ((f["doy"] - 260) / 20) ** 2 / 2)
+    f["c"] = np.where(rng.random(len(f)) < 0.5, 1.0, 0.5)
+    f["y"] = rng.negative_binomial(2, 2 / (2 + mu * f["c"])).astype(float)
+    return f
+
+
+def test_model_frame_fills_every_window_day():
+    effort = _effort([("2020-08-01", {h: 1 for h in range(24)}), ("2020-08-02", {})])
+    effort.loc[1, "state"] = "not_counted"
+    days = pd.DataFrame(
+        {"date": pd.to_datetime(["2020-08-01", "2020-07-01"]), "count": [5.0, 99.0]}
+    )
+    c = pd.Series([0.8, 0.0], index=effort.index)
+    f = T.model_frame(days, effort, c, 2020, 2020).set_index("date")
+    assert len(f) == E.in_window(pd.Series(pd.date_range("2020-01-01", "2020-12-31"))).sum()
+    assert f.loc["2020-08-01", "c"] == 0.8 and f.loc["2020-08-01", "y"] == 5
+    assert f.loc["2020-08-02", "c"] == 0 and f.loc["2020-08-02", "y"] == 0
+    assert f["y"].sum() == 5  # outside the window: not in the frame
+
+
+def test_fill_keeps_the_counted_and_draws_the_rest():
+    f = _synthetic_frame(0.0)
+    m = T.fit("season", f, np.arange(2005, 2017), (int(f["doy"].min()), int(f["doy"].max())))
+    full = f.assign(c=1.0)
+    assert (T.fill_draws(m, full, 1.0, n=20) == full["y"].to_numpy()).all()
+    draws = T.fill_draws(m, f, 1.0, n=200)
+    assert (draws >= f["y"].to_numpy()).all()
+    assert (draws[:, (f["c"] < 1).to_numpy()] > f["y"].to_numpy()[(f["c"] < 1).to_numpy()]).any()
+
+
+@pytest.mark.parametrize("variant", ["gam", "gp"])
+def test_trend_recovers_a_doubling(variant):
+    f = _synthetic_frame(np.log(2) / 11, seed=1)  # x2 over 2005-2016
+    m = T.fit(variant, f, np.arange(2005, 2017), (int(f["doy"].min()), int(f["doy"].max())))
+    a = T.annual_totals(m, f, n=200).set_index("year")
+    assert a.loc[2016, "smooth"] / a.loc[2005, "smooth"] == pytest.approx(2, rel=0.3)
+    assert ((a["q2.5"] <= a["total"]) & (a["total"] <= a["q97.5"])).all()

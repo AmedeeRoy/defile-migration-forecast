@@ -129,11 +129,24 @@ Gaussian process on a chronological holdout.
 
 **Each taxon has a start year, 1993 or 2007**: its counts are compared from then on, and nothing
 is adjusted before it (earlier years stay in the export, raw). Daily systematic counting began in
-1993 and always targeted raptors, herons and egrets, storks, pigeons and corvids, which start in
-1993 even if rare then (Peregrine recovered). Passerines were hardly recorded before 2007, when
-their taxa double and their birds rise 15-fold (defile-dataset `docs/sampling-history.md`): any
-other taxon starts in 1993 only if recorded in at least 0.75 times as large a share of the
-1993-2006 years as of the later ones. Full tier: 45 from 1993, 39 from 2007.
+1993 and always targeted raptors, herons and egrets, storks, pigeons and corvids, and other large
+birds counted individually (cranes, geese, ducks), which start in 1993 even if rare then (Peregrine
+recovered). Passerines were hardly recorded before 2007, when their taxa double and their birds
+rise 15-fold (defile-dataset `docs/sampling-history.md`): any other taxon starts in 1993 only if
+recorded in at least 0.75 times as large a share of the 1993-2006 years as of the later ones. A
+year counts as recorded only with at least 2% of the taxon's median year since 2007, so that a
+trickle noted while the taxon was not counted is not a series ("swallow sp." 2000-2006: ~600 birds
+a year against ~150 000 since). The floor stays low because it also penalises a real increase
+(Common Crane, ~30 a year before 2007 and 380 since). Full tier: 45 from 1993, 41 from 2007.
+
+**Combined series where names were split differently over the years** (`COMBINED`): all
+Columba pigeons (Wood Pigeon, Stock Dove, "Columba sp."; not the local Feral and Rock Pigeons), and
+all swallows and martins. "Columba sp." appears only in 2014, when the hourly sheets begin, and has
+been a quarter of the pigeons since, so Wood Pigeon's own series drops there for a recording
+reason; swallows were "swallow sp." in 1993-1999 and are increasingly identified since 2021. A
+combined series is exported like a taxon (rank `combined`, its `members`, its own profile and start
+year: pigeons 1993, swallows 2007), beside its members, which stay as they are. Its trend is the
+one to read.
 
 **Tiers count days with migrating birds**, not birds: `full` from 50 days over 5 years, `rare`
 at 10 days or fewer (84 / 45 / 142). Provisional, to tune once the page exists. French names come
