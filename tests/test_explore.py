@@ -458,10 +458,49 @@ def test_fill_keeps_the_counted_and_draws_the_rest():
     assert (draws[:, (f["c"] < 1).to_numpy()] > f["y"].to_numpy()[(f["c"] < 1).to_numpy()]).any()
 
 
-@pytest.mark.parametrize("variant", ["gam", "gp"])
-def test_trend_recovers_a_doubling(variant):
+def test_trend_recovers_a_doubling():
     f = _synthetic_frame(np.log(2) / 11, seed=1)  # x2 over 2005-2016
-    m = T.fit(variant, f, np.arange(2005, 2017), (int(f["doy"].min()), int(f["doy"].max())))
+    m = T.fit("gam", f, np.arange(2005, 2017), (int(f["doy"].min()), int(f["doy"].max())))
     a = T.annual_totals(m, f, n=200).set_index("year")
     assert a.loc[2016, "smooth"] / a.loc[2005, "smooth"] == pytest.approx(2, rel=0.3)
     assert ((a["q2.5"] <= a["total"]) & (a["total"] <= a["q97.5"])).all()
+
+
+def test_smoothing_parameters_do_not_depend_on_the_start(monkeypatch):
+    f = _synthetic_frame(np.log(2) / 11, seed=2)
+    doy_range = (int(f["doy"].min()), int(f["doy"].max()))
+    fits = []
+    for start in (-2.0, 6.0):
+        monkeypatch.setattr(T, "LOG_LAMBDA_START", start)
+        fits.append(T.fit("gam", f, np.arange(2005, 2017), doy_range))
+    assert fits[0].log_marginal == pytest.approx(fits[1].log_marginal, abs=0.5)
+    eta = [T.eta_draws(m, f["year"], f["doy"], m.beta[None, :])[0] for m in fits]
+    assert np.abs(eta[0] - eta[1]).max() < 0.05
+
+
+def test_smooths_sum_to_zero_over_their_grid():
+    d = T.design("gam", np.arange(2005, 2017), (200, 320))
+    year, doy = np.meshgrid(np.arange(2005, 2017), np.arange(200, 321), indexing="ij")
+    X = d.X(year.ravel(), doy.ravel()).toarray()
+    for name in ("season", "trend", "shift", "episode"):
+        cols = d.columns_of(name)
+        per_year = X[:, cols].reshape(12, 121, -1).sum(axis=1)  # over each season's days
+        total = per_year.sum(axis=0)
+        assert np.abs(per_year if name == "episode" else total).max() < 1e-8, name
+
+
+@pytest.mark.parametrize("kappa", [2.0, 50.0])
+def test_hour_dispersion_recovers_flocks(kappa):
+    rng = np.random.default_rng(0)
+    n = P.PROFILE_DOY[1] - P.PROFILE_DOY[0] + 1
+    profile = np.full((n, E.HOURS), 1 / E.HOURS)
+    dates = pd.date_range("2020-08-01", periods=300)
+    rate = rng.gamma(kappa / E.HOURS, 2000 / kappa, size=(len(dates), E.HOURS))
+    birds = rng.poisson(rate)
+    effort = pd.DataFrame(
+        {"date": dates, "state": "counted", "hourly": [np.ones(E.HOURS)] * len(dates)}
+    )
+    days = pd.DataFrame({"date": dates, "count": birds.sum(axis=1).astype(float), "timed": 1.0})
+    d, h = np.nonzero(birds)
+    hourly = pd.DataFrame({"date": dates[d], "hour": h, "count": birds[d, h]})
+    assert T.hour_dispersion(days, hourly, effort, profile) == pytest.approx(kappa, rel=0.25)

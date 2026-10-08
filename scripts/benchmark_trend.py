@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Benchmarks the Explore trend models (`src.explore.trend`: GAM vs Gaussian process, with the
-season-only reference) on a few taxa, before either is exported (issue #55).
+"""Benchmarks the Explore trend model (`src.explore.trend`: the GAM, with the season-only
+reference) on a few taxa (issue #55). A Gaussian-process variant was benchmarked here too and
+dropped: `DECISIONS.md` -> Explore.
 
 Two tests, each on the taxon's years from its start year to the last complete season:
 
-1. Gap transplant (gap filling, what Explore shows): a well-counted recent year (mean coverage of
-   counted window days >= `TARGET_MIN_COVERAGE`) is given an older year's gaps, hour by hour and
-   day by day (`DONOR_YEARS`), refitted with the full fit's hyperparameters, and its hidden birds
-   filled. The estimate (birds kept + the posterior predictive of the hidden coverage) is compared
+1. Gap transplant (gap filling, what Explore shows): the well-counted recent years (mean coverage
+   of counted window days >= `TARGET_MIN_COVERAGE`) are given older years' gaps, hour by hour and
+   day by day (`DONOR_YEARS`), all at once and with the donors rotating over `ROTATIONS` refits
+   (the full fit's smoothing parameters), and their hidden birds filled. The estimate (birds kept + the posterior predictive of the hidden coverage) is compared
    with the birds the year actually counted. Estimates are posterior predictive medians: for
    irruptive taxa the mean is a tail. Also: the ratio estimator, the Explore index applied
    to the hidden coverage (birds kept / coverage kept, same day or not).
@@ -59,7 +60,8 @@ TARGET_FROM = 2014  # timed counts, so the birds of hidden hours are known
 DONOR_YEARS = (1993, 2013)  # their gaps (hours and days not counted) are transplanted
 RECENT_FROM = 2023
 METHODS = ("ratio", *T.VARIANTS)
-COLORS = {"ratio": "C7", "season": "C2", "gam": "C0", "gp": "C3"}
+COLORS = {"ratio": "C7", "season": "C2", "gam": "C0"}
+ROTATIONS = 3  # refits per taxon in test 1, each hiding every target year
 
 
 # --- data -------------------------------------------------------------------
@@ -135,7 +137,12 @@ def transplant(target: pd.DataFrame, donor_year: int, ctx: dict) -> pd.DataFrame
     return pd.concat([out, pd.DataFrame(rows)], axis=1)
 
 
-def gap_trials(name: str, ctx: dict, frame: pd.DataFrame, fits: dict) -> pd.DataFrame:
+def gap_trials(
+    name: str, ctx: dict, frame: pd.DataFrame, fits: dict, kappa: float
+) -> pd.DataFrame:
+    """`ROTATIONS` refits per variant, each with every target year given a different donor's gaps
+    at once (the donors rotate), so a taxon has `ROTATIONS` x targets trials for `ROTATIONS`
+    fits."""
     years = np.arange(ctx["start"], ctx["last"] + 1)
     doy_range = (int(frame["doy"].min()), int(frame["doy"].max()))
     counted = frame[frame["c"] > 0].groupby("year")["c"].mean()
@@ -144,31 +151,40 @@ def gap_trials(name: str, ctx: dict, frame: pd.DataFrame, fits: dict) -> pd.Data
         for y in counted.index
         if y >= max(TARGET_FROM, ctx["start"]) and counted[y] >= TARGET_MIN_COVERAGE
     ]
+    donors = [y for y in range(DONOR_YEARS[0], DONOR_YEARS[1] + 1) if y >= ctx["start"]]
+    if not targets or not donors:
+        return pd.DataFrame()
     rows = []
-    for ty in targets:
-        target = frame[frame["year"] == ty]
-        truth = target["y"].sum() + target["extra"].sum()
-        for dy in range(DONOR_YEARS[0], DONOR_YEARS[1] + 1):
-            masked = transplant(target, dy, ctx)
+    for k in range(ROTATIONS):
+        masked = {
+            ty: transplant(
+                frame[frame["year"] == ty],
+                donors[(i + k * len(donors) // ROTATIONS) % len(donors)],
+                ctx,
+            )
+            for i, ty in enumerate(targets)
+        }
+        train = pd.concat(
+            [frame[~frame["year"].isin(targets)], *[m[frame.columns] for m in masked.values()]],
+            ignore_index=True,
+        )
+        refits = {v: T.fit(v, train, years, doy_range, hyper=f.hyper) for v, f in fits.items()}
+        for i, (ty, m) in enumerate(masked.items()):
+            target = frame[frame["year"] == ty]
             base = {
                 "taxon": name,
                 "target": ty,
-                "donor": dy,
-                "truth": truth,
-                "kept": masked["y"].sum() + masked["extra"].sum(),
-                "hidden_coverage": 1 - masked["c"].sum() / masked["c_target"].sum(),
+                "donor": donors[(i + k * len(donors) // ROTATIONS) % len(donors)],
+                "truth": target["y"].sum() + target["extra"].sum(),
+                "kept": m["y"].sum() + m["extra"].sum(),
+                "hidden_coverage": 1 - m["c"].sum() / m["c_target"].sum(),
             }
-            ratio = masked["y"].sum() / max(masked["c"].sum(), 1e-9)
-            est = masked["y"].sum() + masked["extra"].sum()
-            est += ratio * (masked["c_target"] - masked["c"]).sum()
+            ratio = m["y"].sum() / max(m["c"].sum(), 1e-9)
+            est = m["y"].sum() + m["extra"].sum() + ratio * (m["c_target"] - m["c"]).sum()
             rows.append({**base, "method": "ratio", "estimate": est})
-            others = frame[frame["year"] != ty]
-            train = pd.concat([others, masked[others.columns]], ignore_index=True)
-            for v, full in fits.items():
-                f = T.fit(v, train, years, doy_range, hyper=full.hyper)
-                draws = T.fill_draws(f, masked, masked["c_target"].to_numpy(), seed=dy)
-                total = draws.sum(axis=1)
-                q = np.quantile(total, [0.025, 0.1, 0.5, 0.9, 0.975])
+            for v, f in refits.items():
+                draws = T.fill_draws(f, m, m["c_target"].to_numpy(), seed=i, kappa=kappa)
+                q = np.quantile(draws.sum(axis=1), [0.025, 0.1, 0.5, 0.9, 0.975])
                 rows.append(
                     {
                         **base,
@@ -186,7 +202,7 @@ def gap_trials(name: str, ctx: dict, frame: pd.DataFrame, fits: dict) -> pd.Data
 # --- test 2: recent years ---------------------------------------------------
 
 
-def recent_trials(name: str, ctx: dict, frame: pd.DataFrame) -> pd.DataFrame:
+def recent_trials(name: str, ctx: dict, frame: pd.DataFrame, kappa: float) -> pd.DataFrame:
     years = np.arange(ctx["start"], ctx["last"] + 1)
     doy_range = (int(frame["doy"].min()), int(frame["doy"].max()))
     future = frame["year"] >= RECENT_FROM
@@ -196,7 +212,7 @@ def recent_trials(name: str, ctx: dict, frame: pd.DataFrame) -> pd.DataFrame:
     for v in T.VARIANTS:
         f = T.fit(v, train, years, doy_range)
         unseen = test.assign(c=0.0, y=0.0)
-        draws = T.fill_draws(f, unseen, test["c"].to_numpy(), seed=1)
+        draws = T.fill_draws(f, unseen, test["c"].to_numpy(), seed=1, kappa=kappa)
         beta = f.draws(T.DRAWS, np.random.default_rng(2))
         mu = np.exp(T.eta_draws(f, test["year"], test["doy"], beta)) * test["c"].to_numpy()
         ll = logsumexp(T.nb_loglik(test["y"].to_numpy(), mu, f.theta), axis=0) - np.log(len(mu))
@@ -237,8 +253,11 @@ def run_taxon(args) -> dict:
     )
     years = np.arange(ctx["start"], ctx["last"] + 1)
     doy_range = (int(frame["doy"].min()), int(frame["doy"].max()))
+    kappa = T.hour_dispersion(ctx["days"], ctx["hourly"], ctx["effort"], ctx["profile"])
     fits = {v: T.fit(v, frame, years, doy_range) for v in T.VARIANTS}
-    annual = pd.concat([T.annual_totals(f, frame).assign(method=v) for v, f in fits.items()])
+    annual = pd.concat(
+        [T.annual_totals(f, frame, kappa=kappa).assign(method=v) for v, f in fits.items()]
+    )
     mid = int((ctx["start"] + ctx["last"]) / 2)
     seasons = pd.concat(
         [
@@ -257,6 +276,7 @@ def run_taxon(args) -> dict:
                 "method": v,
                 "log_marginal": f.log_marginal,
                 "theta": f.theta,
+                "kappa": kappa,
                 **{
                     f"h_{k}": round(float(np.exp(x)), 4)
                     for k, x in f.hyper.items()
@@ -266,8 +286,8 @@ def run_taxon(args) -> dict:
             for v, f in fits.items()
         ]
     )
-    gaps = gap_trials(name, ctx, frame, fits)
-    recent = recent_trials(name, ctx, frame)
+    gaps = gap_trials(name, ctx, frame, fits, kappa)
+    recent = recent_trials(name, ctx, frame, kappa)
     print(f"  {name}: {time.time() - t0:.0f} s", flush=True)
     return {
         "name": name,
@@ -312,7 +332,7 @@ def page(pdf, r: dict, gaps_score: pd.DataFrame):
     ax[0, 0].bar(obs["year"], obs["observed"], color="0.85", label="counted")
     for v in T.VARIANTS:
         x = a[a["method"] == v]
-        off = {"season": -0.25, "gam": 0, "gp": 0.25}[v]
+        off = {"season": -0.2, "gam": 0.2}[v]
         ax[0, 0].errorbar(
             x["year"] + off,
             x["q50"],
@@ -404,7 +424,7 @@ def main(argv=None) -> int:
     recent_score = score(tables["recent"]).join(
         tables["recent"].groupby(["taxon", "method"])["log_score"].mean()
     )
-    info = tables["info"].set_index(["taxon", "method"])[["log_marginal", "theta"]]
+    info = tables["info"].set_index(["taxon", "method"])[["log_marginal", "theta", "kappa"]]
     with PdfPages(args.out) as pdf:
         for r in results:
             page(pdf, r, gaps_score)

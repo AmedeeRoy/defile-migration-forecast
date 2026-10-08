@@ -22,7 +22,10 @@ Files, written by `scripts/build_explore.py` (one `build_*` function each):
 - `species/<taxon_id>.json`: per day, the main-direction count with its qualifiers, the reverse
   and local counts, the share of birds timed to the hour, the day's coverage `c` and the
   effort-adjusted count; per local hour, the birds timed to it; per year, totals and the
-  effort-adjusted index; the time-of-day profile used; the species' report texts.
+  effort-adjusted index; the time-of-day profile used; the species' report texts; and for
+  full-tier species and combined series, `trend` (`src.explore.trend.taxon_trend`): gap-filled
+  annual totals with intervals, the smooth trend, the median passage date per year and the smooth
+  season in the first and last year.
 - `reports.json`: the report texts that are not about one species (site, monitoring, weather,
   results, outreach).
 

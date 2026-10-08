@@ -152,6 +152,37 @@ one to read.
 at 10 days or fewer (84 / 45 / 142). Provisional, to tune once the page exists. French names come
 from the eBird taxonomy (fr_FR) by `ebird_code`.
 
+**Trends and annual totals come from a GAM, not a Gaussian process** (`src/explore/trend.py`,
+`scripts/benchmark_trend.py`). A day's count is negative binomial around coverage x exp(intercept
+\+ trend(year) + season(doy) + shift(year, doy) + year level + episode), where `episode` is each
+year's own short-range curve (runs of good or bad migration days, the weather's share); hours not
+counted are filled with an hourly over-dispersion `kappa` fitted from the timed days (flocks). The
+annual total is the birds counted plus the posterior predictive of the coverage missed. Both
+priors were fitted on one engine and benchmarked on Black Kite, Honey Buzzard, Red Kite, Common
+Buzzard, Osprey, all pigeons and Chaffinch:
+
+- Gap filling (well-counted years 2014-2025 given an old year's gaps): GAM and GP both 5.0%
+  error, the GP better in 49% of paired trials; the ratio index 14.6% (40% too high for pigeons),
+  the season alone 5.7%.
+- Calibration came from the episode term and `kappa`, not from the prior: without them both 80%
+  intervals held the truth 54% of the time, with them 80% (95%: 94%).
+- Predicting 2023-2025 from the years before (extrapolation, which Explore never does): GP 35%
+  error, GAM 49%, almost all of it Chaffinch, where the P-spline extends its last slope; daily log
+  scores equal (-3.170 / -3.171). A trend fed to the forecast would need a flat extrapolation.
+- The Hilbert-space GP misbehaved at long lengthscales (prior variance 0.17 instead of 1 at the
+  series' ends for a 30-year lengthscale, with the domain at 1.5 x the data), and full Bayes
+  (NumPyro NUTS: 3-5 min a fit; PyMC's C backend does not compile here) bought nothing once
+  intervals were calibrated. The GAM refits in 0.2 s.
+
+Every smooth sums to zero over its grid, so the intercept, trend, season, `shift` (an interaction
+only, as mgcv's `ti`) and the year level each own their part: unconstrained, the smooth trend moved
+with the optimiser's stopping point (Black Kite 2025/1993: 0.80 to 1.21). Smoothing parameters
+come from the Fellner-Schall update (mgcv's `efs`): the same optimum from any start, 2-6 s a taxon.
+On the faster benchmark (three refits per taxon, each hiding every target year; 2 min for seven
+taxa) the GAM fills gaps with 5.6% error and 82% / 95% coverage, Honey Buzzard the exception (55%
+/ 82%). Trends are exported for full-tier species and combined series, not for unidentified birds
+("falcon sp."), whose numbers follow identification effort.
+
 ## Model architecture
 
 **Single output channel; the uncertainty channel is gone.** The second output channel fed

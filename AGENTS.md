@@ -41,7 +41,7 @@ scripts/
   build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
   build_explore.py               defile-dataset tables -> data/explore/ (defileViz's Explore page)
   analyse_explore_effort.py      compares effort normalisations for the Explore index (PDF)
-  benchmark_trend.py             benchmarks the Explore trend models, GAM vs GP (PDF + CSV)
+  benchmark_trend.py             benchmarks the Explore trend GAM: gap filling, recent years (PDF + CSV)
 tests/                            pytest suite (weather, counts, explore export, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
