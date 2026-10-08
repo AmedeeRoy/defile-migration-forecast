@@ -63,12 +63,15 @@ as recorded (the old dataset clipped them to dusk); 4 counts in 2025 were left o
 next morning, ~40 h of zeros nobody watched. Night is the sun below -6 deg for the whole hour,
 `night_mask_by_doy_hour`, the model's one definition.
 
-**The historical day window is a dataset matter.** The workbook's `startTimeDay`/`endTimeDay`
-(declared attendance) is not in the release, so the old historical zero-fill of empty hours on
-hour-by-hour days (832 periods, 668 h, 2014-2021) is gone, and no rule here replaces it: whether
-an hour without a record inside the declared day was counted is source evidence, needed by the
-explore page's effort too. Requested from defile-dataset as empty `complete` survey rows; until
-then 2014-2021 lose those zero hours.
+**The historical day window is a dataset matter.** Historical hourly recording omits hours with
+no bird; the workbook's `startTimeDay`/`endTimeDay` (declared attendance) says which hours were
+counted. Whether such an hour was counted is source evidence, needed by the explore page's effort
+too, so defile-dataset emits the gaps between the declared window and the recorded hours as empty
+`complete` surveys (reviewed long gaps that were real breaks are `none`), and this repo has no
+historical zero-fill of its own: they become zero rows like any empty survey. 2014-2021 effort
+matches the old day-window zero-fill to within a few hours a year, as fewer, longer periods; the
+differences are reviewed dataset decisions (2015-08-09 is now a documented rained-off day,
+2019-08-20 07:35-20:00 is kept as counted).
 
 **Species are named by the release's English name (AviList first).** Two modelled species
 change: Eurasian Kestrel -> Common Kestrel, European Honey-buzzard -> European Honey Buzzard.

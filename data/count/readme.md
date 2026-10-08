@@ -54,7 +54,8 @@ survey's interval.
 ### Historical (1966-2021)
 
 Historical counts carry no timing of their own; days recorded hour by hour are one survey per
-hour in the dataset.
+hour in the dataset. Hours of the declared day window with no record are empty surveys there
+(see its README), so they become zero rows under "Empty surveys" below.
 
 1. Records of the same taxon in the same survey (age/sex subgroups, repeated entries) are summed.
 
