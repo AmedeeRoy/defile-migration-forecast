@@ -231,3 +231,73 @@ def test_real_release_reconciles():
             ("count_local", "local"),
         ]:
             assert np.allclose(m[a].fillna(-1), m[b].fillna(-1)), a
+
+
+def _effort(rows: list[tuple]) -> pd.DataFrame:
+    """Rows: (date, {local hour: fraction counted}[, state])."""
+    out = []
+    for r in rows:
+        date, cover, state = (*r, "counted")[:3]
+        hourly = np.zeros(E.HOURS)
+        for h, f in cover.items():
+            hourly[h] = f
+        out.append(
+            {"date": pd.Timestamp(date), "hourly": hourly, "hours": hourly.sum(), "state": state}
+        )
+    return pd.DataFrame(out)
+
+
+def test_profile_samples_are_hour_rates_over_the_day_rate_with_zero_hours():
+    effort = _effort([(DAY, {8: 1, 9: 1, 10: 1, 11: 0.25})])
+    days = pd.DataFrame(
+        {"taxon_id": ["k"], "date": [pd.Timestamp(DAY)], "count": [30.0], "timed": [1.0]}
+    )
+    hourly = pd.DataFrame(
+        {
+            "taxon_id": ["k", "k"],
+            "date": [pd.Timestamp(DAY)] * 2,
+            "hour": [8, 10],
+            "count": [10, 20],
+        }
+    )
+    s = E.profile_samples(days, hourly, effort)
+    # hour 11 is counted for less than PROFILE_MIN_HOUR_EFFORT: not a sample
+    assert dict(zip(s["hour"], s["ratio"])) == pytest.approx({8: 1, 9: 0, 10: 2})
+    assert (s["weight"] == 30**E.RATIO_WEIGHT_POWER).all()
+    assert E.profile_samples(days.assign(timed=0.5), hourly, effort).empty
+
+
+def test_coverage_index_and_adjusted_days():
+    n = E.PROFILE_DOY[1] - E.PROFILE_DOY[0] + 1
+    profile = np.zeros((n, E.HOURS))
+    profile[:, [10, 11]] = 0.5
+    effort = _effort(
+        [
+            ("2020-08-01", {10: 1, 11: 1}),  # c = 1
+            ("2020-08-02", {10: 1}),  # c = 0.5, no record: zero birds
+            ("2020-08-03", {9: 1}),  # c = 0
+            ("2020-08-04", {10: 1, 11: 1}, "uncertain"),  # not a counted day
+            ("1980-08-01", {10: 0.4}),  # c = 0.2
+        ]
+    )
+    c = E.coverage(effort, profile)
+    assert c.tolist() == pytest.approx([1, 0.5, 0, 1, 0.2])
+    days = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2020-08-01", "2020-08-03", "2020-08-04", "1980-08-01"]),
+            "count": [40.0, 5.0, 9.0, 10.0],
+        }
+    )
+    a = E.annual_index(days, effort, c).set_index("year")
+    assert a.loc[2020, "birds"] == 45 and a.loc[2020, "days"] == 3
+    assert a.loc[2020, "index"] == pytest.approx(45 / 1.5)
+    assert np.isnan(a.loc[1980, "index"])  # mean c below COVERAGE_MIN
+    d = E.adjust_days(days, effort, c).set_index("date")["adjusted"]
+    assert d["2020-08-01"] == 40 and np.isnan(d["2020-08-03"]) and np.isnan(d["2020-08-04"])
+
+
+def test_profile_table_steps_through_the_season():
+    n = E.PROFILE_DOY[1] - E.PROFILE_DOY[0] + 1
+    t = E.profile_table(np.full((n, E.HOURS), 1 / E.HOURS))
+    assert t["doy"][0] == E.PROFILE_DOY[0] and t["doy"][1] - t["doy"][0] == E.PROFILE_EXPORT_STEP
+    assert len(t["p"][0]) == E.HOURS

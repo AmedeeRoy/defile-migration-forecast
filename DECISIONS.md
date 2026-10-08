@@ -86,6 +86,43 @@ Their configs, checkpoint folders, forecast file names and `species_doy_statisti
 follow; defileViz must follow too. A local eBird-name map was rejected: a second name list kept
 in sync by hand.
 
+## Explore
+
+**The Explore export is a separate, raw aggregation of the release** (`src/data/explore.py`,
+#55), not the model's counts: no count is moved, dropped or imputed, and daily totals reconcile
+with `count.csv` and the dataset's own daily totals (`tests/test_explore.py`). Effort is the union
+of `complete` survey intervals per local day. `species_doy_statistics.json` stays the model's
+contract, unchanged.
+
+**Effort-adjusted values use a time-of-day profile, not birds per hour.** A taxon's profile
+p(h | doy) is fitted with the model's own ratio GAM (`src.phenology.fit_ratio_surface`, one
+implementation) on local clock hours, from days timed to the hour; a counted day's coverage `c` is
+the share of the profile in the hours counted, the adjusted day is count / c, and the annual index
+is Σ birds / Σ c over counted days in the window (a ratio estimator, so low-coverage days do not
+dominate). Taxa with fewer than 500 timed birds use a group profile (raptors, pigeons,
+passerines, other), then a uniform one. On the 2026-10 release, 66 taxa have their own profile.
+`scripts/analyse_explore_effort.py` compares the options for Black Kite, Honey Buzzard, Red Kite,
+Common Buzzard, Wood Pigeon and Chaffinch:
+
+- Birds per hour and the uniform (daylight) index are the same curve. Neither is offered.
+- The profile matters where the species has a peaked day: before 1993 Common Buzzard is at 0.25
+  of its 2010-2025 level per hour and 0.82 with its profile (midday passage, morning counts).
+- Profiles from the hourly sheets (2014-2020) and from Trektellen entry times (2021-2026) agree
+  (total variation 0.05-0.12; Wood Pigeon 0.22, shaped by a few huge mornings), so Trektellen
+  times are usable as passage times. Nothing is timed to the hour before 2014, so stability across
+  decades cannot be tested.
+
+**No adjusted value below c = 0.5** (`COVERAGE_MIN`), for a day or for a year's mean: the raw
+count and `c` are shown instead. Pre-1993 counts cover a median 0.05-0.11 of a raptor's day, and
+the step at 1993 survives the adjustment (Kestrel x14, Honey Buzzard x5; Common Buzzard x2.4 ->
+x1.45), so effort is not what separates those years. They stay visible, unadjusted, and out of
+reference bands. Taxa not counted systematically in some years (passerines before ~2007) are a
+protocol matter no effort metric fixes; the dataset README has that history.
+
+**Tiers count days with migrating birds**, not birds: `full` from 50 days over 5 years, `rare`
+at 10 days or fewer (84 / 45 / 142). Provisional, to tune once the page exists. French names come
+from the eBird taxonomy (fr_FR) by `ebird_code`.
+
 ## Model architecture
 
 **Single output channel; the uncertainty channel is gone.** The second output channel fed

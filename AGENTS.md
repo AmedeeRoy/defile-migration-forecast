@@ -40,6 +40,7 @@ scripts/
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
   build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
   build_explore.py               defile-dataset tables -> data/explore/ (defileViz's Explore page)
+  analyse_explore_effort.py      compares effort normalisations for the Explore index (PDF)
 tests/                            pytest suite (weather, counts, explore export, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
@@ -267,6 +268,8 @@ rather than editing `configs/data/defile.yaml` directly.
   `report_text.csv`) into `data/explore/`, the JSON files defileViz's Explore page reads
   (`src/data/explore.py` documents each one). Unlike the model's counts, it is a plain aggregation
   with no processing: raw daily totals must reconcile with `count.csv` (`tests/test_explore.py`).
+  Its effort-adjusted values use a time-of-day profile fitted by the same GAM as the model's
+  phenology (`src.phenology.fit_ratio_surface`); `DECISIONS.md` -> Explore has why.
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field

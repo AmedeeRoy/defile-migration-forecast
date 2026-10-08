@@ -55,6 +55,8 @@ def main(argv=None) -> int:
     days = E.daily_counts(counts)
     hourly = E.hourly_counts(counts)
     taxa = E.build_taxa(taxonomy, days, ebird)
+    profiles, source = E.build_profiles(taxa, days, hourly, effort)
+    taxa["profile"] = taxa["taxon_id"].map(source)
     git_sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT
     ).stdout.strip()
@@ -79,7 +81,12 @@ def main(argv=None) -> int:
     species_bytes = 0
     texts = reports[reports["category"] == E.REPORT_SPECIES]
     for taxon_id, d in days.groupby("taxon_id"):
-        d = d.drop(columns="taxon_id")
+        profile = profiles[taxon_id if source[taxon_id] == "own" else source[taxon_id]]
+        c = E.coverage(effort, profile)
+        d = E.adjust_days(d.drop(columns="taxon_id"), effort, c)
+        a = E.annual(d).merge(
+            E.annual_index(d, effort, c)[["year", "c_mean", "index"]], on="year", how="left"
+        )
         h = hourly[hourly["taxon_id"] == taxon_id].drop(columns="taxon_id")
         t = texts[texts["key"] == taxon_id][["year", "text"]]
         species_bytes += write(
@@ -88,7 +95,8 @@ def main(argv=None) -> int:
                 "taxon_id": taxon_id,
                 "days": E.columns(d),
                 "hourly": E.columns(h),
-                "annual": E.records(E.annual(d)),
+                "annual": E.records(a),
+                "profile": {"source": source[taxon_id], **E.profile_table(profile)},
                 "reports": E.records(t),
             },
         )
@@ -98,6 +106,7 @@ def main(argv=None) -> int:
     for name, n in sizes.items():
         print(f"  {name:28s} {n / 1e3:9.1f} kB")
     print("  tiers:", taxa["tier"].value_counts().to_dict())
+    print("  profiles:", taxa["profile"].value_counts().to_dict())
     missing = taxa.loc[taxa["french_name"].isna(), "english_name"].tolist()
     if missing:
         print(f"  no French name ({len(missing)}): {', '.join(missing)}")

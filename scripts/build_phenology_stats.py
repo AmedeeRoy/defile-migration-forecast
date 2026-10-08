@@ -58,8 +58,6 @@ import pandas as pd
 import rootutils
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
-from pygam import PoissonGAM, s, te
-from pygam.utils import OptimizationError
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
@@ -69,40 +67,22 @@ from scripts._species_stats_common import (  # noqa: E402
     write_json_atomic,
 )
 from src.data.counts import read_dataset, trektellen_species_ids  # noqa: E402
-from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
+from src.phenology import (  # noqa: E402
+    DOY_SPLINES,
+    HOUR_SPLINES,
+    PHENOLOGY_FILE,
+    RATIO_HOURS,
+    RATIO_WEIGHT_POWER,
+    Phenology,
+    fit_ratio_surface,
+)
 
 # Percentiles baked into the currently-committed file (`quantile_levels`); kept as the
 # default rather than re-derived so a re-run without `--quantiles` reproduces the same
 # shape `Phenology` and defileViz already expect.
 QUANTILE_LEVELS = (1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99)
 
-# GAM spline counts for the doy/hour ratio surface. `notebooks/phenology_baseline.ipynb` has an
-# AIC-search cell over a handful of (k0, k1) combinations that never fed back into these
-# defaults -- worth revisiting there before changing these, rather than guessing new ones.
-DOY_SPLINES = 4
-HOUR_SPLINES = 12
-
-# Regularization ladder for the PIRLS fit, weakest first. `ratio` is a heavily
-# zero-inflated, long-tailed quantity (rare species can be >70% zero with a handful of
-# ratios in the 10-40 range), and PoissonGAM's PIRLS diverges outright for some species at
-# the historical (100, 10) strength -- Hen Harrier and Merlin, tried while writing this
-# script, neither of which appears in `notebooks/phenology_baseline.ipynb`'s exploratory cells
-# (only Osprey and European Honey Buzzard were ever fitted there). Trying progressively
-# stronger regularization and keeping the first one that converges reproduces the
-# historical fit exactly for species that were already well-behaved, and still produces a
-# usable (slightly smoother) surface for the ones that were not, rather than crashing an
-# 11-species run over the one species that needed it.
-GAM_LAM_LADDER = [(100, 10), (1000, 100), (10_000, 1_000), (100_000, 10_000)]
-
 SMOOTH_WINDOW = 7
-
-# Each day's hourly-ratio samples are weighted by (that day's bird count) ** this in the GAM
-# fit. 0 is the historical fit -- every day equal, so a 2-bird day shapes the curve as much as
-# a 2 000-bird one; 1 is the unbiased estimator of the *expected* hourly rate the model
-# predicts, but lets a handful of huge days dominate. 0.5 was best on held-out years (fit on
-# even years, L1 to odd years' count-weighted hourly profile, 7 species): 0.253 / 0.213 /
-# 0.229 for 0 / 0.5 / 1 -- 1 lost on Honey Buzzard, whose shape a few huge days dominate.
-RATIO_WEIGHT_POWER = 0.5
 
 
 class PhenologyBuilder:
@@ -187,27 +167,6 @@ class PhenologyBuilder:
 
         return df.loc[df["n_periods"] > 1, ["doy", "hour", "ratio", "count_daily"]].dropna()
 
-    @staticmethod
-    def _fit_gam_with_lam_ladder(
-        term, X, y, species: str, lam_ladder=GAM_LAM_LADDER, weights=None
-    ) -> PoissonGAM:
-        """Fits `term` against `(X, y)`, retrying with progressively stronger regularization from
-        `lam_ladder` if PIRLS diverges -- see `GAM_LAM_LADDER`'s module-level comment for why some
-        species need this at all.
-
-        Shared between the additive and tensor-interaction fits below rather than duplicated per
-        fit.
-        """
-        for lam in lam_ladder:
-            try:
-                gam = PoissonGAM(term, lam=list(lam)).fit(X, y, weights=weights)
-                if lam != lam_ladder[0]:
-                    print(f"  {species}: PIRLS needed lam={lam} to converge")
-                return gam
-            except OptimizationError:
-                continue
-        raise OptimizationError(f"{species}: PIRLS did not converge even at lam={lam_ladder[-1]}")
-
     def fit_hourly_ratio(
         self,
         species: str,
@@ -247,21 +206,18 @@ class PhenologyBuilder:
         original fit for comparison.
         """
         samples = self._hourly_ratio_samples(species)
-        X, y = samples[["doy", "hour"]].to_numpy(), samples["ratio"].to_numpy()
-        weights = samples["count_daily"].to_numpy() ** weight_power
-
-        term = (
-            te(0, 1, n_splines=[k0, k1])
-            if interaction
-            else s(0, n_splines=k0) + s(1, n_splines=k1)
+        return fit_ratio_surface(
+            samples["doy"].to_numpy(),
+            samples["hour"].to_numpy(),
+            samples["ratio"].to_numpy(),
+            samples["count_daily"].to_numpy() ** weight_power,
+            np.arange(self.doy[0], self.doy[1] + 1),
+            RATIO_HOURS,
+            k0=k0,
+            k1=k1,
+            interaction=interaction,
+            label=species,
         )
-        gam = self._fit_gam_with_lam_ladder(term, X, y, species, weights=weights)
-
-        doy_grid = np.arange(self.doy[0], self.doy[1] + 1)
-        grid = np.column_stack(
-            [np.repeat(doy_grid, len(RATIO_HOURS)), np.tile(RATIO_HOURS, len(doy_grid))]
-        )
-        return gam.predict(grid).reshape(len(doy_grid), len(RATIO_HOURS))
 
     def build(self, species: str, quantile_levels=QUANTILE_LEVELS, window=SMOOTH_WINDOW) -> dict:
         """The full per-species record: smoothed daily-rate statistics plus the hourly ratio."""

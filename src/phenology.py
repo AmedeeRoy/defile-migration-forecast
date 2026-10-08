@@ -33,6 +33,76 @@ PHENOLOGY_FILE = os.path.join("count", "species_doy_statistics.json")
 # which left the surveyed 05 and 18 UTC to a copy of the edge hour that overstated both.
 RATIO_HOURS: np.ndarray = np.arange(4, 19)
 
+# GAM spline counts for the doy/hour ratio surface. `notebooks/phenology_baseline.ipynb` has an
+# AIC-search cell over a handful of (k0, k1) combinations that never fed back into these
+# defaults -- worth revisiting there before changing these, rather than guessing new ones.
+DOY_SPLINES = 4
+HOUR_SPLINES = 12
+
+# Regularization ladder for the PIRLS fit, weakest first. `ratio` is a heavily
+# zero-inflated, long-tailed quantity (rare species can be >70% zero with a handful of
+# ratios in the 10-40 range), and PoissonGAM's PIRLS diverges outright for some species at
+# the historical (100, 10) strength -- Hen Harrier and Merlin, tried while writing this
+# script, neither of which appears in `notebooks/phenology_baseline.ipynb`'s exploratory cells
+# (only Osprey and European Honey Buzzard were ever fitted there). Trying progressively
+# stronger regularization and keeping the first one that converges reproduces the
+# historical fit exactly for species that were already well-behaved, and still produces a
+# usable (slightly smoother) surface for the ones that were not, rather than crashing an
+# 11-species run over the one species that needed it.
+GAM_LAM_LADDER = [(100, 10), (1000, 100), (10_000, 1_000), (100_000, 10_000)]
+
+# Each day's hourly-ratio samples are weighted by (that day's bird count) ** this in the GAM
+# fit. 0 is the historical fit -- every day equal, so a 2-bird day shapes the curve as much as
+# a 2 000-bird one; 1 is the unbiased estimator of the *expected* hourly rate the model
+# predicts, but lets a handful of huge days dominate. 0.5 was best on held-out years (fit on
+# even years, L1 to odd years' count-weighted hourly profile, 7 species): 0.253 / 0.213 /
+# 0.229 for 0 / 0.5 / 1 -- 1 lost on Honey Buzzard, whose shape a few huge days dominate.
+RATIO_WEIGHT_POWER = 0.5
+
+
+def fit_ratio_surface(
+    doy: np.ndarray,
+    hour: np.ndarray,
+    ratio: np.ndarray,
+    weights: np.ndarray,
+    doy_grid: np.ndarray,
+    hours: np.ndarray,
+    k0: int = DOY_SPLINES,
+    k1: int = HOUR_SPLINES,
+    interaction: bool = True,
+    lam_ladder=GAM_LAM_LADDER,
+    label: str = "",
+) -> np.ndarray:
+    """Poisson GAM of `ratio` (a period's rate / its day's rate) on (doy, hour), predicted on
+    `doy_grid` x `hours`: shape `(len(doy_grid), len(hours))`.
+
+    The one fit of the time-of-day shape, shared by the model's phenology baseline
+    (`scripts/build_phenology_stats.py`, UTC hours of the model's periods) and the Explore export
+    (`src/data/explore.py`, local clock hours). `interaction` fits `te(doy, hour)`, else `s(doy) +
+    s(hour)`, a doy-invariant shape once normalised (see `PhenologyBuilder.fit_hourly_ratio`). If
+    PIRLS diverges, the fit is retried with progressively stronger regularization from `lam_ladder`
+    (see `GAM_LAM_LADDER`), and so is one whose prediction overflows.
+    """
+    from pygam import PoissonGAM, s, te
+    from pygam.utils import OptimizationError
+
+    term = te(0, 1, n_splines=[k0, k1]) if interaction else s(0, n_splines=k0) + s(1, n_splines=k1)
+    X = np.column_stack([doy, hour])
+    grid = np.column_stack([np.repeat(doy_grid, len(hours)), np.tile(hours, len(doy_grid))])
+    for lam in lam_ladder:
+        try:
+            gam = PoissonGAM(term, lam=list(lam)).fit(X, ratio, weights=weights)
+        except OptimizationError:
+            continue
+        surface = gam.predict(grid)
+        if np.isfinite(surface).all():  # PIRLS can also overflow without raising
+            break
+    else:
+        raise OptimizationError(f"{label}: PIRLS did not converge even at lam={lam_ladder[-1]}")
+    if lam != lam_ladder[0]:
+        print(f"  {label}: PIRLS needed lam={lam} to converge")
+    return surface.reshape(len(doy_grid), len(hours))
+
 
 @dataclass
 class Phenology:
