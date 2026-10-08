@@ -117,6 +117,15 @@ Also in scope for this phase:
   follow-up: predict the *share* of the season's total per day/hour and forecast the
   annual total separately, removing most year-to-year variance from the hard part of the
   problem.
+- **Count data changed (2026-10), retrain on it.** The Trektellen zero-fill now runs (929 empty
+  survey hours added, 2022 on), mis-entered night periods are clipped and a double-counted
+  period dropped (`data/count/readme.md` → Rules, Trektellen). Rebuild
+  `species_doy_statistics.json` before retraining.
+- **GBIF export of the counts**, in defile-dataset (its README → Known limits): a
+  sampling-event Darwin Core Archive from `surveys`/`observations`. Needs publisher, licence,
+  data-owner agreement, a re-export of 2022-2023 from Trektellen (no data ids, so no stable
+  occurrence ids), the AviList mapping, and a check that the 2017-2020 Naturalist data is not
+  already on GBIF through Faune-France.
 - **Validate the `out_h` phenology-prior anchoring beyond Common Buzzard.** The collapse fix
   (`DECISIONS.md` → Model architecture) has only been validated on Common Buzzard, 3 seeds.
   Follow-ups:

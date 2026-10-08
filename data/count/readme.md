@@ -1,65 +1,108 @@
-# Data
+# Count data
 
-## Data description
+The counts come from the **defile-dataset** repo (`Rafnuss/defile-dataset`, private), which
+holds the raw files, the protocol history (essential before choosing which years to use), the
+data corrections and the documentation of every column (its `output/dataset/README.md`). Its
+audit lists the Trektellen entries to correct. This folder only holds what the forecast builds
+from it.
 
-### Species considered
+```bash
+# in defile-dataset
+uv run python scripts/build_dataset.py
+# here: copy its release tables into data/count/dataset/ and build the model's counts
+python scripts/build_counts.py --dataset ../defile-dataset/output
+```
 
-- les cibles principales du suivi ont toujours été rapaces/ardéiformes/pigeons/corvidés ; le suivi des passereaux est hétérogène ; historiquement ils n'étaient presque pas noté ; durant la dernière décennie c'est un peu mieux mais le Défilé concentre peu les passereaux contrairement aux cols, et les observateurs ne sont pas toujours présent tôt le matin, donc l'exploitation des données est presque impossible.
+`data/count/dataset/` then holds the release tables `count.csv`, `survey.csv`, `taxonomy.csv`
+and `datapackage.json`, and the build's `metadata.json` (which dataset build, from which commit
+and inputs). `all_count_processed.csv` is the model's input, read by
+`DefileDataModule.read_counts` and `scripts/build_phenology_stats.py`; after it changes, rebuild
+`species_doy_statistics.json` and retrain. The report,
+`logs/qa/counts/count_processing_report.html`, shows every check and, for every rule below, the
+rows and birds it touched.
 
-### Data collected
+## What the model needs
 
-- le dénominateur commun à chaque année depuis 1966 c'est un total/jour/espèce avec l'heure de début et heure de fin du suivi ; pour certaines années nous avons plus de détail (horaire) mais c'est hétérogène.
-- les relevés météo n'ont jamais été numérisés, et rien n'était noté avant 2008.
-- le nombre d'observateur actif par jour est noté de manière hétérogène depuis 2008 mais pas numérisé, donc la pression d'obs "réelle" n'est pas disponible
-- les détails (age, sexe) ont été relevé de manière très hétérogène au fil du temps ; probablement exploitable pour le busard des roseaux depuis les années 2000, mais pour les autres espèces j'en doute
+`all_count_processed.csv` has one row per species per survey period: `species` (the dataset's
+English name of the taxon, AviList first, as `configs/experiment/` uses it; `No species` as the
+effort placeholder), `date` (local), `count`, `start`/`end` (UTC). Effort is not stored
+separately: **a survey period is any `(start, end)` that appears on at least one row**, and a
+species absent from a period is counted as zero there. So a period surveyed with no bird of any
+species must still get a row, or it is not effort at all. These rows have species `No species`
+and count 0.
 
-### Temporal coverage
+The model works on clock hours (UTC). Data recorded hour by hour is kept as hours; data recorded
+as one total for a long period stays one long period (the datamodule uses its mean hourly rate,
+with a mask of the hours it covers).
 
-- Le réel suivi quotidien a débuté en 1993, avant cela le suivi était plus ponctuel, très concentré sur les pigeons en octobre.
-- Exception faite de 1983 et 1992, années pendant lesquelles la motivation de quelques observateurs a permis les premiers "vrai suivi".
-- En 1993 le Dr Charvoz a commencé à suivre bénévolement tous les jours dès juillet, avec l'aide de J.P. Matérac, M. Maire et d'autres les week-end.
-- Jusqu'en 2007 le suivi était assuré uniquement par les bénévoles.
-- De 2008 à 2016 le suivi était assuré par un salarié de la LPO la semaine et par des bénévoles les week-end.
-- Depuis 2017 le suivi est assurée par 2 salariés de la LPO du lundi au samedi et par des bénévoles les dimanches.
+## Rules
 
-Nous avions saisit les données 1966-2007 du Dr Charvoz en décryptant au mieux ses fiches (écriture de médecin !) mais des infos se sont perdues.
-Certains observateurs comme Lutz Lücker ont des souvenirs mémorables de migration des pigeons dont nous n'avons pas trace.
+The count is the main migration direction (`count_category = normal`); `reverse` and `local`
+counts are other quantities, not modelled. A count takes its own timing when it has one, else its
+survey's interval.
 
-### Data collection
+### Both sources, first
 
-- de 2008 à 2016 on avait des fiches papiers standard pour noter par heure (heure locale), c'était donc saisie avec des totaux horaires. pour certaines journées il y a seulement un formulaire avec total jour
-- de 2017 à 2020 on a de l'ultra-brute car saisie en direct avec Naturalist. donc pas d'heure de début et de fin de suivi dans les données (mais on a ça à coté), seulement l'heure de la saisie de la donnée, donc à quelques minutes près celle du passage des oiseaux "en majorité" car ce mode de saisie était appliqué la semaine par les spotteurs pour les journées assurées par les bénévoles il y a seulement un formulaire avec total jour.
-- depuis 2021 on utilise l'appli Trektellen, faite pour le suivi de migration.
+- **Coverage.** Only `complete` surveys are used. `none` surveys (rain, low cloud, closures) have
+  no counts and are not effort. `partial` and `unknown` surveys are dropped with their birds: with
+  unknown gap times, neither their rate over the interval nor their empty hours can be trusted.
+- **Presence only** (`count_estimation = x`, no number) is dropped: never turned into a count.
+- **Timed outside its survey.** The release keeps such an entry at day level, like an untimed
+  one; its `remark_processing` ("Entry time outside the native survey") tells them apart. Its
+  recorded time comes back from `entry_times.csv` (extracted by `build_counts.py` from the
+  dataset's internal observation table); without it, the entry is dropped.
 
-## Raw data available
+### Historical (1966-2021)
 
-### Pre-processing of the pre-2021 data
+Historical counts carry no timing of their own; days recorded hour by hour are one survey per
+hour in the dataset. Hours of the declared day window with no record are empty surveys there
+(see its README), so they become zero rows under "Empty surveys" below.
 
-We are using the raw data `data/raw/all_data_défilé_tri_v2023` for all data until 2013 and `data/raw/data_brute_DE_2014_2021` for data between 2014 and 2021. A manual cleaning of this data was necessary as detailed below:
+1. Records of the same taxon in the same survey (age/sex subgroups, repeated entries) are summed.
 
-- Split data into (1) 1966-2013 providing daily count, (2) 2014-2016 providing hourly count based on data entered manually and (3) 2017-2021 data from Naturalist providing both list and manual entry.
-- Fix startTime and endTime for 2014-2016:
-  - 29.09.2014 et 11.10.2014 dans les données brut (data_brute_DE_2014_2021)
-  - 09.10.2015, 01.12.2016 et 03.12.2016 dans pressure observation (all_data_défilé_tri_v2023)
-- Fix and align startTime and endTime for 2017-2021
-  - some sightings were providing without a list and without time. so probably seen during the day, but couldn't assign to a hour slot
-  - 2-3 instances of interruption of list during the day: 29.10.2021, 17.11.2021 and 14.09.2017
-  - Many case of sightings submitted before startTime or after endTime according to pressure observation. In most case I modified pressure observation, but in some case I deleted time (probably sumbmitted from home?)
-  - pressure observation also had about 10 entries which seemed completly wrong, I removed those and use the last/first sightings.
-- Delete observations after 19:00 for 2020-9-10 (pressure effort states 19:00 as end time, but there were 3 observations after.)
-- Delete the observation of a Marsh Harrier on the 2020-11-03 at 20:05 because this if after endtime
-- Delete observations oon the 2021-10-29: time of observations don't make sense.
-- Modify time slightly to match end time for 22.Sep.17 19:04 -> 18:59, 14.Sep.19 20:00 -> 19:59, 22.Sep.19 20:00 -> 19:59, 2021-09-02 20:00, 2021-10-20 18:00, 2021-09-01 20:00
-- modify time of survey of 2017-11-14 and 2019-07-30
-- Delete because of no time provided: Goéland leucophée 29.08.2019, Martinet à ventre blanc 09.09.2019 , Pigeon colombin 12.09.2019, 6 observations on the 17.09.2019, Faucon émerillon 09.10.2020, Grand Cormoran and Pigeon ramier 14.10.2020, Circaète Jean-le-Blanc 17.08.2021, Goéland leucophée 04.09.2021, Aigle royal 11.09.2021, Bec-croisé des sapins 16.09.2021, Aigle royal 21.09.2021, Aigle royal 30.09.2021, Pipit spioncelle 13.10.2021, Faucon pèlerin 14.10.2021, Grive mauvis 25.10.2021, Grive mauvis and Vautour fauve 06.11.2021
-- Correct effort on the 6.11.2021 setting all time as it seems like they've just entered all the data at the end of the day 09:00-18:31
+### Trektellen (2022 on)
 
-These modification and merging of the two dataset was performed manually into `data/count_2021.xlsx`
+0. **Night.** A count starting more than 45 min before civil dawn or ending more than 45 min
+   after civil dusk (sun at -6 deg) starts at dawn / ends at dusk: a count left open in the dark
+   is an entry error.
+   **Tolerance.** Then an entry timed less than 10 min before its count starts or after it ends
+   (its end is exclusive: an entry at that very minute is outside by zero) is moved 1 min inside
+   it: clock rounding, a late entry. Further out, it belongs to no counted period and is dropped.
+1. **Splitting.** A count period is split into clock hours if it lasts more than 2 h and fewer
+   than half of its entries with migrating birds (`count > 0`) lack a timestamp. Otherwise it
+   stays one period. Entries of local birds only are left out of that share: they are often
+   untimed even in a timed count.
+2. In a split period, entries without a timestamp are dropped: they cannot be placed in an hour.
+   They are mostly local birds, or totals entered at the end of the day.
+3. Each entry of a split period gets the clock hour of its timestamp as its period, clipped to
+   the count period.
+4. **Zero-fill.** Each clock hour (at least 10 min) of a split period with no entry of any
+   species gets a `No species` row with count 0.
+5. Periods shorter than 10 min are dropped, with their birds. This is mostly the partial last
+   hour of a split period.
+6. Entries of the same species in the same period are summed.
 
-### Post-2021
+### Both sources, last
 
-We are using the year specific data file exported from Trektellen `data/raw/Trektellen_data_2422_{y}`.
+- **Empty surveys.** A `complete` survey of at least 10 min that no record overlaps gets a
+  `No species` row with count 0: a period counted with nothing seen (explicit "no species"
+  entries included). Days without counting are `none` in the dataset, so they never get here.
 
-## Processing
+## Checks
 
-The processing of the count data, performed by `notebook/processing_count_data.ipynb`, combines the historical data until 2021 `data/count_2021.xlsx` and merge with the raw Trektellen files since 2021 `data/raw_count/Trektellen_data_2422_{y}.xlsx` to produce the file `all_count_processed.csv` which is used in the model.
+Run on every build and listed at the top of the report: every main-direction bird of the dataset
+is either in the output or dropped by a named rule; no two periods overlap; no period has zero
+length; periods under 15 min or windows over 16 h are flagged; one row per species and period;
+every species has an English name; every clock hour of a split window exists as a
+period; empty surveys alone on their day are flagged (real zeros only if the day was counted).
+
+## History
+
+Until 2026-10 the Trektellen zero-fill (rule 4) never ran: the notebook this replaced tested each
+empty hour against its whole count period, which it always overlaps. Fixing it, with the
+dataset's night and overlap corrections, added 929 survey periods (812 h) with their zero counts
+to 2022-2026 and removed 258 birds counted twice. The historical data is unchanged.
+
+In 2026-10 the input moved from the dataset's interim two-table layout (`surveys.csv`,
+`observations.csv`, with flags) to its release tables. Historical birds are unchanged; see
+`DECISIONS.md` (Counts) for what changed in effort and Trektellen birds, and why.
