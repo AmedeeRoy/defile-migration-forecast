@@ -177,11 +177,27 @@ Buzzard, Osprey, all pigeons and Chaffinch:
 Every smooth sums to zero over its grid, so the intercept, trend, season, `shift` (an interaction
 only, as mgcv's `ti`) and the year level each own their part: unconstrained, the smooth trend moved
 with the optimiser's stopping point (Black Kite 2025/1993: 0.80 to 1.21). Smoothing parameters
-come from the Fellner-Schall update (mgcv's `efs`): the same optimum from any start, 2-6 s a taxon.
-On the faster benchmark (three refits per taxon, each hiding every target year; 2 min for seven
-taxa) the GAM fills gaps with 5.6% error and 82% / 95% coverage, Honey Buzzard the exception (55%
-/ 82%). Trends are exported for full-tier species and combined series, not for unidentified birds
-("falcon sp."), whose numbers follow identification effort.
+come from the Fellner-Schall update (mgcv's `efs`): the same optimum from any start. `theta` then
+alternates with them as the maximum of the Laplace marginal likelihood: its likelihood given the
+fitted means was 15-35% too large (days looked less variable than they are). 3-8 s a taxon.
+
+The benchmark (three refits per taxon, each hiding every target year; 2 min for seven taxa) splits
+the error by kind of gap: hours hidden on days still partly counted are 15% of a year's birds and
+3% of error, whole days hidden 6% and 2%. So the day's own count and its time-of-day profile matter
+most, and the smooth terms least. What was tried on that split (`fe09ac4` has the code):
+
+- `kappa` on blocks of 4 clock hours (`KAPPA_BLOCK`), kept: a day's passage shifts as a whole, so
+  neighbouring hours are correlated and `kappa` halves from single hours to 3-4 hour blocks, then
+  levels off. It fixed most of the under-coverage (Honey Buzzard 55% -> 70% of 80% intervals).
+- Counted hours as flocks too (y negative binomial of size kappa x c in the day's rate update),
+  dropped: 3% too low on gap-filled totals and no more accurate.
+- Daily ERA5 weather at Défilé (wind, rain, cloud, temperature smooths), dropped for Explore: the
+  error on whole days fell from 2.1% to 1.7% of a year but the total's did not (5.4% vs 5.3%), at
+  2.5 x the time. It improves daily log scores (Black Kite -2.94 vs -3.02): a forecast matter.
+
+Result: 5.3% gap-filling error, bias +0.5%, intervals slightly wide (91% / 97% for 80% / 95%),
+Honey Buzzard still narrow (70% / 91%). Trends are exported for full-tier species and combined
+series, not for unidentified birds ("falcon sp."), whose numbers follow identification effort.
 
 ## Model architecture
 

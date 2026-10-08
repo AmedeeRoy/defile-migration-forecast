@@ -60,7 +60,7 @@ TARGET_FROM = 2014  # timed counts, so the birds of hidden hours are known
 DONOR_YEARS = (1993, 2013)  # their gaps (hours and days not counted) are transplanted
 RECENT_FROM = 2023
 METHODS = ("ratio", *T.VARIANTS)
-COLORS = {"ratio": "C7", "season": "C2", "gam": "C0", "weather": "C3"}
+COLORS = {"ratio": "C7", "season": "C2", "gam": "C0"}
 KINDS = ("hours", "day")  # hidden hours of a day still partly counted; whole days hidden
 ROTATIONS = 3  # refits per taxon in test 1, each hiding every target year
 
@@ -179,10 +179,7 @@ def gap_trials(
             [frame[~frame["year"].isin(targets)], *[m[frame.columns] for m in masked.values()]],
             ignore_index=True,
         )
-        refits = {
-            v: T.fit(v, train, years, doy_range, hyper=f.hyper, weather=ctx["weather"])
-            for v, f in fits.items()
-        }
+        refits = {v: T.fit(v, train, years, doy_range, hyper=f.hyper) for v, f in fits.items()}
         for i, (ty, m) in enumerate(masked.items()):
             target = frame[frame["year"] == ty]
             base = {
@@ -240,7 +237,7 @@ def recent_trials(name: str, ctx: dict, frame: pd.DataFrame, kappa: float) -> pd
     test = frame[future & (frame["c"] > 0)]
     rows = []
     for v in T.VARIANTS:
-        f = T.fit(v, train, years, doy_range, weather=ctx["weather"])
+        f = T.fit(v, train, years, doy_range)
         unseen = test.assign(c=0.0, y=0.0)
         draws = T.fill_draws(f, unseen, test["c"].to_numpy(), seed=1, kappa=kappa)
         beta = f.draws(T.DRAWS, np.random.default_rng(2))
@@ -284,8 +281,7 @@ def run_taxon(args) -> dict:
     years = np.arange(ctx["start"], ctx["last"] + 1)
     doy_range = (int(frame["doy"].min()), int(frame["doy"].max()))
     kappa = T.hour_dispersion(ctx["days"], ctx["hourly"], ctx["effort"], ctx["profile"])
-    ctx["weather"] = T.daily_weather(os.path.join(ROOT, "data", "weather"), years, doy_range)
-    fits = {v: T.fit(v, frame, years, doy_range, weather=ctx["weather"]) for v in T.VARIANTS}
+    fits = {v: T.fit(v, frame, years, doy_range) for v in T.VARIANTS}
     annual = pd.concat(
         [T.annual_totals(f, frame, kappa=kappa).assign(method=v) for v, f in fits.items()]
     )
@@ -377,7 +373,7 @@ def page(pdf, r: dict, gaps_score: pd.DataFrame):
     ax[0, 0].bar(obs["year"], obs["observed"], color="0.85", label="counted")
     for v in T.VARIANTS:
         x = a[a["method"] == v]
-        off = {"season": -0.25, "gam": 0, "weather": 0.25}[v]
+        off = {"season": -0.2, "gam": 0.2}[v]
         ax[0, 0].errorbar(
             x["year"] + off,
             x["q50"],

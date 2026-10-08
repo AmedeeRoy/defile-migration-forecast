@@ -48,7 +48,7 @@ from scipy.special import gammaln
 from src.explore.export import COMBINED_RANK, HOURS, in_window
 from src.explore.profile import PROFILE_DOY, PROFILE_MIN_TIMED, coverage
 
-VARIANTS = ("season", "gam", "weather")
+VARIANTS = ("season", "gam")
 # Ranks whose trend is exported: unidentified birds ("spuh", e.g. falcon sp.) trend with how hard
 # observers try to identify them, not with the birds.
 TREND_RANKS = ("species", COMBINED_RANK)
@@ -69,29 +69,13 @@ EFS_MAX_ITER = 100
 THETA_ROUNDS = 5  # alternations of theta (marginal likelihood) and the smoothing parameters
 EFS_TOL = 1e-2  # largest change of a log smoothing parameter or log theta: 1%
 
-# `weather`: the GAM plus a smooth of each of these daily ERA5 values at Défilé (daytime means,
-# precipitation a daytime sum on a log scale), from the forecast's local cache.
-WEATHER_LOCATION = "Defile"
-WEATHER_VARIABLES = (
-    "u_component_of_wind_100m",
-    "v_component_of_wind_100m",
-    "total_precipitation",
-    "total_cloud_cover",
-    "temperature_2m",
-)
-WEATHER_HOURS_UTC = (6, 16)  # [start, end): about 8-18 local in the season
-WEATHER_K = 8
 THETA_BOUNDS = (0.02, 200.0)  # negative binomial shape; small = over-dispersed
-KAPPA_BOUNDS = (0.01, 1e4)
+KAPPA_BOUNDS = (0.01, 1e4)  # hourly over-dispersion, per full day of coverage; large = Poisson
 # Hours summed into blocks before `kappa` is fitted: a day's passage shifts as a whole (later on a
 # slow morning), so neighbouring hours are not independent and `kappa` falls from single hours to
 # blocks of 3-4 hours, then levels off (Honey Buzzard 4.7 -> 2.6). Gaps are blocks of hours too.
-KAPPA_BLOCK = 4  # hourly over-dispersion, per full day of coverage; large = Poisson
-SMOOTH = (
-    "year",
-    "episode",
-    "weather",
-)  # left out of the smooth trend, season curves and passage dates
+KAPPA_BLOCK = 4
+SMOOTH = ("year", "episode")  # left out of the smooth trend, season curves and passage dates
 
 # Below this coverage a day says nothing about its rate (75 Black Kites in 11 minutes on
 # 2025-07-27, c = 0.0004, would be a 190 000-bird day): it is neither fitted nor conditioned on,
@@ -131,31 +115,6 @@ def model_frame(
     f["extra"] = f["y"].where(low, 0.0)
     f.loc[low, ["c", "y"]] = 0.0
     return f
-
-
-def daily_weather(cache_dir: str, years: np.ndarray, doy_range: tuple[int, int]) -> np.ndarray:
-    """`WEATHER_VARIABLES` at `WEATHER_LOCATION`, `(n_years, n_doy, n_variables)`, standardised:
-
-    daytime (`WEATHER_HOURS_UTC`) means, precipitation as log1p of the daytime sum in mm.
-    """
-    from src.data.weather import load_cache
-
-    ds = load_cache(
-        cache_dir, [WEATHER_LOCATION], list(WEATHER_VARIABLES), years=years, doy=doy_range
-    ).isel(location=0)
-    h = (ds["time"].values / np.timedelta64(1, "h")).astype(int)
-    day = ds.isel(time=np.flatnonzero((h >= WEATHER_HOURS_UTC[0]) & (h < WEATHER_HOURS_UTC[1])))
-    dates = pd.DatetimeIndex(ds["date"].values)
-    y0, d0 = int(years.min()), doy_range[0]
-    out = np.full((len(years), doy_range[1] - d0 + 1, len(WEATHER_VARIABLES)), np.nan)
-    yi, di = dates.year - y0, dates.dayofyear - d0
-    ok = (yi >= 0) & (yi < len(years)) & (di >= 0) & (di < out.shape[1])
-    for j, v in enumerate(WEATHER_VARIABLES):
-        x = day[v].sum("time") * 1000 if v == "total_precipitation" else day[v].mean("time")
-        x = np.log1p(np.asarray(x, float)) if v == "total_precipitation" else np.asarray(x, float)
-        out[yi[ok], di[ok], j] = x[ok]
-    mean, sd = np.nanmean(out, axis=(0, 1)), np.nanstd(out, axis=(0, 1))
-    return (out - mean) / sd
 
 
 # --- bases and priors -------------------------------------------------------
@@ -222,9 +181,7 @@ class Design:
         )
 
 
-def design(
-    variant: str, years: np.ndarray, doy_range: tuple[int, int], weather: np.ndarray | None = None
-) -> Design:
+def design(variant: str, years: np.ndarray, doy_range: tuple[int, int]) -> Design:
     """The bases and penalties of a variant over `years` (all of them, including years without
     data, whose coefficients then stay at their prior) and the window's days of year.
 
@@ -254,7 +211,7 @@ def design(
     add("intercept", lambda y, d: np.ones((len(y), 1)), [])
     season, S = centred(d0, d1, GAM_SEASON_K, doy_grid)
     add("season", lambda y, d: season(d), [("season", S)])
-    if variant in ("gam", "weather"):
+    if variant == "gam":
         trend, St = centred(y0, y1, GAM_TREND_K, year_grid)
         add("trend", lambda y, d: trend(y), [("trend", St)])
         ky, kd = GAM_SHIFT_K
@@ -273,25 +230,6 @@ def design(
             lambda y, d: np.eye(n_years)[np.clip(y - y0, 0, n_years - 1)],
             [("year", np.eye(n_years))],
         )
-    if variant == "weather":
-        if weather is None:
-            raise ValueError("the weather variant needs `weather` (daily_weather)")
-        W = np.nan_to_num(weather)  # standardised: missing days at the mean
-        bases, penalties, k = [], [], WEATHER_K - 1
-        for j, name in enumerate(WEATHER_VARIABLES):
-            lo, hi = float(W[..., j].min()), float(W[..., j].max())
-            b, S = centred(lo, hi, WEATHER_K, W[..., j].ravel())
-            bases.append(b)
-            P = np.zeros((len(WEATHER_VARIABLES) * k,) * 2)
-            P[j * k : (j + 1) * k, j * k : (j + 1) * k] = S
-            penalties.append((f"weather_{j}", P))
-
-        def weather_basis(y, d):
-            w = W[np.clip(y - y0, 0, n_years - 1), np.clip(d - d0, 0, W.shape[1] - 1)]
-            return np.hstack([b(w[:, j]) for j, b in enumerate(bases)])
-
-        add("weather", weather_basis, penalties)
-    if variant in ("gam", "weather"):
         episode, Se = centred(d0, d1, GAM_EPISODE_K, doy_grid, order=1)
         add(
             "episode",
@@ -460,14 +398,7 @@ def _efs(d: Design, X, offset, y, hyper: dict, beta, theta_ml: bool):
     return hyper, beta
 
 
-def fit(
-    variant: str,
-    frame: pd.DataFrame,
-    years: np.ndarray,
-    doy_range,
-    hyper=None,
-    weather: np.ndarray | None = None,
-) -> Fit:
+def fit(variant: str, frame: pd.DataFrame, years: np.ndarray, doy_range, hyper=None) -> Fit:
     """Fit a variant to the observed rows of `frame` (`c > 0`), over the year range `years`.
 
     The smoothing parameters by the extended Fellner-Schall update (Wood and Fasiolo 2017; mgcv's
@@ -479,7 +410,7 @@ def fit(
     maximum of the Laplace marginal likelihood. With `hyper` given, only the posterior mode is
     found: how the benchmark refits a year with part of it hidden.
     """
-    d = design(variant, years, doy_range, weather)
+    d = design(variant, years, doy_range)
     obs = frame[frame["c"] > 0]
     episode = [b.columns.start for b in d.blocks if b.name == "episode"]
     X = Matrix(d.X(obs["year"].to_numpy(), obs["doy"].to_numpy()), (episode or [d.n_columns])[0])
