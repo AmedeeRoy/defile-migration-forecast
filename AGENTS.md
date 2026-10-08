@@ -34,7 +34,8 @@ prod/            Production artifacts (gitignored, generated):
   models/<species>/checkpoints/best.ckpt   the deployed checkpoint per species
   forecasts/                                exported forecasts consumed by defileViz
 scripts/
-  schedule.sh                    cron entrypoint for scheduled predict+deploy runs
+  schedule.sh                    manual list of hparams-search/train/promote commands (not on a schedule)
+  gce_trigger_forecast.sh        GCE cron script that dispatches the daily forecast workflow
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
@@ -325,7 +326,11 @@ benefit:
 
 ## Production pipeline (`.github/workflows/predict_and_deploy_forecasts.yml`)
 
-Runs daily at 03:00 UTC (cron), on every push to `main`, and on manual dispatch:
+Runs twice a day, on every push to `main`, and on manual dispatch. The daily runs are
+dispatched by the GCE host's cron at 04:30 UTC (morning forecast, previous day's 18z ECMWF
+run) and 09:00 UTC (update on the 00z run) via `scripts/gce_trigger_forecast.sh`, because
+GitHub starts `schedule:` runs 5-7 h late. The workflow's own crons (00:17, 03:17 UTC) are
+a fallback for when the VM is down. A later run overwrites that day's files:
 
 1. Installs the pinned environment with `uv sync --locked`.
 2. Runs `uv run python src/predict.py experiment=<species>` once per species (a failed

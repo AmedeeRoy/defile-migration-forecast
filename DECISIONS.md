@@ -223,3 +223,13 @@ publish is a human review of its test report before promotion, not a threshold i
 job. What the job does instead is make each forecast traceable — every NetCDF carries
 `species`, `issued_at`, `weather_model`, `checkpoint_sha256` and `git_sha` — and run each
 species in its own process, so one failure neither hides nor blocks the rest.
+
+**The daily runs are dispatched from the GCE host, not GitHub's cron.** GitHub started the
+`0 3 * * *` schedule 5-7 h late every day (08:23-09:51 UTC over late September 2026), so the
+forecast was never there in the morning. The VM's cron now calls `workflow_dispatch` at
+04:30 UTC, on the previous day's 18z ECMWF run, which Open-Meteo serves from ~01:15 UTC
+(7.3 h after the run starts), and again at 09:00 UTC on the 00z run. Running the prediction on
+the VM itself was considered and not done: dispatching keeps the pinned runner environment,
+the run history and GitHub's failure email, with nothing to maintain on the VM. GitHub crons
+at 00:17 and 03:17 UTC stay as a fallback. A run on the 12z ECMWF run in the evening does not
+help, because the forecast file carries the date of its run.

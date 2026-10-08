@@ -15,7 +15,7 @@ Three things worth keeping in view when touching model architecture: the unit of
 prediction is an **hourly rate**, not a daily total, so the shape of the day matters as
 much as the daily sum. The system must run **unattended** — a silently wrong or stale
 forecast is as serious as a crash, and neither is currently detected. And the features
-available at 03:00 UTC on the day of the run are the only features that exist; anything
+available at 04:30 UTC on the day of the run are the only features that exist; anything
 the model learns to depend on that isn't available then is a liability.
 
 ## Status
