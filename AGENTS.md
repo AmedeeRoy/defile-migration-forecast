@@ -39,7 +39,8 @@ scripts/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
   build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
-tests/                            pytest suite (weather, counts, predict guards, unet prior, phenology, datamodule)
+  build_explore.py               defile-dataset tables -> data/explore/ (defileViz's Explore page)
+tests/                            pytest suite (weather, counts, explore export, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
   metrics.py                      row/day/shape/season metrics + the phenology baseline
@@ -233,7 +234,7 @@ serving products there (~0.93 over flat terrain), even with the forecast pinned 
 remaining limit on forecast skill (`DECISIONS.md` → Weather).
 
 Tests live in `tests/`: the weather layer (`test_weather.py`), the count processing
-(`test_counts.py`), the datamodule's `prior_shape`
+(`test_counts.py`), the Explore export (`test_explore.py`), the datamodule's `prior_shape`
 plumbing, `UNetplus`'s shape-prior anchoring, the phenology baseline, and the predict-time
 season guard. Metrics, plots and the rest of the training loop have none;
 `debug=default` is the smoke test for those.
@@ -262,6 +263,10 @@ rather than editing `configs/data/defile.yaml` directly.
   `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
   choices here. Survey protocol and recording granularity changed repeatedly over the years:
   defile-dataset's README has the history, essential before choosing which years to use.
+- Explore export: `python scripts/build_explore.py` turns the same release tables (plus
+  `report_text.csv`) into `data/explore/`, the JSON files defileViz's Explore page reads
+  (`src/data/explore.py` documents each one). Unlike the model's counts, it is a plain aggregation
+  with no processing: raw daily totals must reconcile with `count.csv` (`tests/test_explore.py`).
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field

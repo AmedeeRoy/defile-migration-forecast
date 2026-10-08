@@ -2,12 +2,13 @@
 """Builds `data/count/all_count_processed.csv` from the defile-dataset tables, plus a QA report.
 
 The counts are built and documented in the separate defile-dataset repo, whose release holds
-`dataset/{count,survey,taxonomy}.csv` with `dataset/datapackage.json`, and the build's
+`dataset/{count,survey,taxonomy,report_text}.csv` with `dataset/datapackage.json`, and the build's
 `metadata.json`. `--dataset <dir>` copies those files from a defile-dataset build (its `output/`
 folder, or an unpacked release) into `data/count/dataset/`, with the recorded times of the entries
 the release keeps at day level, from the build's `interim/processed/observations.csv`
-(`entry_times.csv`); without it, the copy already there is used. This script then applies the model's processing (`src/data/counts.py`: the surveys and counts
-the model cannot use, hourly splitting, zero-fill) and writes the model's count file, read by
+(`entry_times.csv`); without it, the copy already there is used. `report_text.csv` is read only
+by `scripts/build_explore.py`. This script then applies the model's processing
+(`src/data/counts.py`: the surveys and counts the model cannot use, hourly splitting, zero-fill) and writes the model's count file, read by
 `DefileDataModule.read_counts` and `scripts/build_phenology_stats.py`. Rebuild the phenology
 statistics and retrain after it changes.
 

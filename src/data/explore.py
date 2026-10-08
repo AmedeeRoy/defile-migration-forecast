@@ -1,0 +1,384 @@
+"""Explore export: the defile-dataset release tables -> the JSON files defileViz's Explore page
+reads.
+
+Unlike `src/data/counts.py`, nothing here is a model choice: every value is a plain aggregation
+of the release tables (`count.csv`, `survey.csv`, `taxonomy.csv`, `report_text.csv`), following
+the dataset README's daily-total rules (a count's own timing, else its survey's; the local
+Europe/Paris day). No count is moved, dropped, imputed or redistributed, so raw daily and annual
+totals reconcile with `count.csv` (`tests/test_explore.py`). Entries the release keeps at day
+level (untimed, or timed outside their survey) stay untimed here.
+
+Files, written by `scripts/build_explore.py` (one `build_*` function each):
+
+- `manifest.json`: provenance (dataset build, commit, table hashes), years, partial years, the
+  default window and the tier thresholds.
+- `taxa.json`: one entry per taxon, with names, rank, occurrence tier and totals.
+- `effort.json`: one entry per local day with any survey: counted hours (union of `complete`
+  survey intervals), first/last counted time, hours counted per local clock hour, and the hours of
+  `partial`, `unknown` and `none` (not counted) surveys.
+- `species/<taxon_id>.json`: per day, the main-direction count with its qualifiers, the reverse
+  and local counts, and the share of birds timed to the hour; per local hour, the birds timed to
+  it; annual totals; the species' report texts.
+- `reports.json`: the report texts that are not about one species (site, monitoring, weather,
+  results, outreach).
+
+Tables are columnar (`{"date": [...], "count": [...]}`) to keep the files small.
+"""
+
+import datetime as dt
+import json
+import os
+
+import numpy as np
+import pandas as pd
+
+from src.data.counts import (
+    DATASET_DIR,
+    MAIN_CATEGORY,
+    METADATA_FILE,
+    PRESENCE_ONLY,
+    REPORT_FILE,
+    TIMEZONE,
+    parse_counts,
+    parse_surveys,
+)
+
+# Bump when a field's meaning changes, so defileViz can refuse an export it does not understand.
+DEFINITIONS_VERSION = 1
+
+# Default comparison window (month, day), inclusive. A window for annual totals, not a filter:
+# every day is exported.
+WINDOW = ((7, 18), (11, 18))
+
+# Occurrence tiers. "full": a dashboard; "short": records, annual totals and report links;
+# "rare": the rare-records table only. Thresholds on main-direction counts (`tier_of`).
+TIER_FULL_MIN_YEARS = 10
+TIER_FULL_MIN_BIRDS = 100
+TIER_RARE_MAX_DAYS = 10
+
+# A count is "timed" when its own time, or its survey, places it within one local clock hour.
+TIMED_MAX_DURATION = pd.Timedelta(hours=1)
+
+COVERAGE_STATES = ("complete", "partial", "unknown", "none")
+REPORT_SPECIES = "species"  # report_text category whose key is a taxon_id
+
+HOURS = 24
+DECIMALS = 3  # hours and fractions
+
+
+# --- local time -------------------------------------------------------------
+
+
+def to_local(t: pd.Series) -> pd.Series:
+    """UTC times -> naive local wall-clock times."""
+    return t.dt.tz_convert(TIMEZONE).dt.tz_localize(None)
+
+
+def split_at_midnight(start: pd.Series, end: pd.Series) -> pd.DataFrame:
+    """Local intervals -> pieces within one local day (`index` points back to the input row)."""
+    pieces = []
+    for i, s, e in zip(start.index, start, end):
+        while s < e:
+            cut = min(e, s.normalize() + pd.Timedelta(days=1))
+            pieces.append((i, s, cut))
+            s = cut
+    return pd.DataFrame(pieces, columns=["index", "start", "end"]).set_index("index")
+
+
+def merge_intervals(start: np.ndarray, end: np.ndarray) -> list[tuple]:
+    """Union of intervals, as sorted non-overlapping (start, end) pairs."""
+    out = []
+    for s, e in sorted(zip(start, end)):
+        if out and s <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def hours_per_clock_hour(intervals: list[tuple]) -> np.ndarray:
+    """Hours covered in each of the 24 local clock hours of a day by (start, end) intervals."""
+    cover = np.zeros(HOURS)
+    for s, e in intervals:
+        day = s.normalize()
+        a, b = (s - day) / pd.Timedelta(hours=1), (e - day) / pd.Timedelta(hours=1)
+        for h in range(int(np.floor(a)), min(int(np.ceil(b)), HOURS)):
+            cover[h] += max(0.0, min(b, h + 1) - max(a, h))
+    return cover
+
+
+# --- effort -----------------------------------------------------------------
+
+
+def build_effort(surveys: pd.DataFrame) -> pd.DataFrame:
+    """One row per local day with any survey.
+
+    `hours` is the union of `complete` survey intervals (never a sum of nested or overlapping
+    ones); `first`/`last` its local bounds; `periods` the number of complete surveys; `hourly` the
+    hours counted in each local clock hour; `partial_hours`, `unknown_hours`, `none_hours` the
+    other surveys' hours. `state`: `counted` (some complete hours), else `uncertain` (only partial
+    or unknown), else `not_counted` (only `none`: rain, closures).
+    """
+    s = surveys.assign(lstart=to_local(surveys["start"]), lend=to_local(surveys["end"]))
+    pieces = split_at_midnight(s["lstart"], s["lend"])
+    pieces = pieces.join(s[["survey_coverage", "recording_era"]])
+    pieces["date"] = pieces["start"].dt.normalize()
+
+    rows = []
+    for date, day in pieces.groupby("date"):
+        row = {"date": date}
+        complete = day[day["survey_coverage"] == "complete"]
+        union = merge_intervals(complete["start"].tolist(), complete["end"].tolist())
+        hourly = hours_per_clock_hour(union)
+        row["hours"] = hourly.sum()
+        row["first"] = union[0][0] if union else None
+        row["last"] = union[-1][1] if union else None
+        row["periods"] = len(complete)
+        row["hourly"] = hourly
+        for state in COVERAGE_STATES[1:]:
+            part = day[day["survey_coverage"] == state]
+            union_s = merge_intervals(part["start"].tolist(), part["end"].tolist())
+            row[f"{state}_hours"] = sum((e - b) / pd.Timedelta(hours=1) for b, e in union_s)
+        eras = day.loc[day["recording_era"] != "curated", "recording_era"]
+        row["era"] = eras.mode().iloc[0] if len(eras) else "curated"
+        rows.append(row)
+    e = pd.DataFrame(rows)
+    e["state"] = np.select(
+        [e["hours"] > 0, (e["partial_hours"] + e["unknown_hours"]) > 0],
+        ["counted", "uncertain"],
+        "not_counted",
+    )
+    return e
+
+
+def annual_effort(effort: pd.DataFrame) -> pd.DataFrame:
+    """Per year: days by `state`, counted hours, and the same in the default window."""
+    e = effort.assign(year=effort["date"].dt.year, win=in_window(effort["date"]))
+    counted = e["state"] == "counted"
+    return (
+        e.assign(
+            days=counted,
+            uncertain_days=e["state"] == "uncertain",
+            not_counted_days=e["state"] == "not_counted",
+            window_days=counted & e["win"],
+            window_hours=e["hours"].where(e["win"], 0),
+        )
+        .groupby("year")[
+            ["days", "hours", "window_days", "window_hours", "uncertain_days", "not_counted_days"]
+        ]
+        .sum()
+        .reset_index()
+    )
+
+
+# --- counts -----------------------------------------------------------------
+
+
+def timed_hour(counts: pd.DataFrame, surveys: pd.DataFrame) -> pd.Series:
+    """Local clock hour (0-23) each count is timed to, or NaN.
+
+    Timed: the count's own time (a point), or, without one, a survey of at most an hour within
+    one local clock hour (historical hour-by-hour records). Day-level entries are untimed.
+    """
+    sv = surveys.set_index("survey_id")
+    start = to_local(counts["survey_id"].map(sv["start"]))
+    end = to_local(counts["survey_id"].map(sv["end"]))
+    one_hour = ((end - start) <= TIMED_MAX_DURATION) & (
+        start.dt.floor("h") == (end - pd.Timedelta(seconds=1)).dt.floor("h")
+    )
+    own = counts["datetime"].notna()
+    inherits = counts["raw_datetime"].isna()
+    hour = pd.Series(np.nan, index=counts.index)
+    hour[own] = to_local(counts.loc[own, "datetime"]).dt.hour
+    hour[inherits & one_hour] = start[inherits & one_hour].dt.hour
+    return hour
+
+
+def daily_counts(counts: pd.DataFrame) -> pd.DataFrame:
+    """One row per taxon and local day with any count row.
+
+    `count`: main-direction birds (NaN if only presence-only records); `reverse`, `local`: NaN when
+    no row (unknown, not zero); `qualifiers`: the day's distinct `count_estimation` codes on main-
+    direction rows, sorted (e.g. `"~>"`); `timed`: the share of main-direction birds timed to the
+    hour (NaN without birds).
+    """
+    normal = counts[counts["count_category"] == MAIN_CATEGORY]
+    key = ["taxon_id", "date"]
+    d = normal.groupby(key).agg(
+        count=("count", lambda x: x.sum(min_count=1)),
+        timed_birds=("timed_count", "sum"),
+        qualifiers=("count_estimation", lambda x: "".join(sorted(set(x.dropna())))),
+    )
+    for cat in ("reverse", "local"):
+        rows = counts[counts["count_category"] == cat]
+        d = d.join(rows.groupby(key)["count"].sum().rename(cat), how="outer")
+    d["qualifiers"] = d["qualifiers"].fillna("")
+    d["timed"] = (d["timed_birds"] / d["count"]).where(d["count"] > 0)
+    return d.drop(columns="timed_birds").reset_index()
+
+
+def hourly_counts(counts: pd.DataFrame) -> pd.DataFrame:
+    """Main-direction birds per taxon, local day and local clock hour, from timed counts only."""
+    timed = counts[(counts["count_category"] == MAIN_CATEGORY) & counts["hour"].notna()]
+    h = timed.groupby(["taxon_id", "date", "hour"])["count"].sum().reset_index()
+    h["hour"] = h["hour"].astype(int)
+    return h
+
+
+def in_window(dates: pd.Series) -> pd.Series:
+    """Whether local dates fall in the default comparison window `WINDOW`."""
+    md = dates.dt.month * 100 + dates.dt.day
+    (m0, d0), (m1, d1) = WINDOW
+    return (md >= m0 * 100 + d0) & (md <= m1 * 100 + d1)
+
+
+def annual(days: pd.DataFrame) -> pd.DataFrame:
+    """Per year: total birds, birds in the window, days with a record, and the top day."""
+    d = days.assign(year=days["date"].dt.year, win=in_window(days["date"]))
+    d["win_count"] = d["count"].where(d["win"])
+    g = d.groupby("year")
+    a = g.agg(
+        total=("count", "sum"),
+        window=("win_count", "sum"),
+        days=("date", "size"),
+    )
+    top = d.loc[d["count"].fillna(-1).groupby(d["year"]).idxmax()]
+    a["max"] = top.set_index("year")["count"]
+    a["max_date"] = top.set_index("year")["date"]
+    return a.reset_index()
+
+
+# --- taxa -------------------------------------------------------------------
+
+
+def tier_of(years: int, birds: float, days: int) -> str:
+    """Occurrence tier of a taxon from its main-direction records (thresholds above)."""
+    if days <= TIER_RARE_MAX_DAYS:
+        return "rare"
+    if years >= TIER_FULL_MIN_YEARS and birds >= TIER_FULL_MIN_BIRDS:
+        return "full"
+    return "short"
+
+
+def build_taxa(taxonomy: pd.DataFrame, days: pd.DataFrame) -> pd.DataFrame:
+    """Taxonomy plus occurrence: years and days with a record, total birds, tier."""
+    d = days[days["count"].notna() | days["qualifiers"].str.contains(PRESENCE_ONLY)]
+    occ = d.groupby("taxon_id").agg(
+        years=("date", lambda x: x.dt.year.nunique()),
+        first_year=("date", lambda x: x.dt.year.min()),
+        last_year=("date", lambda x: x.dt.year.max()),
+        days=("date", "size"),
+        birds=("count", "sum"),
+    )
+    t = taxonomy[
+        ["taxon_id", "english_name", "scientific_name", "taxon_rank", "order", "family"]
+    ].join(occ, on="taxon_id")
+    t["tier"] = [
+        tier_of(y, b, n) if pd.notna(n) else "rare"
+        for y, b, n in zip(t["years"], t["birds"], t["days"])
+    ]
+    return t.sort_values(["order", "family", "scientific_name"], na_position="last")
+
+
+# --- assembly ---------------------------------------------------------------
+
+
+def release_counts(count: pd.DataFrame, surveys: pd.DataFrame, taxonomy: pd.DataFrame):
+    """`count.csv` parsed (`counts.parse_counts`, without entry times), plus its own
+    `raw_datetime`, the local clock `hour` it is timed to (`timed_hour`) and its `timed_count`."""
+    c = parse_counts(count, surveys, taxonomy)
+    c["raw_datetime"] = count["datetime"].to_numpy()
+    c["hour"] = timed_hour(c, surveys)
+    c["timed_count"] = c["count"].where(c["hour"].notna(), 0).fillna(0)
+    return c
+
+
+def read_release(data_dir: str):
+    """`(surveys, counts, taxonomy, reports, metadata)` from `<data_dir>/count/dataset/`.
+
+    The release tables only: `entry_times.csv`, the model's extra, is not read. `counts` is
+    `release_counts`.
+    """
+    folder = os.path.join(data_dir, DATASET_DIR)
+    surveys = parse_surveys(pd.read_csv(os.path.join(folder, "survey.csv"), low_memory=False))
+    taxonomy = pd.read_csv(os.path.join(folder, "taxonomy.csv"))
+    count = pd.read_csv(os.path.join(folder, "count.csv"), low_memory=False)
+    c = release_counts(count, surveys, taxonomy)
+    reports = pd.read_csv(os.path.join(folder, REPORT_FILE), encoding="utf-8-sig")
+    path = os.path.join(folder, METADATA_FILE)
+    metadata = json.load(open(path)) if os.path.exists(path) else {}
+    return surveys, c, taxonomy, reports, metadata
+
+
+def partial_years(days: pd.DataFrame) -> list[int]:
+    """The last year, if its last record is before the window's end (a season in progress)."""
+    last = days["date"].max()
+    (m1, d1) = WINDOW[1]
+    return [int(last.year)] if (last.month, last.day) < (m1, d1) else []
+
+
+def manifest(metadata: dict, days: pd.DataFrame, effort: pd.DataFrame, git_sha: str) -> dict:
+    """Provenance of the export and the definitions it was built with."""
+    tables = {
+        k.removeprefix("dataset/"): v
+        for k, v in metadata.get("table_sha256", {}).items()
+        if k.startswith("dataset/") and k.endswith(".csv")
+    }
+    built = metadata.get("built_at", "")
+    sha = (metadata.get("git_sha") or "").split()[0][:7]
+    return {
+        "snapshot": f"{built[:10].replace('-', '')}-{sha}" if built else None,
+        "definitions_version": DEFINITIONS_VERSION,
+        "built_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "git_sha": git_sha,
+        "dataset": {
+            "built_at": built or None,
+            "git_sha": metadata.get("git_sha"),
+            "schema": metadata.get("consolidated_schema"),
+            "processing_policy": metadata.get("processing_policy"),
+            "table_sha256": tables,
+        },
+        "first_date": effort["date"].min(),
+        "last_date": max(effort["date"].max(), days["date"].max()),
+        "partial_years": partial_years(days),
+        "window": [f"{m:02d}-{d:02d}" for m, d in WINDOW],
+        "tiers": {
+            "full_min_years": TIER_FULL_MIN_YEARS,
+            "full_min_birds": TIER_FULL_MIN_BIRDS,
+            "rare_max_days": TIER_RARE_MAX_DAYS,
+        },
+        "timezone": TIMEZONE,
+    }
+
+
+# --- JSON -------------------------------------------------------------------
+
+
+def _value(v):
+    if v is None or (isinstance(v, float) and np.isnan(v)) or v is pd.NaT:
+        return None
+    if isinstance(v, pd.Timestamp):
+        return v.strftime("%Y-%m-%d") if v == v.normalize() else v.strftime("%H:%M")
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (float, np.floating)):
+        f = round(float(v), DECIMALS)
+        return int(f) if f.is_integer() else f
+    if isinstance(v, np.ndarray):
+        return [_value(x) for x in v]
+    return v
+
+
+def columns(df: pd.DataFrame) -> dict:
+    """A frame as `{column: [values]}`, with dates as `YYYY-MM-DD`, times as `HH:MM`, NaN as
+    null."""
+    return {c: [_value(v) for v in df[c]] for c in df.columns}
+
+
+def records(df: pd.DataFrame) -> list[dict]:
+    """A frame as a list of `{column: value}`, same conversions as `columns`."""
+    return [{c: _value(v) for c, v in row.items()} for row in df.to_dict("records")]
+
+
+def dumps(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=_value)

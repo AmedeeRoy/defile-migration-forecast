@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Builds the Explore export for defileViz from the defile-dataset release tables.
+
+Reads `data/count/dataset/` (copied by `python scripts/build_counts.py --dataset <dir>`) and writes
+`data/explore/`: `manifest.json`, `taxa.json`, `effort.json`, `reports.json` and
+`species/<taxon_id>.json`. `src/data/explore.py` documents each file; every value is an
+aggregation of the release, with no model processing. Copy the folder to defileViz's
+`public/data/explore/` to publish it.
+
+Usage:
+    python scripts/build_explore.py
+    python scripts/build_explore.py --out ../defileViz/public/data/explore
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+
+import rootutils
+
+rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
+
+from src.data import explore as E  # noqa: E402
+
+ROOT = rootutils.find_root(__file__, indicator=".project-root")
+
+
+def write(path: str, obj) -> int:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(E.dumps(obj))
+    return os.path.getsize(path)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--data-dir", default=os.path.join(ROOT, "data"))
+    ap.add_argument("--out", default=os.path.join(ROOT, "data", "explore"))
+    args = ap.parse_args(argv)
+
+    surveys, counts, taxonomy, reports, metadata = E.read_release(args.data_dir)
+    effort = E.build_effort(surveys)
+    days = E.daily_counts(counts)
+    hourly = E.hourly_counts(counts)
+    taxa = E.build_taxa(taxonomy, days)
+    git_sha = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT
+    ).stdout.strip()
+
+    if os.path.isdir(args.out):
+        shutil.rmtree(args.out)
+    os.makedirs(os.path.join(args.out, "species"))
+    sizes = {
+        "manifest.json": write(
+            os.path.join(args.out, "manifest.json"), E.manifest(metadata, days, effort, git_sha)
+        ),
+        "taxa.json": write(os.path.join(args.out, "taxa.json"), E.records(taxa)),
+        "effort.json": write(
+            os.path.join(args.out, "effort.json"),
+            {"days": E.columns(effort), "annual": E.records(E.annual_effort(effort))},
+        ),
+        "reports.json": write(
+            os.path.join(args.out, "reports.json"),
+            E.records(reports[reports["category"] != E.REPORT_SPECIES]),
+        ),
+    }
+    species_bytes = 0
+    texts = reports[reports["category"] == E.REPORT_SPECIES]
+    for taxon_id, d in days.groupby("taxon_id"):
+        d = d.drop(columns="taxon_id")
+        h = hourly[hourly["taxon_id"] == taxon_id].drop(columns="taxon_id")
+        t = texts[texts["key"] == taxon_id][["year", "text"]]
+        species_bytes += write(
+            os.path.join(args.out, "species", f"{taxon_id}.json"),
+            {
+                "taxon_id": taxon_id,
+                "days": E.columns(d),
+                "hourly": E.columns(h),
+                "annual": E.records(E.annual(d)),
+                "reports": E.records(t),
+            },
+        )
+    sizes[f"species/ ({days['taxon_id'].nunique()} files)"] = species_bytes
+
+    print(f"Explore export -> {args.out}")
+    for name, n in sizes.items():
+        print(f"  {name:28s} {n / 1e3:9.1f} kB")
+    print("  tiers:", taxa["tier"].value_counts().to_dict())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

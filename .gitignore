@@ -20,6 +20,9 @@ __pycache__/
 # count tables copied from defile-dataset by scripts/build_counts.py --dataset
 data/count/dataset/
 
+# Explore export for defileViz, rebuilt with scripts/build_explore.py
+data/explore/
+
 # weather cache, rebuilt with scripts/build_weather_cache.py
 data/weather/
 .cache.sqlite
