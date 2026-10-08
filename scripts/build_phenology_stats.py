@@ -87,7 +87,7 @@ HOUR_SPLINES = 12
 # ratios in the 10-40 range), and PoissonGAM's PIRLS diverges outright for some species at
 # the historical (100, 10) strength -- Hen Harrier and Merlin, tried while writing this
 # script, neither of which appears in `notebooks/phenology_baseline.ipynb`'s exploratory cells
-# (only Osprey and European Honey-buzzard were ever fitted there). Trying progressively
+# (only Osprey and European Honey Buzzard were ever fitted there). Trying progressively
 # stronger regularization and keeping the first one that converges reproduces the
 # historical fit exactly for species that were already well-behaved, and still produces a
 # usable (slightly smoother) surface for the ones that were not, rather than crashing an
@@ -138,10 +138,10 @@ class PhenologyBuilder:
 
     @staticmethod
     def _load_trektellen_ids(data_dir: str) -> dict:
-        """Species name -> Trektellen species id, from the defile-dataset tables (in
+        """Species name -> Trektellen species id, from the defile-dataset taxonomy (in
         data/count/dataset/, copied by scripts/build_counts.py)."""
-        _, observations, _ = read_dataset(data_dir)
-        return trektellen_species_ids(observations)
+        _, _, taxonomy, _ = read_dataset(data_dir)
+        return trektellen_species_ids(taxonomy)
 
     def _count_species(self, species: str) -> pd.DataFrame:
         """Every observation period, zero-filled for periods with no record of `species`."""

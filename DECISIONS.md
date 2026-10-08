@@ -29,6 +29,53 @@ use case; not revisiting.
 
 **Fine-tuning on Open-Meteo's Historical Forecast API is out of scope.**
 
+## Counts
+
+**The model reads the defile-dataset release tables (`count`, `survey`, `taxonomy`), not its
+interim two-table layout.** One reader for the model and, next, the explore export (#55): the
+release's own timing rules (a count's own time, else its survey's interval; Europe/Paris day)
+and its per-survey `survey_coverage` replace the old flags. Historical birds are identical
+(12 801 055); Trektellen differs only by the named rules below. `tests/test_counts.py` reconciles
+the real release when it is present.
+
+**Effort is the survey rows.** Non-bird and explicit "no species" entries no longer exist in the
+release, and are not needed: a `complete` survey with no record is a zero row. The old
+"counted day" rule (an empty survey alone on its day is a day without counting) is now the
+dataset's `survey_coverage = none`; it stays only as a warning check. Its 5 hits on the 2026-10
+release are explicit "no species" entries, i.e. real zeros the old rule discarded.
+
+**`partial`/`unknown` surveys are dropped with their birds** (10 surveys, 11 977 birds), not kept
+as "the model should learn that rain means few birds". Their gaps are periods nobody counted;
+counting them as effort teaches bad weather -> no birds when there was no observer (the same
+error as zero-filling a rained-off day). Keeping only their timed hours would keep the hours
+with birds and lose the empty ones, biasing rates up. Poor weather is learnt from complete
+surveys counted in it.
+
+**Entries timed outside their survey are dropped**, as before (`time_outside_survey`). The
+release keeps them at day level, indistinguishable from untimed entries except by
+`remark_processing`; folded into an unsplit survey they inflated its rate (56 Black Kites on
+2025-08-03), and counted as untimed they un-split a timed count (2025-10-26). The old dataset's
+`time_adjusted` entries (164, 4 556 birds, times moved back into the survey) are now in this
+group too, "pending correction" in defile-dataset.
+
+**Night hours of a split Trektellen count are not zero-filled.** The release keeps night periods
+as recorded (the old dataset clipped them to dusk); 4 counts in 2025 were left open until the
+next morning, ~40 h of zeros nobody watched. Night is the sun below -6 deg for the whole hour,
+`night_mask_by_doy_hour`, the model's one definition.
+
+**The historical day window is a dataset matter.** The workbook's `startTimeDay`/`endTimeDay`
+(declared attendance) is not in the release, so the old historical zero-fill of empty hours on
+hour-by-hour days (832 periods, 668 h, 2014-2021) is gone, and no rule here replaces it: whether
+an hour without a record inside the declared day was counted is source evidence, needed by the
+explore page's effort too. Requested from defile-dataset as empty `complete` survey rows; until
+then 2014-2021 lose those zero hours.
+
+**Species are named by the release's English name (AviList first).** Two modelled species
+change: Eurasian Kestrel -> Common Kestrel, European Honey-buzzard -> European Honey Buzzard.
+Their configs, checkpoint folders, forecast file names and `species_doy_statistics.json` keys
+follow; defileViz must follow too. A local eBird-name map was rejected: a second name list kept
+in sync by hand.
+
 ## Model architecture
 
 **Single output channel; the uncertainty channel is gone.** The second output channel fed

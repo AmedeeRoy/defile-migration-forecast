@@ -253,11 +253,12 @@ rather than editing `configs/data/defile.yaml` directly.
 - Counts: `data/count/all_count_processed.csv`, one row per species per survey period,
   1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
   in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
-  locally), which builds `surveys.csv` + `observations.csv` (every record and field kept,
-  corrections flagged, never removed) and a report of Trektellen entry errors.
+  locally), whose release is `count.csv`, `survey.csv` and `taxonomy.csv` (Avibase taxon ids,
+  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_coverage`) and an
+  audit of Trektellen entry errors.
   `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
-  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: hour
-  splitting, zero-fill, dropping the flagged rows the model cannot use); its HTML report in
+  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: the
+  surveys and counts the model cannot use, hour splitting, zero-fill); its HTML report in
   `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
   choices here. Survey protocol and recording granularity changed repeatedly over the years:
   defile-dataset's README has the history, essential before choosing which years to use.

@@ -20,6 +20,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from src.data.counts import (
+    MAIN_CATEGORY,
     MIN_PERIOD_DURATION,
     SOURCES,
     TIMEZONE,
@@ -285,12 +286,11 @@ def _section_species(mc: ModelCounts, species: list[str]) -> str:
 
 
 def _section_examples(mc: ModelCounts, sightings: pd.DataFrame, removed: pd.DataFrame) -> str:
-    """`sightings`: the dataset's Trektellen observations."""
     """A few Trektellen days split into hours: output periods vs.
 
-    raw sighting timestamps.
+    raw sighting timestamps. `sightings`: the dataset's Trektellen counts.
     """
-    windows = mc.split_windows["trektellen"]
+    windows = mc.split_windows
     if windows.empty:
         return ""
     rng = np.random.default_rng(EXAMPLE_SEED)
@@ -331,7 +331,7 @@ def _section_examples(mc: ModelCounts, sightings: pd.DataFrame, removed: pd.Data
 def render(
     mc: ModelCounts,
     checks: list[Check],
-    observations: pd.DataFrame,
+    counts: pd.DataFrame,
     species: list[str],
     inputs: dict[str, str],
 ) -> str:
@@ -341,7 +341,9 @@ def render(
         [s.rows for s in mc.log.steps if s.source == "trektellen" and s.action == "removed"]
     )
     status = {k: sum(c.status == k for c in checks) for k in STATUS_COLORS}
-    sightings = observations[observations["source"] == "trektellen"]
+    sightings = counts[
+        (counts["source"] == "trektellen") & (counts["count_category"] == MAIN_CATEGORY)
+    ]
     inputs_html = "".join(
         f'<tr><td class="l">{html.escape(k)}</td><td class="l">{html.escape(v)}</td></tr>'
         for k, v in inputs.items()

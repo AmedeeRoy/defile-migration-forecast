@@ -1,8 +1,8 @@
-"""Count data: the defile-dataset tables -> the model's survey-period counts.
+"""Count data: the defile-dataset release tables -> the model's survey-period counts.
 
 The counts come from the separate **defile-dataset** repo, which reads the raw files, applies the
-data corrections (night periods, overlapping counts, timestamps; each flagged, nothing removed) and
-documents every column. Its two tables, `surveys.csv` and `observations.csv`, are copied into
+data corrections and documents every column. Its release tables, `count.csv`, `survey.csv` and
+`taxonomy.csv` (with `datapackage.json`, and the build's `metadata.json`), are copied into
 `data/count/dataset/` (`scripts/build_counts.py --dataset <dir>`).
 
 This module holds only the choices the *model* needs, turning those tables into survey periods of
@@ -11,12 +11,12 @@ or adds rows is one named step recorded in a `ProcessingLog`, and `check_model_c
 result, so `scripts/build_counts.py` can report what each rule did. `data/count/readme.md` lists
 the rules.
 
-Output schema (`OUTPUT_COLUMNS`), one row per species per survey period: `species` (English name,
-empty when the taxon has none), `date` (local survey date), `count` (birds), `start`/`end` (UTC).
-Effort is implicit: a survey period is any (start, end) appearing on at least one row, and a
-species absent from a period counted zero there (`DefileDataModule.read_counts`). That is why hours
-with birds of no species need a `No species` row with count 0 -- without it the hour would not
-exist as effort at all.
+Output schema (`OUTPUT_COLUMNS`), one row per species per survey period: `species` (the dataset's
+English name), `date` (local survey date), `count` (birds), `start`/`end` (UTC). Effort is
+implicit: a survey period is any (start, end) appearing on at least one row, and a species absent
+from a period counted zero there (`DefileDataModule.read_counts`). That is why a surveyed hour with
+no bird needs a `No species` row with count 0 -- without it the hour would not exist as effort at
+all.
 """
 
 import json
@@ -26,30 +26,36 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-# The site's local time: the dataset's `date` columns are local calendar dates.
+from src.data.weather import night_mask_by_doy_hour
+
+# The site's local time: the dataset's dates, and the model's `date`, are local calendar dates.
 TIMEZONE = "Europe/Paris"
 
 DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
-DATASET_FILES = ("surveys.csv", "observations.csv", "metadata.json")
+# Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
+DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", "datapackage.json")
+METADATA_FILE = "metadata.json"
 
-# Effort placeholder for an hour surveyed with no bird recorded.
+# Effort placeholder for a period surveyed with no bird recorded.
 NO_SPECIES = "No species"
-# One name for every non-bird taxon recorded (butterflies, dragonflies, ...): never modelled,
-# but their entries still mark their period as surveyed.
-NON_BIRD = "Non-bird"
 
-# Dataset flags (defile-dataset `build.py`) whose observations the model cannot use.
-EXCLUDED_FLAGS = {
-    "no_time": "Record without a start/end time: it belongs to no survey period.",
-    "no_survey": "Entry whose Trektellen count is missing from the header export.",
-    "duplicate_survey": "Entry of a count overlapping a longer one: the same birds, counted "
-    "twice; the longer count is kept.",
-    "time_outside_survey": "Timestamp more than 10 min outside its count period.",
+# The main migration direction (`count.csv` `count_category`); `reverse` and `local` are other
+# quantities, not modelled.
+MAIN_CATEGORY = "normal"
+# Presence without a number (`count_estimation`); its `count` is empty.
+PRESENCE_ONLY = "x"
+# The dataset keeps an entry timed outside its survey at day level, like an untimed one; only its
+# `remark_processing` tells the two apart.
+OUTSIDE_SURVEY_REMARK = "Entry time outside the native survey"
+
+# Survey coverage (`survey.csv` `survey_coverage`) the model cannot use. Only `complete` surveys
+# give a rate over their interval.
+EXCLUDED_COVERAGE = {
+    "none": "Survey with no counting (rain, low cloud, a closure): not effort. It has no counts.",
+    "partial": "Survey counted over only part of its interval, with unknown gap times: neither "
+    "its rate over the interval nor its empty hours can be trusted. Dropped with its birds.",
+    "unknown": "Survey whose coverage cannot be established: dropped with its birds.",
 }
-
-# Dataset survey flags (defile-dataset `build.py`).
-FLAG_NO_ENTRIES = "no_entries"  # survey with no observation at all
-FLAG_RECORDS_DELETED = "records_deleted"  # its records were deleted in the manual cleaning
 
 # A period is split into clock hours only if it is longer than this ...
 SPLIT_MIN_DURATION = pd.Timedelta(hours=2)
@@ -80,22 +86,78 @@ def fmt_duration(td: pd.Timedelta) -> str:
 # ---------------------------------------------------------------------------------------
 
 
-def read_dataset(data_dir: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """`(surveys, observations, metadata)` from `<data_dir>/count/dataset/`."""
+def local_date(t: pd.Series) -> pd.Series:
+    """Local calendar date (a naive midnight timestamp) of UTC times."""
+    return t.dt.tz_convert(TIMEZONE).dt.tz_localize(None).dt.normalize()
+
+
+def parse_surveys(survey: pd.DataFrame) -> pd.DataFrame:
+    """`survey.csv` plus `start`/`end` (UTC), local `date` and `source`.
+
+    `source` is `trektellen` or `historical` (notebook, spreadsheet, Naturalist, and the curated
+    non-counting periods).
+    """
+    s = survey.copy()
+    bounds = s["datetime"].str.split("/", expand=True)
+    s["start"] = pd.to_datetime(bounds[0], utc=True)
+    s["end"] = pd.to_datetime(bounds[1], utc=True)
+    s["date"] = local_date(s["start"])
+    s["source"] = np.where(s["recording_era"] == "trektellen", "trektellen", "historical")
+    return s
+
+
+def parse_counts(count: pd.DataFrame, surveys: pd.DataFrame, taxonomy: pd.DataFrame):
+    """`count.csv` plus the model's `species`, the `source` and `date` of its survey, and its own
+    timestamp `datetime` (UTC; NaT when untimed).
+
+    A count's `datetime` is either empty (it inherits its survey's interval), a local date (untimed,
+    or timed outside its survey: the dataset keeps it at day level), or a UTC time. The dataset also
+    allows a UTC interval, which no release has used; it is refused rather than guessed at.
+    """
+    c = count.copy()
+    raw = c["datetime"].fillna("")
+    interval = raw.str.contains("/")
+    if interval.any():
+        raise ValueError(
+            f"{interval.sum()} count(s) with their own interval (e.g. "
+            f"{c.loc[interval, 'count_id'].iloc[0]}): not handled by the model's processing."
+        )
+    date_only = raw.str.len() == 10
+    timed = raw.str.contains("T")
+    c["datetime"] = pd.to_datetime(raw.where(timed), utc=True, format="ISO8601")
+    c = c.merge(surveys[["survey_id", "source", "date"]], on="survey_id", how="left")
+    assert c["source"].notna().all(), "count without a released survey"
+    c.loc[timed.values, "date"] = local_date(c.loc[timed.values, "datetime"])
+    c.loc[date_only.values, "date"] = pd.to_datetime(raw[date_only]).values
+    c["count"] = c["count"].astype(float)  # presence-only counts are empty
+    names = taxonomy.set_index("taxon_id")["english_name"]
+    c["species"] = c["taxon_id"].map(names)
+    return c
+
+
+def read_dataset(data_dir: str):
+    """`(surveys, counts, taxonomy, metadata)` from `<data_dir>/count/dataset/`.
+
+    `metadata` is the release's build `metadata.json`, empty if it was not copied.
+    """
     folder = os.path.join(data_dir, DATASET_DIR)
-    surveys = pd.read_csv(os.path.join(folder, "surveys.csv"), low_memory=False)
-    for c in ("start", "end", "start_original", "end_original", "day_start", "day_end"):
-        surveys[c] = pd.to_datetime(surveys[c], utc=True)
-    surveys["date"] = pd.to_datetime(surveys["date"])
-    surveys["flags"] = surveys["flags"].fillna("")
-    observations = pd.read_csv(os.path.join(folder, "observations.csv"), low_memory=False)
-    for c in ("datetime", "datetime_original"):
-        observations[c] = pd.to_datetime(observations[c], utc=True, format="ISO8601")
-    observations["date"] = pd.to_datetime(observations["date"])
-    observations["flags"] = observations["flags"].fillna("")
-    with open(os.path.join(folder, "metadata.json")) as f:
-        metadata = json.load(f)
-    return surveys, observations, metadata
+    surveys = parse_surveys(pd.read_csv(os.path.join(folder, "survey.csv"), low_memory=False))
+    taxonomy = pd.read_csv(os.path.join(folder, "taxonomy.csv"))
+    count = pd.read_csv(os.path.join(folder, "count.csv"), low_memory=False)
+    counts = parse_counts(count, surveys, taxonomy)
+    path = os.path.join(folder, METADATA_FILE)
+    metadata = json.load(open(path)) if os.path.exists(path) else {}
+    return surveys, counts, taxonomy, metadata
+
+
+def trektellen_species_ids(taxonomy: pd.DataFrame) -> dict[str, int]:
+    """English name -> Trektellen species id, from the dataset's taxonomy.
+
+    Where a taxon has several ids (a few unidentified groups), the lowest.
+    """
+    t = taxonomy.dropna(subset=["trektellen_species_id"])
+    ids = t["trektellen_species_id"].astype(str).str.split(",").str[0].astype(int)
+    return dict(zip(t["english_name"], ids))
 
 
 # ---------------------------------------------------------------------------------------
@@ -109,7 +171,7 @@ class Step:
 
     source: str
     name: str
-    action: str  # "removed" | "modified" | "added" | "merged"
+    action: str  # "removed" | "modified" | "added" | "merged" | "not used"
     rule: str
     rows: pd.DataFrame
 
@@ -143,9 +205,9 @@ class ProcessingLog:
 class ModelCounts:
     counts: pd.DataFrame  # OUTPUT_COLUMNS, the content of all_count_processed.csv
     log: ProcessingLog
-    # Survey windows split into clock hours, per source: columns date, start, end (UTC).
-    split_windows: dict[str, pd.DataFrame]
-    # Birds in the dataset (before any step), by year, per source.
+    # Trektellen survey windows split into clock hours: columns date, start, end (UTC).
+    split_windows: pd.DataFrame
+    # Main-direction birds in the dataset (before any step), by year, per source.
     raw_birds: dict[str, pd.Series]
 
 
@@ -181,85 +243,89 @@ def hourly_slots(windows: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=windows.columns).drop_duplicates(ignore_index=True)
 
 
-def _drop_flagged(df: pd.DataFrame, src: str, log: ProcessingLog) -> pd.DataFrame:
-    flags = df["flags"].str.split(";")
-    for flag, rule in EXCLUDED_FLAGS.items():
-        hit = flags.apply(lambda f: flag in f)
-        if hit.any():
-            log.record(src, f"Flagged {flag}", "removed", rule, df[hit])
-            df, flags = df[~hit], flags[~hit]
-    return df
+def in_night(slots: pd.DataFrame) -> np.ndarray:
+    """Whether each slot lies in a night hour: a whole UTC hour with the sun below -6 deg, the
+    model's one definition of night (`night_mask_by_doy_hour`)."""
+    if slots.empty:
+        return np.zeros(0, dtype=bool)
+    night = night_mask_by_doy_hour()
+    return night[slots["start"].dt.dayofyear.to_numpy() - 1, slots["start"].dt.hour.to_numpy()]
 
 
-def _with_survey(obs: pd.DataFrame, surveys: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    out = obs.merge(surveys[["survey_id", *columns]], on="survey_id", how="left")
-    assert len(out) == len(obs)
+def _with_survey(counts: pd.DataFrame, surveys: pd.DataFrame) -> pd.DataFrame:
+    out = counts.merge(surveys[["survey_id", "start", "end"]], on="survey_id", how="left")
+    assert len(out) == len(counts)
     return out
 
 
-def historical_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: ProcessingLog):
-    """Historical observations -> model counts.
+def usable_surveys(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog):
+    """Drop the surveys the model cannot use (`EXCLUDED_COVERAGE`), with their counts, then the
+    presence-only counts and those timed outside their survey.
 
-    Returns (counts, split windows).
+    Returns (counts, surveys).
+    """
+    for coverage, rule in EXCLUDED_COVERAGE.items():
+        hit = surveys["survey_coverage"] == coverage
+        in_hit = counts["survey_id"].isin(surveys.loc[hit, "survey_id"])
+        if coverage == "none":
+            # No counts by construction; the surveys themselves are what is not used.
+            assert not in_hit.any(), "counts in a survey with coverage 'none'"
+            rows = surveys.loc[hit, ["survey_id", "date", "start", "end", "survey_coverage"]]
+            log.record(src, "Survey not counted", "not used", rule, rows)
+        else:
+            log.record(src, f"Survey coverage {coverage}", "removed", rule, counts[in_hit])
+        surveys, counts = surveys[~hit], counts[~in_hit]
+    presence = counts["count_estimation"] == PRESENCE_ONLY
+    log.record(
+        src,
+        "Presence only",
+        "removed",
+        "A record of presence without a number is never turned into a count.",
+        counts[presence],
+    )
+    counts = counts[~presence]
+    outside = counts["remark_processing"].fillna("").str.startswith(OUTSIDE_SURVEY_REMARK)
+    log.record(
+        src,
+        "Timed outside its survey",
+        "removed",
+        "An entry whose recorded time falls outside its survey's interval belongs to no counted "
+        "period: neither the survey's rate nor (when split) one of its hours.",
+        counts[outside],
+    )
+    return counts[~outside], surveys
+
+
+def historical_model_counts(counts: pd.DataFrame, surveys: pd.DataFrame, log: ProcessingLog):
+    """Historical counts -> model counts: one row per taxon and survey period.
+
+    Historical counts carry no timing of their own: each takes its survey's interval. Days recorded
+    hour by hour are one survey per hour in the dataset, so they need no splitting here.
     """
     src = "historical"
-    df = _drop_flagged(obs, src, log)
-    df = _with_survey(df, surveys, ["start", "end", "day_start", "day_end"])
-
-    # Grouped by the original (French) name: two names mapping to one species would stay two
-    # rows, which the "One row per species and period" check would catch.
-    keys = ["taxon_name_original", "species", "date", "start", "end", "day_start", "day_end"]
+    df = _with_survey(counts, surveys)
+    # Grouped by taxon id: two ids sharing an English name would stay two rows, which the "One row
+    # per species and period" check would catch.
+    keys = ["taxon_id", "species", "date", "start", "end"]
     merged = df.groupby(keys, as_index=False, dropna=False).agg(count=("count", "sum"))
     log.record(
         src,
         "Same species, same period",
         "merged",
-        "Several records of one species in one period are summed into one row. "
-        f"{len(df) - len(merged)} rows merged; no bird lost.",
+        "Several records of one taxon in one period (age/sex subgroups, repeated entries) are "
+        f"summed into one row. {len(df) - len(merged)} rows merged; no bird lost.",
         df[df.duplicated(keys, keep=False)],
     )
-    df = merged
-
-    # Zero-fill: on a day recorded hour by hour, an hour with no bird has no row and so
-    # would not exist as effort. A day counts as hour-by-hour when one of its periods lies
-    # strictly inside the day window (starts after it opens and ends before it closes).
-    periods = df[["date", "start", "end", "day_start", "day_end"]].drop_duplicates()
-    inner = (
-        (periods["start"] != periods["day_start"])
-        & (periods["end"] != periods["day_end"])
-        & ((periods["day_end"] - periods["day_start"]) > SPLIT_MIN_DURATION)
-    )
-    windows = (
-        periods.loc[inner, ["date", "day_start", "day_end"]]
-        .drop_duplicates()
-        .rename(columns={"day_start": "start", "day_end": "end"})
-        .reset_index(drop=True)
-    )
-    slots = hourly_slots(windows)
-    empty = ~overlaps_any(slots["start"], slots["end"], df["start"], df["end"])
-    zeros = slots[empty].assign(species=NO_SPECIES, count=0)
-    log.record(
-        src,
-        "Zero-fill empty hours",
-        "added",
-        f"On days recorded hour by hour (a period strictly inside a day window longer than "
-        f"{fmt_duration(SPLIT_MIN_DURATION)}), each clock hour of the day window overlapping "
-        f"no record gets a '{NO_SPECIES}' row with count 0, so it exists as survey effort.",
-        zeros,
-    )
-    if len(zeros):
-        df = pd.concat([df, zeros], ignore_index=True)
-    return df[OUTPUT_COLUMNS], windows
+    return merged[OUTPUT_COLUMNS]
 
 
-def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: ProcessingLog):
-    """Trektellen observations -> model counts.
+def trektellen_model_counts(counts: pd.DataFrame, surveys: pd.DataFrame, log: ProcessingLog):
+    """Trektellen counts -> model counts.
 
     Returns (counts, split windows).
     """
     src = "trektellen"
-    df = _drop_flagged(obs, src, log)
-    df = _with_survey(df, surveys, ["start", "end"])
+    df = _with_survey(counts, surveys)
 
     # Which periods to split into hours: long enough, and mostly timestamped. The share is over
     # entries with migrating birds: untimed entries of local birds only (count 0) say nothing
@@ -282,7 +348,7 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
         src,
         "Untimed sighting in split period",
         "removed",
-        "In a period split into hours, a sighting without timestamp cannot be placed in an "
+        "In a period split into hours, a sighting without a timestamp cannot be placed in an "
         "hour. Mostly local birds, or totals entered at the end of the day.",
         df[untimed],
     )
@@ -310,13 +376,22 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     slots = hourly_slots(windows)
     slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
     empty = ~overlaps_any(slots["start"], slots["end"], df["start"], df["end"])
-    zeros = slots[empty].assign(species=NO_SPECIES, count=0)
+    night = in_night(slots)
+    log.record(
+        src,
+        "Night hour not zero-filled",
+        "not used",
+        "An empty hour of a split period lying wholly at night (sun below -6 deg) is not effort: "
+        "counts left open overnight would otherwise add hours of zeros nobody watched.",
+        slots[empty & night],
+    )
+    zeros = slots[empty & ~night].assign(species=NO_SPECIES, count=0)
     log.record(
         src,
         "Zero-fill empty hours",
         "added",
-        f"Each clock hour (at least {fmt_duration(MIN_PERIOD_DURATION)}) of a split period "
-        f"with no sighting gets a '{NO_SPECIES}' row with count 0, so it exists as effort.",
+        f"Each daylight clock hour (at least {fmt_duration(MIN_PERIOD_DURATION)}) of a split "
+        f"period with no sighting gets a '{NO_SPECIES}' row with count 0, so it exists as effort.",
         zeros,
     )
     if len(zeros):
@@ -333,101 +408,59 @@ def trektellen_model_counts(obs: pd.DataFrame, surveys: pd.DataFrame, log: Proce
     )
     df = df[~short]
 
-    mapped = df[df["species"].notna()]
-    merged = mapped.groupby(["species", "date", "start", "end"], as_index=False)["count"].sum()
+    keys = ["species", "date", "start", "end"]
+    merged = df.groupby(keys, as_index=False, dropna=False)["count"].sum()
     log.record(
         src,
         "Same species, same period",
         "merged",
-        "Sightings of one species in one period are summed into one row. "
-        f"{len(mapped) - len(merged)} rows merged; no bird lost. Sightings of taxa with no "
-        "English name in the dataset's taxonomy are kept as separate rows with no species "
-        "name (they still mark the period as surveyed).",
-        mapped[mapped.duplicated(["species", "date", "start", "end"], keep=False)],
+        f"Sightings of one species in one period are summed into one row. "
+        f"{len(df) - len(merged)} rows merged; no bird lost.",
+        df[df.duplicated(keys, keep=False)],
     )
-    out = pd.concat([merged, df[df["species"].isna()]], ignore_index=True)
-    return out[OUTPUT_COLUMNS], windows
+    return merged[OUTPUT_COLUMNS], windows
 
 
 def zero_fill_empty_surveys(
     counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog
 ) -> pd.DataFrame:
-    """Surveys with no entry at all: a zero only where the day was counted.
+    """A counted survey with no record at all is a period counted with nothing seen.
 
-    An empty hour among a day's hourly counts (2022-09-05) is a real zero. A whole day entered as
-    one empty count is a day without counting ("Hors protocole": rain, low cloud), not a day with
-    nothing seen, so it is not effort -- zero-filling those would teach the model that bad weather
-    means no birds, when nobody was watching.
+    Only `complete` surveys reach this point (`usable_surveys`): days without counting are `none`
+    in the dataset, so an empty survey here is a real zero, even alone on its day (an explicit 'no
+    species' entry).
     """
-    flags = surveys["flags"].str.split(";")
-    empty = surveys[
-        flags.apply(lambda f: FLAG_NO_ENTRIES in f and FLAG_RECORDS_DELETED not in f)
-        & surveys["duplicate_of"].isna()
-        & ((surveys["end"] - surveys["start"]) >= MIN_PERIOD_DURATION)
-    ]
+    long_enough = (surveys["end"] - surveys["start"]) >= MIN_PERIOD_DURATION
+    empty = surveys[long_enough]
     free = ~overlaps_any(empty["start"], empty["end"], counts["start"], counts["end"])
-    counted_day = empty["date"].isin(counts["date"])
-    zeros = empty[free & counted_day][["date", "start", "end"]].assign(species=NO_SPECIES, count=0)
+    zeros = empty[free][["date", "start", "end"]].assign(species=NO_SPECIES, count=0)
     log.record(
         src,
         "Zero-fill empty surveys",
         "added",
-        f"A survey with no entry, on a day with other entries, gets a '{NO_SPECIES}' row with "
-        "count 0: an hour counted with nothing seen.",
+        f"A counted survey (at least {fmt_duration(MIN_PERIOD_DURATION)}) that no record "
+        f"overlaps gets a '{NO_SPECIES}' row with count 0, so it exists as effort.",
         zeros,
-    )
-    log.record(
-        src,
-        "Empty survey on a day not counted",
-        "not used",
-        "A survey with no entry on a day with no other entry is a day without counting "
-        "(e.g. 'Hors protocole' in rain), not a day with nothing seen: not effort.",
-        empty[free & ~counted_day][["survey_id", "date", "start", "end", "flags"]],
     )
     return pd.concat([counts, zeros[OUTPUT_COLUMNS]], ignore_index=True) if len(zeros) else counts
 
 
-def model_species(obs: pd.DataFrame) -> pd.Series:
-    """The model's name for each observation's taxon.
-
-    The eBird English name, which `configs/experiment/*.yaml` and defileViz use (the dataset's
-    `english_name` follows AviList, which renames e.g. Eurasian Kestrel to Common Kestrel), else
-    the AviList one; `No species` for effort markers; `Non-bird` for non-birds.
-    """
-    name = obs["ebird_english_name"].fillna(obs["english_name"]).where(obs["taxon_kind"] == "bird")
-    name = name.mask(obs["taxon_kind"] == "no_species", NO_SPECIES)
-    return name.mask(obs["taxon_kind"] == "non_bird", NON_BIRD)
-
-
-def trektellen_species_ids(observations: pd.DataFrame) -> dict[str, int]:
-    """Model species name -> Trektellen species id, from the dataset's Trektellen observations.
-
-    Where one name has several ids, the most frequent one.
-    """
-    t = observations[observations["source"] == "trektellen"]
-    t = t.assign(species=model_species(t)).dropna(subset=["species", "trektellen_species_id"])
-    top = t.groupby(["species", "trektellen_species_id"]).size().reset_index(name="n")
-    top = top.sort_values("n", ascending=False).drop_duplicates("species")
-    return dict(zip(top["species"], top["trektellen_species_id"].astype(int)))
-
-
-def build_model_counts(surveys: pd.DataFrame, observations: pd.DataFrame) -> ModelCounts:
+def build_model_counts(surveys: pd.DataFrame, counts: pd.DataFrame) -> ModelCounts:
     log = ProcessingLog()
-    observations = observations.assign(species=model_species(observations))
-    parts, windows, raw = [], {}, {}
-    for src, fn in (
-        ("historical", historical_model_counts),
-        ("trektellen", trektellen_model_counts),
-    ):
-        obs = observations[observations["source"] == src]
-        src_surveys = surveys[surveys["source"] == src]
-        counts, windows[src] = fn(obs, src_surveys, log)
-        counts = zero_fill_empty_surveys(counts, src_surveys, src, log)
-        parts.append(counts)
-        raw[src] = obs.groupby(obs["date"].dt.year)["count"].sum()
+    counts = counts[counts["count_category"] == MAIN_CATEGORY]
+    parts, raw, windows = [], {}, None
+    for src in SOURCES:
+        c, s = counts[counts["source"] == src], surveys[surveys["source"] == src]
+        raw[src] = c.groupby(c["date"].dt.year)["count"].sum()
+        c, s = usable_surveys(c, s, src, log)
+        if src == "trektellen":
+            out, windows = trektellen_model_counts(c, s, log)
+        else:
+            out = historical_model_counts(c, s, log)
+        parts.append(zero_fill_empty_surveys(out, s, src, log))
     out = (
         pd.concat(parts, ignore_index=True)
-        .sort_values(["start", "end", "species"], kind="stable", na_position="last")
+        .sort_values(["start", "end", "species"], kind="stable")
         .reset_index(drop=True)
     )
     out["count"] = out["count"].astype(int)
@@ -517,8 +550,7 @@ def check_model_counts(mc: ModelCounts) -> list[Check]:
 
     # Before splitting too: a whole-day period split into hours would not show up otherwise.
     windows = pd.concat(
-        [w.assign(source=s, split=True) for s, w in mc.split_windows.items()] + [p],
-        ignore_index=True,
+        [mc.split_windows.assign(source="trektellen", split=True), p], ignore_index=True
     )
     windows["duration_min"] = (windows["end"] - windows["start"]).dt.total_seconds() / 60
     long_h = LONG_PERIOD_WARNING.total_seconds() / 3600
@@ -533,7 +565,7 @@ def check_model_counts(mc: ModelCounts) -> list[Check]:
         )
     )
 
-    dup = c[c["species"].notna() & c.duplicated(["species", "start", "end"], keep=False)]
+    dup = c[c.duplicated(["species", "start", "end"], keep=False)]
     checks.append(
         Check(
             "One row per species and period",
@@ -547,30 +579,44 @@ def check_model_counts(mc: ModelCounts) -> list[Check]:
     checks.append(
         Check(
             "Species with an English name",
-            "pass" if unm.empty else "warn",
+            "pass" if unm.empty else "fail",
             f"{len(unm)} row(s), {unm['count'].sum():.0f} birds, have no species name (taxon "
-            "not in the dataset's taxonomy). They are never counted for any species but still "
-            "mark their period as surveyed.",
+            "without an English name in the dataset's taxonomy).",
             unm,
         )
     )
 
     # In windows split into hours, every clock hour should exist as a period.
-    rows = []
-    for src, windows in mc.split_windows.items():
-        slots = hourly_slots(windows)
-        slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
-        covered = overlaps_any(slots["start"], slots["end"], periods["start"], periods["end"])
-        rows.append(slots[~covered].assign(source=src))
-    missing = pd.concat(rows, ignore_index=True)
+    slots = hourly_slots(mc.split_windows)
+    slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
+    covered = overlaps_any(slots["start"], slots["end"], periods["start"], periods["end"])
+    missing = slots[~covered & ~in_night(slots)]
     checks.append(
         Check(
             "Surveyed hours with no row",
             "pass" if missing.empty else "fail",
-            f"Clock hours (>= {fmt_duration(MIN_PERIOD_DURATION)}) inside a window split into "
-            "hours that no output period covers: surveyed, but missing as effort, so their "
-            f"zero counts are lost. By source: {missing['source'].value_counts().to_dict()}.",
+            f"{len(missing)} daylight clock hour(s) (>= {fmt_duration(MIN_PERIOD_DURATION)}) "
+            "inside a Trektellen window split into hours that no output period covers: surveyed, but "
+            "missing as effort, so their zero counts are lost.",
             missing,
+        )
+    )
+
+    # A day whose only effort is empty surveys: the dataset calls it counted ('complete'), but it
+    # is worth a look, since a day of no counting entered as one empty survey would look the same.
+    zeros = pd.concat(
+        [s.rows for s in mc.log.steps if s.name == "Zero-fill empty surveys"], ignore_index=True
+    )
+    birds_days = c.loc[c["species"] != NO_SPECIES, "date"]
+    alone = zeros[~zeros["date"].isin(birds_days)]
+    checks.append(
+        Check(
+            "Empty surveys alone on their day",
+            "pass" if alone.empty else "warn",
+            f"{len(alone)} empty survey(s), zero-filled as counted, on a day with no bird record: "
+            "real zeros only if the day was counted (an explicit 'no species' entry), else "
+            "the dataset should mark them coverage 'none'.",
+            alone,
         )
     )
     return checks
