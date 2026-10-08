@@ -539,14 +539,26 @@ def annual_totals(
 ) -> pd.DataFrame:
     """Gap-filled window total per year (observed birds + the posterior predictive of the hours and
     days not counted), its quantiles, the observed share, and the smooth expected total: the trend
-    without the year's own level, every hour counted."""
+    in a typical year, every hour counted.
+
+    Typical means without the year's own level but with its
+    weather episodes on average: leaving them out altogether would lower the total, a sum of
+    exponentials (Red Kite 2025: 13 500 against totals of 15 000-21 000), so the smooth is scaled
+    by their mean effect, the geometric mean over years of total with episodes / total without.
+    """
     totals = fill_draws(f, frame, 1.0, n, seed, kappa)
     years = frame["year"].to_numpy()
     uy = np.unique(years)
     per_year = np.stack([totals[:, years == y].sum(axis=1) for y in uy], axis=1)
     beta = f.draws(n, np.random.default_rng(seed + 1))
-    smooth = np.exp(eta_draws(f, frame["year"], frame["doy"], beta, without=SMOOTH))
-    smooth = np.stack([smooth[:, years == y].sum(axis=1) for y in uy], axis=1)
+
+    def per_year_sum(without):
+        mu = np.exp(eta_draws(f, frame["year"], frame["doy"], beta, without=without))
+        return np.stack([mu[:, years == y].sum(axis=1) for y in uy], axis=1)
+
+    smooth = per_year_sum(SMOOTH)
+    with_episodes = per_year_sum(("year",))
+    smooth *= np.exp(np.log(with_episodes / smooth).mean(axis=1, keepdims=True))
     counted = frame["y"] + frame.get("extra", 0.0)
     out = pd.DataFrame({"year": uy, "observed": counted.groupby(frame["year"]).sum().to_numpy()})
     out["total"] = per_year.mean(axis=0)
