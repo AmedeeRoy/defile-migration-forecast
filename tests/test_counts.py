@@ -42,7 +42,9 @@ def _surveys(rows: list[tuple], era: str = "trektellen", day: str = DAY) -> pd.D
     return C.parse_surveys(pd.DataFrame(out))
 
 
-def _counts(rows: list[tuple], surveys: pd.DataFrame, day: str = DAY) -> pd.DataFrame:
+def _counts(
+    rows: list[tuple], surveys: pd.DataFrame, day: str = DAY, entry_times=None
+) -> pd.DataFrame:
     """Rows: (survey id, local time / "date" / None, species, count[, category, estimation,
     remark_processing]).
 
@@ -55,6 +57,7 @@ def _counts(rows: list[tuple], surveys: pd.DataFrame, day: str = DAY) -> pd.Data
         out.append(
             {
                 "count_id": f"c{i}",
+                "source_count_id": f"c{i}",
                 "survey_id": sid,
                 "taxon_id": f"avibase-{species}",
                 "datetime": dt,
@@ -67,7 +70,7 @@ def _counts(rows: list[tuple], surveys: pd.DataFrame, day: str = DAY) -> pd.Data
     count = pd.DataFrame(out)
     names = sorted({r[2] for r in rows})
     taxonomy = pd.DataFrame({"taxon_id": [f"avibase-{n}" for n in names], "english_name": names})
-    return C.parse_counts(count, surveys, taxonomy)
+    return C.parse_counts(count, surveys, taxonomy, entry_times)
 
 
 def test_hourly_slots_keeps_partial_first_and_last_hours():
@@ -155,7 +158,7 @@ def test_trektellen_split_into_hours_zero_fill_and_rules():
 
     removed = {s.name: s.birds for s in log.steps if s.action == "removed" and s.birds}
     assert removed == {
-        "Timed outside its survey": 7,
+        "Timed outside its survey, time unknown": 7,
         "Untimed sighting in split period": 9,
         f"Period shorter than {C.fmt_duration(C.MIN_PERIOD_DURATION)}": 6,
     }
@@ -204,13 +207,39 @@ def test_count_ending_shortly_after_dusk_is_kept():
     assert clipped["end"].iloc[0] == surveys["end"].iloc[0]
 
 
-def test_entry_at_the_survey_end_moves_into_it():
+def test_entries_just_outside_their_survey_move_in_further_ones_are_dropped():
     surveys = _surveys([("T10", "06:00", "09:00")])
-    counts = _counts([("T10", "09:00", "Red Kite", 3), ("T10", "07:10", "Red Kite", 1)], surveys)
-    counts, _ = C.clip_to_twilight(counts, surveys, "trektellen", C.ProcessingLog())
-    assert counts["datetime"].iloc[0] == utc(f"{DAY} 08:59")
-    out, _ = C.trektellen_model_counts(counts, surveys, C.ProcessingLog())
-    assert out.loc[out["start"] == utc(f"{DAY} 08:00"), "count"].sum() == 3
+    counts = _counts(
+        [
+            ("T10", "05:52", "Red Kite", 1),  # 8 min early: moves to 06:01
+            ("T10", "09:00", "Red Kite", 2),  # at the (exclusive) end: moves to 08:59
+            ("T10", "09:09", "Red Kite", 3),  # 9 min late: moves to 08:59
+            ("T10", "09:10", "Red Kite", 4),  # 10 min late: dropped
+            ("T10", "05:30", "Red Kite", 5),  # 30 min early: dropped
+        ],
+        surveys,
+    )
+    log = C.ProcessingLog()
+    kept = C.fit_times_to_survey(counts, surveys, "trektellen", log)
+    local = kept["datetime"].dt.tz_convert(C.TIMEZONE).dt.strftime("%H:%M")
+    assert dict(zip(kept["count"], local)) == {1: "06:01", 2: "08:59", 3: "08:59"}
+    removed = next(s for s in log.steps if s.name == "Timed outside its survey")
+    assert sorted(removed.rows["count"]) == [4, 5]
+
+
+def test_recorded_time_of_a_day_level_entry_comes_back_from_entry_times():
+    surveys = _surveys([("T10", "06:00", "09:00")])
+    remark = C.OUTSIDE_SURVEY_REMARK + "; retained at day level pending correction."
+    rows = [("T10", "date", "Red Kite", 3, "normal", None, remark)]
+    times = pd.DataFrame({"source_count_id": ["c0"], "datetime": [iso(utc(f"{DAY} 09:04"))]})
+    counts = _counts(rows, surveys, entry_times=times)
+    assert counts["datetime"].iloc[0] == utc(f"{DAY} 09:04")
+    kept = C.fit_times_to_survey(counts, surveys, "trektellen", C.ProcessingLog())
+    assert kept["datetime"].iloc[0] == utc(f"{DAY} 08:59")
+    # Without the recorded time it cannot be placed: dropped.
+    log = C.ProcessingLog()
+    kept, _ = C.usable_surveys(_counts(rows, surveys), surveys, "trektellen", log)
+    assert kept.empty
 
 
 def test_historical_sums_subgroups_and_zero_fills_empty_surveys():

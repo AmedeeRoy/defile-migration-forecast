@@ -47,9 +47,10 @@ survey's interval.
   no counts and are not effort. `partial` and `unknown` surveys are dropped with their birds: with
   unknown gap times, neither their rate over the interval nor their empty hours can be trusted.
 - **Presence only** (`count_estimation = x`, no number) is dropped: never turned into a count.
-- **Timed outside its survey.** The dataset keeps such an entry at day level, like an untimed
-  one; its `remark_processing` ("Entry time outside the native survey") tells them apart. It
-  belongs to no counted period, so it is dropped.
+- **Timed outside its survey.** The release keeps such an entry at day level, like an untimed
+  one; its `remark_processing` ("Entry time outside the native survey") tells them apart. Its
+  recorded time comes back from `entry_times.csv` (extracted by `build_counts.py` from the
+  dataset's internal observation table); without it, the entry is dropped.
 
 ### Historical (1966-2021)
 
@@ -63,8 +64,10 @@ hour in the dataset. Hours of the declared day window with no record are empty s
 
 0. **Night.** A count starting more than 45 min before civil dawn or ending more than 45 min
    after civil dusk (sun at -6 deg) starts at dawn / ends at dusk: a count left open in the dark
-   is an entry error. Entries timed outside the clipped interval are dropped; an entry timed at
-   the very minute its count ends is moved 1 min into it.
+   is an entry error.
+   **Tolerance.** Then an entry timed less than 10 min before its count starts or after it ends
+   (its end is exclusive: an entry at that very minute is outside by zero) is moved 1 min inside
+   it: clock rounding, a late entry. Further out, it belongs to no counted period and is dropped.
 1. **Splitting.** A count period is split into clock hours if it lasts more than 2 h and fewer
    than half of its entries with migrating birds (`count > 0`) lack a timestamp. Otherwise it
    stays one period. Entries of local birds only are left out of that share: they are often

@@ -36,6 +36,10 @@ DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
 # Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
 DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", "datapackage.json")
 METADATA_FILE = "metadata.json"
+# Recorded times of the entries the release keeps at day level because they fall outside their
+# survey (`entry_times`): extracted by `scripts/build_counts.py` from the dataset's internal
+# observation table, which `source_count_id` joins. Optional: without it those entries are dropped.
+ENTRY_TIMES_FILE = "entry_times.csv"
 
 # Effort placeholder for a period surveyed with no bird recorded.
 NO_SPECIES = "No species"
@@ -70,8 +74,11 @@ NIGHT_TOLERANCE = pd.Timedelta(minutes=45)
 # Civil twilight: the sun's altitude (deg) at dawn and dusk, the model's night threshold too
 # (`night_mask_by_doy_hour`).
 NIGHT_SUN_ALTITUDE = -6.0
-# An entry timed exactly at its survey's (exclusive) end is moved this much earlier, into it.
-END_NUDGE = pd.Timedelta(minutes=1)
+# An entry timed less than this far outside its survey (clock rounding, a late entry) is moved just
+# inside it, by TIMESTAMP_NUDGE from the edge; further out, it belongs to no counted period.
+# The rule defile-dataset applied until 2026-10 (`time_adjusted`); a model choice, made here.
+TIMESTAMP_TOLERANCE = pd.Timedelta(minutes=10)
+TIMESTAMP_NUDGE = pd.Timedelta(minutes=1)
 # Periods shorter than this are dropped, with their birds (Trektellen only).
 MIN_PERIOD_DURATION = pd.Timedelta(minutes=10)
 
@@ -116,13 +123,20 @@ def parse_surveys(survey: pd.DataFrame) -> pd.DataFrame:
     return s
 
 
-def parse_counts(count: pd.DataFrame, surveys: pd.DataFrame, taxonomy: pd.DataFrame):
+def parse_counts(
+    count: pd.DataFrame,
+    surveys: pd.DataFrame,
+    taxonomy: pd.DataFrame,
+    entry_times: pd.DataFrame | None = None,
+):
     """`count.csv` plus the model's `species`, the `source` and `date` of its survey, and its own
     timestamp `datetime` (UTC; NaT when untimed).
 
     A count's `datetime` is either empty (it inherits its survey's interval), a local date (untimed,
     or timed outside its survey: the dataset keeps it at day level), or a UTC time. The dataset also
     allows a UTC interval, which no release has used; it is refused rather than guessed at.
+    `entry_times` (`source_count_id`, `datetime`) gives back the recorded time of entries timed
+    outside their survey, so `fit_times_to_survey` can apply the model's tolerance to them.
     """
     c = count.copy()
     raw = c["datetime"].fillna("")
@@ -139,10 +153,31 @@ def parse_counts(count: pd.DataFrame, surveys: pd.DataFrame, taxonomy: pd.DataFr
     assert c["source"].notna().all(), "count without a released survey"
     c.loc[timed.values, "date"] = local_date(c.loc[timed.values, "datetime"])
     c.loc[date_only.values, "date"] = pd.to_datetime(raw[date_only]).values
+    if entry_times is not None and len(entry_times):
+        recorded = c["source_count_id"].map(
+            entry_times.set_index("source_count_id")["datetime"].pipe(pd.to_datetime, utc=True)
+        )
+        back = outside_survey(c) & recorded.notna()
+        c.loc[back, "datetime"] = recorded[back]
     c["count"] = c["count"].astype(float)  # presence-only counts are empty
     names = taxonomy.set_index("taxon_id")["english_name"]
     c["species"] = c["taxon_id"].map(names)
     return c
+
+
+def outside_survey(counts: pd.DataFrame) -> pd.Series:
+    """Entries the dataset marks as timed outside their survey."""
+    return counts["remark_processing"].fillna("").str.startswith(OUTSIDE_SURVEY_REMARK)
+
+
+def entry_times(observations: pd.DataFrame, count: pd.DataFrame) -> pd.DataFrame:
+    """Recorded time (UTC) of each entry timed outside its survey, from the dataset's internal
+    observation table (`observation_id`, `datetime_original`), joined on `source_count_id`."""
+    ids = count.loc[outside_survey(count), "source_count_id"].unique()
+    o = observations[observations["observation_id"].isin(ids)]
+    return pd.DataFrame(
+        {"source_count_id": o["observation_id"], "datetime": o["datetime_original"]}
+    ).dropna()
 
 
 def read_dataset(data_dir: str):
@@ -154,7 +189,9 @@ def read_dataset(data_dir: str):
     surveys = parse_surveys(pd.read_csv(os.path.join(folder, "survey.csv"), low_memory=False))
     taxonomy = pd.read_csv(os.path.join(folder, "taxonomy.csv"))
     count = pd.read_csv(os.path.join(folder, "count.csv"), low_memory=False)
-    counts = parse_counts(count, surveys, taxonomy)
+    path = os.path.join(folder, ENTRY_TIMES_FILE)
+    times = pd.read_csv(path) if os.path.exists(path) else None
+    counts = parse_counts(count, surveys, taxonomy, times)
     path = os.path.join(folder, METADATA_FILE)
     metadata = json.load(open(path)) if os.path.exists(path) else {}
     return surveys, counts, taxonomy, metadata
@@ -271,9 +308,9 @@ def civil_twilight(dates: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 
 def clip_to_twilight(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog):
-    """Trektellen counts reaching well into the night start at civil dawn / end at civil dusk;
-    entries timed at a survey's end move into it, and those outside the clipped interval are
-    dropped.
+    """Trektellen counts reaching well into the night start at civil dawn / end at civil dusk.
+
+    Entries timed outside the clipped interval are then handled by `fit_times_to_survey`.
 
     A count closed hours after dark, sometimes the next morning, is an entry error: zero-filled,
     its night hours would be effort nobody watched. This is the rule the dataset applied until its
@@ -298,29 +335,41 @@ def clip_to_twilight(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log:
     surveys = surveys.assign(
         start=surveys["start"].where(~early, dawn), end=surveys["end"].where(~late, dusk)
     )
+    return counts, surveys
+
+
+def fit_times_to_survey(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog):
+    """Entries timed less than `TIMESTAMP_TOLERANCE` outside their survey move just inside it;
+    those further out are dropped.
+
+    The survey's end is exclusive, so an entry at its very minute is outside by zero and moves in.
+    """
     bounds = surveys.set_index("survey_id")
     t = counts["datetime"]
     start, end = counts["survey_id"].map(bounds["start"]), counts["survey_id"].map(bounds["end"])
-    at_end = t == end
+    early = t.notna() & (t < start) & ((start - t) < TIMESTAMP_TOLERANCE)
+    late = t.notna() & (t >= end) & ((t - end) < TIMESTAMP_TOLERANCE)
     log.record(
         src,
-        "Timed at its survey's end",
+        "Timed just outside its survey",
         "modified",
-        f"An entry timed at the very minute its survey ends is moved {fmt_duration(END_NUDGE)} "
-        "earlier, into the survey (its end is exclusive).",
-        counts[at_end],
+        f"An entry timed less than {fmt_duration(TIMESTAMP_TOLERANCE)} before its survey starts or "
+        f"after it ends (clock rounding, a late entry) is moved {fmt_duration(TIMESTAMP_NUDGE)} "
+        "inside it.",
+        counts[early | late],
     )
-    counts = counts.assign(datetime=t.where(~at_end, t - END_NUDGE))
-    t = counts["datetime"]
+    t = t.where(~early, start + TIMESTAMP_NUDGE).where(~late, end - TIMESTAMP_NUDGE)
+    counts = counts.assign(datetime=t)
     outside = t.notna() & ((t < start) | (t >= end))
     log.record(
         src,
-        "Timed in the clipped night",
+        "Timed outside its survey",
         "removed",
-        "An entry timed outside its survey's clipped interval (before dawn or after dusk).",
+        f"An entry timed {fmt_duration(TIMESTAMP_TOLERANCE)} or more outside its survey "
+        "(after twilight clipping) belongs to no counted period.",
         counts[outside],
     )
-    return counts[~outside], surveys
+    return counts[~outside]
 
 
 def _with_survey(counts: pd.DataFrame, surveys: pd.DataFrame) -> pd.DataFrame:
@@ -355,13 +404,14 @@ def usable_surveys(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: P
         counts[presence],
     )
     counts = counts[~presence]
-    outside = counts["remark_processing"].fillna("").str.startswith(OUTSIDE_SURVEY_REMARK)
+    outside = outside_survey(counts) & counts["datetime"].isna()
     log.record(
         src,
-        "Timed outside its survey",
+        "Timed outside its survey, time unknown",
         "removed",
-        "An entry whose recorded time falls outside its survey's interval belongs to no counted "
-        "period: neither the survey's rate nor (when split) one of its hours.",
+        "An entry the dataset marks as timed outside its survey, whose recorded time is not in "
+        f"`{ENTRY_TIMES_FILE}`: the tolerance cannot be applied, and it belongs to no counted "
+        "period.",
         counts[outside],
     )
     return counts[~outside], surveys
@@ -517,6 +567,7 @@ def build_model_counts(surveys: pd.DataFrame, counts: pd.DataFrame) -> ModelCoun
         c, s = usable_surveys(c, s, src, log)
         if src == "trektellen":
             c, s = clip_to_twilight(c, s, src, log)
+            c = fit_times_to_survey(c, s, src, log)
             out, windows = trektellen_model_counts(c, s, log)
         else:
             out = historical_model_counts(c, s, log)

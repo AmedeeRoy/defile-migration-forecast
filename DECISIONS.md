@@ -51,14 +51,17 @@ error as zero-filling a rained-off day). Keeping only their timed hours would ke
 with birds and lose the empty ones, biasing rates up. Poor weather is learnt from complete
 surveys counted in it.
 
-**Entries timed outside their survey are dropped**, as before (`time_outside_survey`). The
-release keeps them at day level, indistinguishable from untimed entries except by
-`remark_processing`; folded into an unsplit survey they inflated its rate (56 Black Kites on
-2025-08-03), and counted as untimed they un-split a timed count (2025-10-26). Until 2026-10 the
-dataset moved an entry up to 10 min outside its survey into it (`time_adjusted`); the release
-leaves those 124 entries (4 379 birds) at day level "pending correction", so they are dropped
-here too until defile-dataset restores the tolerance. Entries timed at the very minute their
-survey ends (40, 176 birds) stay timed in the release and are moved 1 min into it, as before.
+**Entries timed less than 10 min outside their survey move into it; further out, they are
+dropped.** The tolerance is a model choice, made here: the source keeps the recorded times
+untouched. It reproduces the dataset's rule until 2026-10 (`time_adjusted` / `time_outside_survey`):
+an entry before its survey moves to start + 1 min, one at or after its (exclusive) end to end -
+1 min. The release keeps such entries at day level ("pending correction"), told apart from untimed
+ones only by `remark_processing`; their recorded time comes from the dataset's internal
+observation table (`source_count_id` -> `observation_id`), extracted by `build_counts.py` into
+`entry_times.csv`. Without it they are dropped: folded into an unsplit survey as untimed they
+inflated its rate (56 Black Kites on 2025-08-03) and un-split a timed count (2025-10-26). On the
+2026-10 release: 162 entries (4 493 birds) moved in, 64 (2 166) dropped -- the old flags exactly,
+less the entries of `partial` surveys and one butterfly.
 
 **Trektellen counts reaching into the night are clipped to civil twilight**, reproducing the
 dataset's rule until 2026-10 (the release keeps the recorded times pending correction): a count
