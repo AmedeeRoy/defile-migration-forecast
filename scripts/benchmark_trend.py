@@ -60,7 +60,8 @@ TARGET_FROM = 2014  # timed counts, so the birds of hidden hours are known
 DONOR_YEARS = (1993, 2013)  # their gaps (hours and days not counted) are transplanted
 RECENT_FROM = 2023
 METHODS = ("ratio", *T.VARIANTS)
-COLORS = {"ratio": "C7", "season": "C2", "gam": "C0"}
+COLORS = {"ratio": "C7", "season": "C2", "gam": "C0", "weather": "C3"}
+KINDS = ("hours", "day")  # hidden hours of a day still partly counted; whole days hidden
 ROTATIONS = 3  # refits per taxon in test 1, each hiding every target year
 
 
@@ -129,10 +130,20 @@ def transplant(target: pd.DataFrame, donor_year: int, ctx: dict) -> pd.DataFrame
         y_kept = (birds_h * share).sum() + (untimed * c_kept / r["c"] if r["c"] > 0 else 0.0)
         extra = r["extra"]
         c_target = r["c"]
+        hidden = r["y"] - y_kept
         if c_kept < T.MIN_COVERAGE:  # as `model_frame` would: kept as counted, not modelled
             extra, c_target = extra + y_kept, c_target - c_kept
             c_kept = y_kept = 0.0
-        rows.append({"c": c_kept, "y": y_kept, "extra": extra, "c_target": c_target})
+        rows.append(
+            {
+                "c": c_kept,
+                "y": y_kept,
+                "extra": extra,
+                "c_target": c_target,
+                "hidden": hidden,
+                "kind": "hours" if c_kept > 0 else "day",
+            }
+        )
     out = target.drop(columns=["c", "y", "extra"]).reset_index(drop=True)
     return pd.concat([out, pd.DataFrame(rows)], axis=1)
 
@@ -168,7 +179,10 @@ def gap_trials(
             [frame[~frame["year"].isin(targets)], *[m[frame.columns] for m in masked.values()]],
             ignore_index=True,
         )
-        refits = {v: T.fit(v, train, years, doy_range, hyper=f.hyper) for v, f in fits.items()}
+        refits = {
+            v: T.fit(v, train, years, doy_range, hyper=f.hyper, weather=ctx["weather"])
+            for v, f in fits.items()
+        }
         for i, (ty, m) in enumerate(masked.items()):
             target = frame[frame["year"] == ty]
             base = {
@@ -179,12 +193,22 @@ def gap_trials(
                 "kept": m["y"].sum() + m["extra"].sum(),
                 "hidden_coverage": 1 - m["c"].sum() / m["c_target"].sum(),
             }
+            for kind in KINDS:
+                base[f"truth_{kind}"] = m.loc[m["kind"] == kind, "hidden"].sum()
             ratio = m["y"].sum() / max(m["c"].sum(), 1e-9)
-            est = m["y"].sum() + m["extra"].sum() + ratio * (m["c_target"] - m["c"]).sum()
-            rows.append({**base, "method": "ratio", "estimate": est})
+            filled = ratio * (m["c_target"] - m["c"])
+            rows.append(
+                {
+                    **base,
+                    "method": "ratio",
+                    "estimate": m["y"].sum() + m["extra"].sum() + filled.sum(),
+                    **{f"est_{k}": filled[m["kind"] == k].sum() for k in KINDS},
+                }
+            )
             for v, f in refits.items():
                 draws = T.fill_draws(f, m, m["c_target"].to_numpy(), seed=i, kappa=kappa)
                 q = np.quantile(draws.sum(axis=1), [0.025, 0.1, 0.5, 0.9, 0.975])
+                missed = draws - (m["y"] + m["extra"]).to_numpy()
                 rows.append(
                     {
                         **base,
@@ -194,6 +218,12 @@ def gap_trials(
                         "q10": q[1],
                         "q90": q[3],
                         "q97.5": q[4],
+                        **{
+                            f"est_{k}": np.median(
+                                missed[:, (m["kind"] == k).to_numpy()].sum(axis=1)
+                            )
+                            for k in KINDS
+                        },
                     }
                 )
     return pd.DataFrame(rows)
@@ -210,7 +240,7 @@ def recent_trials(name: str, ctx: dict, frame: pd.DataFrame, kappa: float) -> pd
     test = frame[future & (frame["c"] > 0)]
     rows = []
     for v in T.VARIANTS:
-        f = T.fit(v, train, years, doy_range)
+        f = T.fit(v, train, years, doy_range, weather=ctx["weather"])
         unseen = test.assign(c=0.0, y=0.0)
         draws = T.fill_draws(f, unseen, test["c"].to_numpy(), seed=1, kappa=kappa)
         beta = f.draws(T.DRAWS, np.random.default_rng(2))
@@ -254,7 +284,8 @@ def run_taxon(args) -> dict:
     years = np.arange(ctx["start"], ctx["last"] + 1)
     doy_range = (int(frame["doy"].min()), int(frame["doy"].max()))
     kappa = T.hour_dispersion(ctx["days"], ctx["hourly"], ctx["effort"], ctx["profile"])
-    fits = {v: T.fit(v, frame, years, doy_range) for v in T.VARIANTS}
+    ctx["weather"] = T.daily_weather(os.path.join(ROOT, "data", "weather"), years, doy_range)
+    fits = {v: T.fit(v, frame, years, doy_range, weather=ctx["weather"]) for v in T.VARIANTS}
     annual = pd.concat(
         [T.annual_totals(f, frame, kappa=kappa).assign(method=v) for v, f in fits.items()]
     )
@@ -324,6 +355,20 @@ def score(df: pd.DataFrame) -> pd.DataFrame:
     return s
 
 
+def split_score(df: pd.DataFrame) -> pd.DataFrame:
+    """Test 1's error by kind of gap (`KINDS`), per method: the hidden birds' share of the year's
+    total, and the median absolute and signed error of their estimate, as a share of the year's
+    total (the two errors add up to the year's, up to cancellation)."""
+    d = df[(df["truth"] > 0) & df["est_hours"].notna()]
+    out = {}
+    for k in KINDS:
+        err = (d[f"est_{k}"] - d[f"truth_{k}"]) / d["truth"]
+        out[f"{k}_share"] = (d[f"truth_{k}"] / d["truth"]).groupby(d["method"]).median()
+        out[f"{k}_abs_err"] = err.abs().groupby(d["method"]).median()
+        out[f"{k}_bias"] = err.groupby(d["method"]).median()
+    return pd.DataFrame(out)
+
+
 def page(pdf, r: dict, gaps_score: pd.DataFrame):
     name = r["name"]
     fig, ax = plt.subplots(2, 2, figsize=(15, 9))
@@ -332,7 +377,7 @@ def page(pdf, r: dict, gaps_score: pd.DataFrame):
     ax[0, 0].bar(obs["year"], obs["observed"], color="0.85", label="counted")
     for v in T.VARIANTS:
         x = a[a["method"] == v]
-        off = {"season": -0.2, "gam": 0.2}[v]
+        off = {"season": -0.25, "gam": 0, "weather": 0.25}[v]
         ax[0, 0].errorbar(
             x["year"] + off,
             x["q50"],
@@ -421,6 +466,7 @@ def main(argv=None) -> int:
     for k, df in tables.items():
         df.to_csv(f"{stem}_{k}.csv", index=False)
     gaps_score = score(tables["gaps"])
+    split = split_score(tables["gaps"])
     recent_score = score(tables["recent"]).join(
         tables["recent"].groupby(["taxon", "method"])["log_score"].mean()
     )
@@ -433,6 +479,8 @@ def main(argv=None) -> int:
         text = (
             "TEST 1, gap transplant\n"
             + gaps_score.round(3).to_string()
+            + "\n\nby kind of gap (share of the year's total)\n"
+            + split.round(3).to_string()
             + "\n\nTEST 2, recent years\n"
             + recent_score.round(3).to_string()
             + "\n\nFits\n"
@@ -449,6 +497,7 @@ def main(argv=None) -> int:
         .mean()
         .round(3),
     )
+    print("\nby kind of gap (share of the year's total)\n", split.round(3).to_string())
     print("\nTEST 2, recent years\n", recent_score.round(3).to_string())
     print(
         "\n",

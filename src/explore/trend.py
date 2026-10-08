@@ -48,7 +48,7 @@ from scipy.special import gammaln
 from src.explore.export import COMBINED_RANK, HOURS, in_window
 from src.explore.profile import PROFILE_DOY, PROFILE_MIN_TIMED, coverage
 
-VARIANTS = ("season", "gam")
+VARIANTS = ("season", "gam", "weather")
 # Ranks whose trend is exported: unidentified birds ("spuh", e.g. falcon sp.) trend with how hard
 # observers try to identify them, not with the birds.
 TREND_RANKS = ("species", COMBINED_RANK)
@@ -66,11 +66,32 @@ GAM_EPISODE_K = 25  # per year, over the window's ~124 days: a knot every ~5 day
 GAM_LOG_LAMBDA_BOUNDS = (-6.0, 16.0)
 LOG_LAMBDA_START = 2.0
 EFS_MAX_ITER = 100
+THETA_ROUNDS = 5  # alternations of theta (marginal likelihood) and the smoothing parameters
 EFS_TOL = 1e-2  # largest change of a log smoothing parameter or log theta: 1%
 
+# `weather`: the GAM plus a smooth of each of these daily ERA5 values at Défilé (daytime means,
+# precipitation a daytime sum on a log scale), from the forecast's local cache.
+WEATHER_LOCATION = "Defile"
+WEATHER_VARIABLES = (
+    "u_component_of_wind_100m",
+    "v_component_of_wind_100m",
+    "total_precipitation",
+    "total_cloud_cover",
+    "temperature_2m",
+)
+WEATHER_HOURS_UTC = (6, 16)  # [start, end): about 8-18 local in the season
+WEATHER_K = 8
 THETA_BOUNDS = (0.02, 200.0)  # negative binomial shape; small = over-dispersed
-KAPPA_BOUNDS = (0.01, 1e4)  # hourly over-dispersion, per full day of coverage; large = Poisson
-SMOOTH = ("year", "episode")  # left out of the smooth trend, season curves and passage dates
+KAPPA_BOUNDS = (0.01, 1e4)
+# Hours summed into blocks before `kappa` is fitted: a day's passage shifts as a whole (later on a
+# slow morning), so neighbouring hours are not independent and `kappa` falls from single hours to
+# blocks of 3-4 hours, then levels off (Honey Buzzard 4.7 -> 2.6). Gaps are blocks of hours too.
+KAPPA_BLOCK = 4  # hourly over-dispersion, per full day of coverage; large = Poisson
+SMOOTH = (
+    "year",
+    "episode",
+    "weather",
+)  # left out of the smooth trend, season curves and passage dates
 
 # Below this coverage a day says nothing about its rate (75 Black Kites in 11 minutes on
 # 2025-07-27, c = 0.0004, would be a 190 000-bird day): it is neither fitted nor conditioned on,
@@ -110,6 +131,31 @@ def model_frame(
     f["extra"] = f["y"].where(low, 0.0)
     f.loc[low, ["c", "y"]] = 0.0
     return f
+
+
+def daily_weather(cache_dir: str, years: np.ndarray, doy_range: tuple[int, int]) -> np.ndarray:
+    """`WEATHER_VARIABLES` at `WEATHER_LOCATION`, `(n_years, n_doy, n_variables)`, standardised:
+
+    daytime (`WEATHER_HOURS_UTC`) means, precipitation as log1p of the daytime sum in mm.
+    """
+    from src.data.weather import load_cache
+
+    ds = load_cache(
+        cache_dir, [WEATHER_LOCATION], list(WEATHER_VARIABLES), years=years, doy=doy_range
+    ).isel(location=0)
+    h = (ds["time"].values / np.timedelta64(1, "h")).astype(int)
+    day = ds.isel(time=np.flatnonzero((h >= WEATHER_HOURS_UTC[0]) & (h < WEATHER_HOURS_UTC[1])))
+    dates = pd.DatetimeIndex(ds["date"].values)
+    y0, d0 = int(years.min()), doy_range[0]
+    out = np.full((len(years), doy_range[1] - d0 + 1, len(WEATHER_VARIABLES)), np.nan)
+    yi, di = dates.year - y0, dates.dayofyear - d0
+    ok = (yi >= 0) & (yi < len(years)) & (di >= 0) & (di < out.shape[1])
+    for j, v in enumerate(WEATHER_VARIABLES):
+        x = day[v].sum("time") * 1000 if v == "total_precipitation" else day[v].mean("time")
+        x = np.log1p(np.asarray(x, float)) if v == "total_precipitation" else np.asarray(x, float)
+        out[yi[ok], di[ok], j] = x[ok]
+    mean, sd = np.nanmean(out, axis=(0, 1)), np.nanstd(out, axis=(0, 1))
+    return (out - mean) / sd
 
 
 # --- bases and priors -------------------------------------------------------
@@ -176,7 +222,9 @@ class Design:
         )
 
 
-def design(variant: str, years: np.ndarray, doy_range: tuple[int, int]) -> Design:
+def design(
+    variant: str, years: np.ndarray, doy_range: tuple[int, int], weather: np.ndarray | None = None
+) -> Design:
     """The bases and penalties of a variant over `years` (all of them, including years without
     data, whose coefficients then stay at their prior) and the window's days of year.
 
@@ -206,7 +254,7 @@ def design(variant: str, years: np.ndarray, doy_range: tuple[int, int]) -> Desig
     add("intercept", lambda y, d: np.ones((len(y), 1)), [])
     season, S = centred(d0, d1, GAM_SEASON_K, doy_grid)
     add("season", lambda y, d: season(d), [("season", S)])
-    if variant == "gam":
+    if variant in ("gam", "weather"):
         trend, St = centred(y0, y1, GAM_TREND_K, year_grid)
         add("trend", lambda y, d: trend(y), [("trend", St)])
         ky, kd = GAM_SHIFT_K
@@ -225,6 +273,25 @@ def design(variant: str, years: np.ndarray, doy_range: tuple[int, int]) -> Desig
             lambda y, d: np.eye(n_years)[np.clip(y - y0, 0, n_years - 1)],
             [("year", np.eye(n_years))],
         )
+    if variant == "weather":
+        if weather is None:
+            raise ValueError("the weather variant needs `weather` (daily_weather)")
+        W = np.nan_to_num(weather)  # standardised: missing days at the mean
+        bases, penalties, k = [], [], WEATHER_K - 1
+        for j, name in enumerate(WEATHER_VARIABLES):
+            lo, hi = float(W[..., j].min()), float(W[..., j].max())
+            b, S = centred(lo, hi, WEATHER_K, W[..., j].ravel())
+            bases.append(b)
+            P = np.zeros((len(WEATHER_VARIABLES) * k,) * 2)
+            P[j * k : (j + 1) * k, j * k : (j + 1) * k] = S
+            penalties.append((f"weather_{j}", P))
+
+        def weather_basis(y, d):
+            w = W[np.clip(y - y0, 0, n_years - 1), np.clip(d - d0, 0, W.shape[1] - 1)]
+            return np.hstack([b(w[:, j]) for j, b in enumerate(bases)])
+
+        add("weather", weather_basis, penalties)
+    if variant in ("gam", "weather"):
         episode, Se = centred(d0, d1, GAM_EPISODE_K, doy_grid, order=1)
         add(
             "episode",
@@ -360,18 +427,59 @@ def _laplace(design, X, offset, y, h, beta):
     return log_marginal, beta, H
 
 
-def fit(variant: str, frame: pd.DataFrame, years: np.ndarray, doy_range, hyper=None) -> Fit:
+def _efs(d: Design, X, offset, y, hyper: dict, beta, theta_ml: bool):
+    """Fellner-Schall iterations of the smoothing parameters to convergence, `theta` fixed or (with
+    `theta_ml`) its maximum likelihood given the fitted means after each update."""
+    for _ in range(EFS_MAX_ITER):
+        beta, H, _ = posterior_mode(X, offset, y, d.precision(hyper), np.exp(hyper["theta"]), beta)
+        H_inv = cho_solve(cho_factor(H), np.eye(len(beta)))
+        new = dict(hyper)
+        for b in d.blocks:
+            if not b.penalties:
+                continue
+            Q_inv = np.linalg.inv(d.block_precision(b, hyper))
+            Hb, bb = H_inv[b.columns, b.columns], beta[b.columns]
+            for name, S in b.penalties:
+                room = np.sum(Q_inv * S) - np.sum(Hb * S)  # tr(Q^-1 S) - tr(H^-1 S)
+                wiggle = bb @ S @ bb
+                step = np.log(max(room, 1e-12) / max(wiggle, 1e-12))
+                new[name] = float(np.clip(hyper[name] + step, *GAM_LOG_LAMBDA_BOUNDS))
+        if theta_ml:
+            mu = np.exp(np.minimum(offset + X @ beta, ETA_MAX))
+            new["theta"] = float(
+                optimize.minimize_scalar(
+                    lambda t: -nb_loglik(y, mu, np.exp(t)).sum(),
+                    bounds=np.log(THETA_BOUNDS),
+                    method="bounded",
+                ).x
+            )
+        change = max(abs(new[k] - hyper[k]) for k in hyper)
+        hyper = new
+        if change < EFS_TOL:
+            break
+    return hyper, beta
+
+
+def fit(
+    variant: str,
+    frame: pd.DataFrame,
+    years: np.ndarray,
+    doy_range,
+    hyper=None,
+    weather: np.ndarray | None = None,
+) -> Fit:
     """Fit a variant to the observed rows of `frame` (`c > 0`), over the year range `years`.
 
     The smoothing parameters by the extended Fellner-Schall update (Wood and Fasiolo 2017; mgcv's
     `optimizer = "efs"`), a fixed point of the Laplace marginal likelihood: each penalty's
     `lambda` is scaled by `(tr(Q^-1 S) - tr(H^-1 S)) / (beta' S beta)`, the degrees of freedom its
-    prior allows minus those the data use, over the wiggliness it is asked to explain. `theta` is
-    the negative binomial's maximum likelihood given the fitted means, after each update. With
-    `hyper` given, only the posterior mode is found: how the benchmark refits a year with part of
-    it hidden.
+    prior allows minus those the data use, over the wiggliness it is asked to explain. `theta`
+    starts at its maximum likelihood given the fitted means, which over-fit means make too large
+    (days look less variable than they are), then alternates with the smoothing parameters as the
+    maximum of the Laplace marginal likelihood. With `hyper` given, only the posterior mode is
+    found: how the benchmark refits a year with part of it hidden.
     """
-    d = design(variant, years, doy_range)
+    d = design(variant, years, doy_range, weather)
     obs = frame[frame["c"] > 0]
     episode = [b.columns.start for b in d.blocks if b.name == "episode"]
     X = Matrix(d.X(obs["year"].to_numpy(), obs["doy"].to_numpy()), (episode or [d.n_columns])[0])
@@ -381,35 +489,25 @@ def fit(variant: str, frame: pd.DataFrame, years: np.ndarray, doy_range, hyper=N
     beta[0] = np.log(max(y.sum() / obs["c"].sum(), 1e-3))
     if hyper is None:
         hyper = {name: LOG_LAMBDA_START for name in d.hyper_names} | {"theta": 0.0}
-        for _ in range(EFS_MAX_ITER):
-            beta, H, _ = posterior_mode(
-                X, offset, y, d.precision(hyper), np.exp(hyper["theta"]), beta
-            )
-            H_inv = cho_solve(cho_factor(H), np.eye(len(beta)))
-            new = dict(hyper)
-            for b in d.blocks:
-                if not b.penalties:
-                    continue
-                Q_inv = np.linalg.inv(d.block_precision(b, hyper))
-                Hb, bb = H_inv[b.columns, b.columns], beta[b.columns]
-                for name, S in b.penalties:
-                    room = np.sum(Q_inv * S) - np.sum(
-                        Hb * S
-                    )  # tr(Q^-1 S) - tr(H^-1 S), S symmetric
-                    wiggle = bb @ S @ bb
-                    step = np.log(max(room, 1e-12) / max(wiggle, 1e-12))
-                    new[name] = float(np.clip(hyper[name] + step, *GAM_LOG_LAMBDA_BOUNDS))
-            mu = np.exp(np.minimum(offset + X @ beta, ETA_MAX))
-            new["theta"] = float(
-                optimize.minimize_scalar(
-                    lambda t: -nb_loglik(y, mu, np.exp(t)).sum(),
-                    bounds=np.log(THETA_BOUNDS),
-                    method="bounded",
-                ).x
-            )
-            change = max(abs(new[k] - hyper[k]) for k in hyper)
-            hyper = new
-            if change < EFS_TOL:
+        hyper, beta = _efs(d, X, offset, y, hyper, beta, theta_ml=True)
+        for _ in range(THETA_ROUNDS):
+            state = {"beta": beta}
+
+            def negative(t):
+                lm, b, _ = _laplace(d, X, offset, y, hyper | {"theta": t}, state["beta"])
+                state["beta"] = b
+                return -lm
+
+            t = hyper["theta"]
+            lo, hi = np.log(THETA_BOUNDS)
+            theta = optimize.minimize_scalar(
+                negative,
+                bounds=(max(lo, t - 2), min(hi, t + 1)),
+                method="bounded",
+                options={"xatol": EFS_TOL},
+            ).x
+            hyper, beta = _efs(d, X, offset, y, hyper | {"theta": float(theta)}, beta, False)
+            if abs(theta - t) < EFS_TOL:
                 break
     lm, beta, H = _laplace(d, X, offset, y, hyper, beta)
     return Fit(d, dict(hyper), beta, H, lm)
@@ -429,7 +527,11 @@ def eta_draws(f: Fit, year, doy, beta_draws, without=()) -> np.ndarray:
 
 
 def hour_dispersion(
-    days: pd.DataFrame, hourly: pd.DataFrame, effort: pd.DataFrame, profile: np.ndarray
+    days: pd.DataFrame,
+    hourly: pd.DataFrame,
+    effort: pd.DataFrame,
+    profile: np.ndarray,
+    block: int = KAPPA_BLOCK,
 ) -> float:
     """Hourly over-dispersion `kappa` of one taxon: within a day, the passage of a coverage `m` is.
 
@@ -437,6 +539,7 @@ def hour_dispersion(
     hours are Dirichlet-multinomial with weights kappa * p(h) * hours counted. Maximum likelihood
     over the days timed to the hour (`PROFILE_MIN_TIMED`) with at least two counted hours; birds
     timed to an hour with no coverage are left out. Without such days: `KAPPA_BOUNDS[1]`, Poisson.
+    Fitted on blocks of `block` clock hours (`KAPPA_BLOCK`), at least two of them counted.
     """
     d = days[(days["count"] > 0) & (days["timed"] >= PROFILE_MIN_TIMED)]
     counted = effort[effort["state"] == "counted"].set_index("date")["hourly"]
@@ -451,6 +554,10 @@ def hour_dispersion(
     a = profile[doy.to_numpy()] * np.stack(d["date"].map(counted).to_numpy())
     on = a > 0
     birds = np.where(on, birds, 0)
+    if block > 1:  # clock hours summed into blocks: a Dirichlet's kappa is unchanged by this
+        a = a.reshape(len(a), -1, block).sum(axis=2)
+        birds = birds.reshape(len(birds), -1, block).sum(axis=2)
+        on = a > 0
     ok = (on.sum(axis=1) >= 2) & (birds.sum(axis=1) > 0)
     a, birds, on = a[ok], birds[ok], on[ok]
     if not len(a):
@@ -477,8 +584,11 @@ def fill_draws(
     gamma(theta + y, theta / mu + c), and the birds missed are Poisson of that rate times the
     coverage missed, or with `kappa` (`hour_dispersion`) of a gamma(kappa * missed, kappa / rate)
     passage: flocks. A day with nothing counted is a plain negative binomial draw (with `kappa`, a
-    little wider). `extra` birds (counted below `MIN_COVERAGE`) are added as they are. The day's
-    rate given y ignores `kappa` (as if the counted hours were Poisson), a slight overconfidence.
+    little wider). `extra` birds (counted below `MIN_COVERAGE`) are added as they are.
+
+    The day's rate given y treats the counted hours as Poisson. Treating them as flocks too (y
+    negative binomial of size kappa * c, which shrinks y and c by kappa c / (kappa c + y)) was
+    tried: it biased gap-filled totals 3% low (`DECISIONS.md` -> Explore).
     """
     rng = np.random.default_rng(seed)
     beta = f.draws(n, rng)
