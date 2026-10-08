@@ -25,8 +25,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+from suncalc import get_position
 
-from src.data.weather import night_mask_by_doy_hour
+from src.data.weather import get_lat_lon
 
 # The site's local time: the dataset's dates, and the model's `date`, are local calendar dates.
 TIMEZONE = "Europe/Paris"
@@ -62,6 +63,15 @@ SPLIT_MIN_DURATION = pd.Timedelta(hours=2)
 # ... and (Trektellen) fewer than this share of its sightings with migrating birds lack a
 # timestamp.
 SPLIT_MAX_UNTIMED_SHARE = 0.5
+# Trektellen: a count reaching further than this into the night (before civil dawn, after civil
+# dusk) is clipped to dawn/dusk. Counts closed the same evening end at most ~30 min after dusk;
+# every one beyond 45 min was closed days to months later (defile-dataset, until 2026-10).
+NIGHT_TOLERANCE = pd.Timedelta(minutes=45)
+# Civil twilight: the sun's altitude (deg) at dawn and dusk, the model's night threshold too
+# (`night_mask_by_doy_hour`).
+NIGHT_SUN_ALTITUDE = -6.0
+# An entry timed exactly at its survey's (exclusive) end is moved this much earlier, into it.
+END_NUDGE = pd.Timedelta(minutes=1)
 # Periods shorter than this are dropped, with their birds (Trektellen only).
 MIN_PERIOD_DURATION = pd.Timedelta(minutes=10)
 
@@ -243,13 +253,74 @@ def hourly_slots(windows: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=windows.columns).drop_duplicates(ignore_index=True)
 
 
-def in_night(slots: pd.DataFrame) -> np.ndarray:
-    """Whether each slot lies in a night hour: a whole UTC hour with the sun below -6 deg, the
-    model's one definition of night (`night_mask_by_doy_hour`)."""
-    if slots.empty:
-        return np.zeros(0, dtype=bool)
-    night = night_mask_by_doy_hour()
-    return night[slots["start"].dt.dayofyear.to_numpy() - 1, slots["start"].dt.hour.to_numpy()]
+def civil_twilight(dates: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Civil dawn and dusk at Defile on each local date, UTC: the first minute of the day with the
+    sun at or above -6 deg, and the minute after the last (as defile-dataset computed them)."""
+    lat, lon = get_lat_lon("Defile")
+    days = pd.DatetimeIndex(pd.to_datetime(dates.unique()))
+    midnight = days.tz_localize(TIMEZONE).tz_convert("UTC")
+    minutes = np.arange(24 * 60).astype("timedelta64[m]")
+    grid = pd.DatetimeIndex((midnight.values[:, None] + minutes[None, :]).ravel())
+    altitude = np.degrees(np.asarray(get_position(grid, lon[0], lat[0])["altitude"]))
+    day = altitude.reshape(len(days), -1) >= NIGHT_SUN_ALTITUDE
+    first = day.argmax(axis=1)
+    last = day.shape[1] - 1 - day[:, ::-1].argmax(axis=1)
+    dawn = dict(zip(days, midnight + pd.to_timedelta(first, unit="min")))
+    dusk = dict(zip(days, midnight + pd.to_timedelta(last + 1, unit="min")))
+    return dates.map(dawn), dates.map(dusk)
+
+
+def clip_to_twilight(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog):
+    """Trektellen counts reaching well into the night start at civil dawn / end at civil dusk;
+    entries timed at a survey's end move into it, and those outside the clipped interval are
+    dropped.
+
+    A count closed hours after dark, sometimes the next morning, is an entry error: zero-filled,
+    its night hours would be effort nobody watched. This is the rule the dataset applied until its
+    2026-10 release, which keeps the recorded times pending correction.
+
+    Returns (counts, surveys).
+    """
+    dawn, dusk = civil_twilight(surveys["date"])
+    early = surveys["start"] < dawn - NIGHT_TOLERANCE
+    late = surveys["end"] > dusk + NIGHT_TOLERANCE
+    log.record(
+        src,
+        "Survey clipped to twilight",
+        "modified",
+        f"A survey starting more than {fmt_duration(NIGHT_TOLERANCE)} before civil dawn, or "
+        f"ending more than {fmt_duration(NIGHT_TOLERANCE)} after civil dusk (sun at -6 deg), "
+        "starts at dawn / ends at dusk: a count left open in the dark is an entry error.",
+        surveys.loc[early | late, ["survey_id", "date", "start", "end"]].assign(
+            dawn=dawn[early | late], dusk=dusk[early | late]
+        ),
+    )
+    surveys = surveys.assign(
+        start=surveys["start"].where(~early, dawn), end=surveys["end"].where(~late, dusk)
+    )
+    bounds = surveys.set_index("survey_id")
+    t = counts["datetime"]
+    start, end = counts["survey_id"].map(bounds["start"]), counts["survey_id"].map(bounds["end"])
+    at_end = t == end
+    log.record(
+        src,
+        "Timed at its survey's end",
+        "modified",
+        f"An entry timed at the very minute its survey ends is moved {fmt_duration(END_NUDGE)} "
+        "earlier, into the survey (its end is exclusive).",
+        counts[at_end],
+    )
+    counts = counts.assign(datetime=t.where(~at_end, t - END_NUDGE))
+    t = counts["datetime"]
+    outside = t.notna() & ((t < start) | (t >= end))
+    log.record(
+        src,
+        "Timed in the clipped night",
+        "removed",
+        "An entry timed outside its survey's clipped interval (before dawn or after dusk).",
+        counts[outside],
+    )
+    return counts[~outside], surveys
 
 
 def _with_survey(counts: pd.DataFrame, surveys: pd.DataFrame) -> pd.DataFrame:
@@ -376,22 +447,13 @@ def trektellen_model_counts(counts: pd.DataFrame, surveys: pd.DataFrame, log: Pr
     slots = hourly_slots(windows)
     slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
     empty = ~overlaps_any(slots["start"], slots["end"], df["start"], df["end"])
-    night = in_night(slots)
-    log.record(
-        src,
-        "Night hour not zero-filled",
-        "not used",
-        "An empty hour of a split period lying wholly at night (sun below -6 deg) is not effort: "
-        "counts left open overnight would otherwise add hours of zeros nobody watched.",
-        slots[empty & night],
-    )
-    zeros = slots[empty & ~night].assign(species=NO_SPECIES, count=0)
+    zeros = slots[empty].assign(species=NO_SPECIES, count=0)
     log.record(
         src,
         "Zero-fill empty hours",
         "added",
-        f"Each daylight clock hour (at least {fmt_duration(MIN_PERIOD_DURATION)}) of a split "
-        f"period with no sighting gets a '{NO_SPECIES}' row with count 0, so it exists as effort.",
+        f"Each clock hour (at least {fmt_duration(MIN_PERIOD_DURATION)}) of a split period "
+        f"with no sighting gets a '{NO_SPECIES}' row with count 0, so it exists as effort.",
         zeros,
     )
     if len(zeros):
@@ -454,6 +516,7 @@ def build_model_counts(surveys: pd.DataFrame, counts: pd.DataFrame) -> ModelCoun
         raw[src] = c.groupby(c["date"].dt.year)["count"].sum()
         c, s = usable_surveys(c, s, src, log)
         if src == "trektellen":
+            c, s = clip_to_twilight(c, s, src, log)
             out, windows = trektellen_model_counts(c, s, log)
         else:
             out = historical_model_counts(c, s, log)
@@ -590,13 +653,13 @@ def check_model_counts(mc: ModelCounts) -> list[Check]:
     slots = hourly_slots(mc.split_windows)
     slots = slots[(slots["end"] - slots["start"]) >= MIN_PERIOD_DURATION]
     covered = overlaps_any(slots["start"], slots["end"], periods["start"], periods["end"])
-    missing = slots[~covered & ~in_night(slots)]
+    missing = slots[~covered]
     checks.append(
         Check(
             "Surveyed hours with no row",
             "pass" if missing.empty else "fail",
-            f"{len(missing)} daylight clock hour(s) (>= {fmt_duration(MIN_PERIOD_DURATION)}) "
-            "inside a Trektellen window split into hours that no output period covers: surveyed, but "
+            f"{len(missing)} clock hour(s) (>= {fmt_duration(MIN_PERIOD_DURATION)}) inside a "
+            "Trektellen window split into hours that no output period covers: surveyed, but "
             "missing as effort, so their zero counts are lost.",
             missing,
         )

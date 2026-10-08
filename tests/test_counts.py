@@ -173,8 +173,8 @@ def test_trektellen_mostly_untimed_period_is_not_split():
     assert (out["end"] - out["start"]).iloc[0] == pd.Timedelta(hours=6)
 
 
-def test_night_hours_of_a_split_period_are_not_zero_filled():
-    # A count left open overnight: 06:00 to 03:00 the next day, birds only in the morning.
+def test_count_left_open_overnight_ends_at_dusk():
+    # Closed at 03:00 the next day, birds only in the morning: clipped to civil dusk.
     s = pd.DataFrame(
         {
             "survey_id": ["T10"],
@@ -186,12 +186,31 @@ def test_night_hours_of_a_split_period_are_not_zero_filled():
     surveys = C.parse_surveys(s)
     counts = _counts([("T10", "07:30", "Red Kite", 4), ("T10", "08:30", "Red Kite", 1)], surveys)
     log = C.ProcessingLog()
+    counts, surveys = C.clip_to_twilight(counts, surveys, "trektellen", log)
+    _, dusk = C.civil_twilight(surveys["date"])
+    assert surveys["end"].iloc[0] == dusk.iloc[0]
+    local_dusk = dusk.iloc[0].tz_convert(C.TIMEZONE)
+    assert (local_dusk.hour, local_dusk.minute) > (21, 0) and local_dusk.hour < 22  # Aug 1
     out, _ = C.trektellen_model_counts(counts, surveys, log)
-    hours = out["start"].dt.tz_convert(C.TIMEZONE).dt.hour
-    assert 12 in hours.values and 20 in hours.values  # daylight zeros
-    assert not ((hours >= 23) | (hours <= 4)).any()  # no zeros in the dark
-    night = next(s for s in log.steps if s.name == "Night hour not zero-filled")
-    assert night.n_rows > 0
+    assert out["end"].max() == dusk.iloc[0]  # no zero hour after dusk
+
+
+def test_count_ending_shortly_after_dusk_is_kept():
+    _, dusk = C.civil_twilight(pd.Series([pd.Timestamp(DAY)]))
+    end = (dusk.iloc[0] + pd.Timedelta(minutes=30)).tz_convert(C.TIMEZONE).strftime("%H:%M")
+    surveys = _surveys([("T10", "06:00", end)])
+    counts = _counts([("T10", "08:00", "Red Kite", 1)], surveys)
+    _, clipped = C.clip_to_twilight(counts, surveys, "trektellen", C.ProcessingLog())
+    assert clipped["end"].iloc[0] == surveys["end"].iloc[0]
+
+
+def test_entry_at_the_survey_end_moves_into_it():
+    surveys = _surveys([("T10", "06:00", "09:00")])
+    counts = _counts([("T10", "09:00", "Red Kite", 3), ("T10", "07:10", "Red Kite", 1)], surveys)
+    counts, _ = C.clip_to_twilight(counts, surveys, "trektellen", C.ProcessingLog())
+    assert counts["datetime"].iloc[0] == utc(f"{DAY} 08:59")
+    out, _ = C.trektellen_model_counts(counts, surveys, C.ProcessingLog())
+    assert out.loc[out["start"] == utc(f"{DAY} 08:00"), "count"].sum() == 3
 
 
 def test_historical_sums_subgroups_and_zero_fills_empty_surveys():

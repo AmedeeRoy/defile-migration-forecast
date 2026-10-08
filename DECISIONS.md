@@ -54,14 +54,18 @@ surveys counted in it.
 **Entries timed outside their survey are dropped**, as before (`time_outside_survey`). The
 release keeps them at day level, indistinguishable from untimed entries except by
 `remark_processing`; folded into an unsplit survey they inflated its rate (56 Black Kites on
-2025-08-03), and counted as untimed they un-split a timed count (2025-10-26). The old dataset's
-`time_adjusted` entries (164, 4 556 birds, times moved back into the survey) are now in this
-group too, "pending correction" in defile-dataset.
+2025-08-03), and counted as untimed they un-split a timed count (2025-10-26). Until 2026-10 the
+dataset moved an entry up to 10 min outside its survey into it (`time_adjusted`); the release
+leaves those 124 entries (4 379 birds) at day level "pending correction", so they are dropped
+here too until defile-dataset restores the tolerance. Entries timed at the very minute their
+survey ends (40, 176 birds) stay timed in the release and are moved 1 min into it, as before.
 
-**Night hours of a split Trektellen count are not zero-filled.** The release keeps night periods
-as recorded (the old dataset clipped them to dusk); 4 counts in 2025 were left open until the
-next morning, ~40 h of zeros nobody watched. Night is the sun below -6 deg for the whole hour,
-`night_mask_by_doy_hour`, the model's one definition.
+**Trektellen counts reaching into the night are clipped to civil twilight**, reproducing the
+dataset's rule until 2026-10 (the release keeps the recorded times pending correction): a count
+starting more than 45 min before civil dawn or ending more than 45 min after civil dusk (sun at
+-6 deg, the model's night threshold) starts at dawn / ends at dusk. Counts closed the same evening
+end at most ~30 min after dusk; the 7 clipped ones, 4 left open until the next morning, were
+closed days later. Without it their night hours become zeros nobody watched.
 
 **The historical day window is a dataset matter.** Historical hourly recording omits hours with
 no bird; the workbook's `startTimeDay`/`endTimeDay` (declared attendance) says which hours were

@@ -61,6 +61,10 @@ hour in the dataset. Hours of the declared day window with no record are empty s
 
 ### Trektellen (2022 on)
 
+0. **Night.** A count starting more than 45 min before civil dawn or ending more than 45 min
+   after civil dusk (sun at -6 deg) starts at dawn / ends at dusk: a count left open in the dark
+   is an entry error. Entries timed outside the clipped interval are dropped; an entry timed at
+   the very minute its count ends is moved 1 min into it.
 1. **Splitting.** A count period is split into clock hours if it lasts more than 2 h and fewer
    than half of its entries with migrating birds (`count > 0`) lack a timestamp. Otherwise it
    stays one period. Entries of local birds only are left out of that share: they are often
@@ -69,10 +73,8 @@ hour in the dataset. Hours of the declared day window with no record are empty s
    They are mostly local birds, or totals entered at the end of the day.
 3. Each entry of a split period gets the clock hour of its timestamp as its period, clipped to
    the count period.
-4. **Zero-fill.** Each daylight clock hour (at least 10 min) of a split period with no entry of
-   any species gets a `No species` row with count 0. An hour lying wholly at night (sun below
-   -6 deg, the model's one definition of night) is not zero-filled: counts left open overnight
-   would otherwise add hours of zeros nobody watched.
+4. **Zero-fill.** Each clock hour (at least 10 min) of a split period with no entry of any
+   species gets a `No species` row with count 0.
 5. Periods shorter than 10 min are dropped, with their birds. This is mostly the partial last
    hour of a split period.
 6. Entries of the same species in the same period are summed.
@@ -88,7 +90,7 @@ hour in the dataset. Hours of the declared day window with no record are empty s
 Run on every build and listed at the top of the report: every main-direction bird of the dataset
 is either in the output or dropped by a named rule; no two periods overlap; no period has zero
 length; periods under 15 min or windows over 16 h are flagged; one row per species and period;
-every species has an English name; every daylight clock hour of a split window exists as a
+every species has an English name; every clock hour of a split window exists as a
 period; empty surveys alone on their day are flagged (real zeros only if the day was counted).
 
 ## History
