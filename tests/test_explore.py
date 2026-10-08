@@ -159,9 +159,26 @@ def test_daily_counts_keep_unknown_apart_from_zero_and_keep_qualifiers():
 
 
 def test_tiers():
-    assert E.tier_of(E.TIER_FULL_MIN_YEARS, E.TIER_FULL_MIN_BIRDS, 50) == "full"
-    assert E.tier_of(E.TIER_FULL_MIN_YEARS - 1, 1e6, 50) == "short"
-    assert E.tier_of(40, 1e6, E.TIER_RARE_MAX_DAYS) == "rare"
+    assert E.tier_of(E.TIER_FULL_MIN_YEARS, E.TIER_FULL_MIN_DAYS) == "full"
+    assert E.tier_of(E.TIER_FULL_MIN_YEARS - 1, 1000) == "short"
+    assert E.tier_of(40, E.TIER_RARE_MAX_DAYS) == "rare"
+
+
+def test_french_names_by_ebird_code_capitalised_with_overrides():
+    taxonomy = pd.DataFrame(
+        {
+            "taxon_id": ["avibase-a", "avibase-b", "avibase-81B32602"],
+            "ebird_code": ["eurspa1", "jaeger", "hoocro4"],
+        }
+    )
+    ebird = pd.DataFrame(
+        {"SPECIES_CODE": ["eurspa1", "jaeger"], "COMMON_NAME": ["Épervier d'Europe", "labbe sp."]}
+    )
+    assert E.french_names(taxonomy, ebird).tolist() == [
+        "Épervier d'Europe",
+        "Labbe sp.",
+        "Corneille mantelée",
+    ]
 
 
 def test_annual_window_and_top_day():

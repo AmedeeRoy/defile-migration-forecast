@@ -10,9 +10,10 @@ level (untimed, or timed outside their survey) stay untimed here.
 
 Files, written by `scripts/build_explore.py` (one `build_*` function each):
 
-- `manifest.json`: provenance (dataset build, commit, table hashes), years, partial years, the
-  default window and the tier thresholds.
-- `taxa.json`: one entry per taxon, with names, rank, occurrence tier and totals.
+- `manifest.json`: when and from which dataset build it was made, the date range, partial years,
+  the default window and the tier thresholds.
+- `taxa.json`: one entry per taxon, with names (French from the eBird taxonomy), rank,
+  occurrence tier and totals.
 - `effort.json`: one entry per local day with any survey: counted hours (union of `complete`
   survey intervals), first/last counted time, hours counted per local clock hour, and the hours of
   `partial`, `unknown` and `none` (not counted) surveys.
@@ -51,10 +52,18 @@ DEFINITIONS_VERSION = 1
 WINDOW = ((7, 18), (11, 18))
 
 # Occurrence tiers. "full": a dashboard; "short": records, annual totals and report links;
-# "rare": the rare-records table only. Thresholds on main-direction counts (`tier_of`).
-TIER_FULL_MIN_YEARS = 10
-TIER_FULL_MIN_BIRDS = 100
+# "rare": the rare-records table only. On days with migrating birds (`tier_of`): a seasonal curve
+# needs days, not birds (one large flock is still a rare record). Provisional, to tune on the page.
+TIER_FULL_MIN_DAYS = 50
+TIER_FULL_MIN_YEARS = 5
 TIER_RARE_MAX_DAYS = 10
+
+# French names: the eBird taxonomy in French (France), joined on `ebird_code`; no API key needed.
+# Downloaded once into the data dir by `scripts/build_explore.py` (`--refresh-names` to update).
+EBIRD_TAXONOMY_URL = "https://api.ebird.org/v2/ref/taxonomy/ebird?fmt=csv&locale=fr_FR"
+EBIRD_TAXONOMY_FILE = os.path.join("count", "ebird_taxonomy_fr_FR.csv")
+# Taxa whose `ebird_code` is no longer in the eBird taxonomy.
+FRENCH_NAME_OVERRIDES = {"avibase-81B32602": "Corneille mantelée"}  # hoocro4, Corvus c. cornix
 
 # A count is "timed" when its own time, or its survey, places it within one local clock hour.
 TIMED_MAX_DURATION = pd.Timedelta(hours=1)
@@ -251,18 +260,29 @@ def annual(days: pd.DataFrame) -> pd.DataFrame:
 # --- taxa -------------------------------------------------------------------
 
 
-def tier_of(years: int, birds: float, days: int) -> str:
-    """Occurrence tier of a taxon from its main-direction records (thresholds above)."""
+def tier_of(years: int, days: int) -> str:
+    """Occurrence tier from the years and days with migrating birds (thresholds above)."""
     if days <= TIER_RARE_MAX_DAYS:
         return "rare"
-    if years >= TIER_FULL_MIN_YEARS and birds >= TIER_FULL_MIN_BIRDS:
+    if days >= TIER_FULL_MIN_DAYS and years >= TIER_FULL_MIN_YEARS:
         return "full"
     return "short"
 
 
-def build_taxa(taxonomy: pd.DataFrame, days: pd.DataFrame) -> pd.DataFrame:
-    """Taxonomy plus occurrence: years and days with a record, total birds, tier."""
-    d = days[days["count"].notna() | days["qualifiers"].str.contains(PRESENCE_ONLY)]
+def french_names(taxonomy: pd.DataFrame, ebird: pd.DataFrame) -> pd.Series:
+    """French name of each taxon (eBird `COMMON_NAME` by `ebird_code`), first letter capitalised
+    ("labbe sp." -> "Labbe sp."), with `FRENCH_NAME_OVERRIDES`."""
+    names = taxonomy["ebird_code"].map(ebird.set_index("SPECIES_CODE")["COMMON_NAME"])
+    names = names.fillna(taxonomy["taxon_id"].map(FRENCH_NAME_OVERRIDES))
+    return names.str[:1].str.upper() + names.str[1:]
+
+
+def build_taxa(
+    taxonomy: pd.DataFrame, days: pd.DataFrame, ebird: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """Taxonomy plus French name and occurrence: years and days with migrating birds (or a
+    presence-only record), first/last year, total birds, tier."""
+    d = days[(days["count"] > 0) | days["qualifiers"].str.contains(PRESENCE_ONLY)]
     occ = d.groupby("taxon_id").agg(
         years=("date", lambda x: x.dt.year.nunique()),
         first_year=("date", lambda x: x.dt.year.min()),
@@ -273,10 +293,9 @@ def build_taxa(taxonomy: pd.DataFrame, days: pd.DataFrame) -> pd.DataFrame:
     t = taxonomy[
         ["taxon_id", "english_name", "scientific_name", "taxon_rank", "order", "family"]
     ].join(occ, on="taxon_id")
-    t["tier"] = [
-        tier_of(y, b, n) if pd.notna(n) else "rare"
-        for y, b, n in zip(t["years"], t["birds"], t["days"])
-    ]
+    if ebird is not None:
+        t.insert(1, "french_name", french_names(taxonomy, ebird))
+    t["tier"] = [tier_of(y, n) if pd.notna(n) else "rare" for y, n in zip(t["years"], t["days"])]
     return t.sort_values(["order", "family", "scientific_name"], na_position="last")
 
 
@@ -318,33 +337,20 @@ def partial_years(days: pd.DataFrame) -> list[int]:
 
 
 def manifest(metadata: dict, days: pd.DataFrame, effort: pd.DataFrame, git_sha: str) -> dict:
-    """Provenance of the export and the definitions it was built with."""
-    tables = {
-        k.removeprefix("dataset/"): v
-        for k, v in metadata.get("table_sha256", {}).items()
-        if k.startswith("dataset/") and k.endswith(".csv")
-    }
-    built = metadata.get("built_at", "")
-    sha = (metadata.get("git_sha") or "").split()[0][:7]
+    """When and from what the export was built, and the definitions it uses."""
     return {
-        "snapshot": f"{built[:10].replace('-', '')}-{sha}" if built else None,
         "definitions_version": DEFINITIONS_VERSION,
         "built_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "git_sha": git_sha,
-        "dataset": {
-            "built_at": built or None,
-            "git_sha": metadata.get("git_sha"),
-            "schema": metadata.get("consolidated_schema"),
-            "processing_policy": metadata.get("processing_policy"),
-            "table_sha256": tables,
-        },
+        "dataset_built_at": metadata.get("built_at"),
+        "dataset_git_sha": metadata.get("git_sha"),
         "first_date": effort["date"].min(),
         "last_date": max(effort["date"].max(), days["date"].max()),
         "partial_years": partial_years(days),
         "window": [f"{m:02d}-{d:02d}" for m, d in WINDOW],
         "tiers": {
+            "full_min_days": TIER_FULL_MIN_DAYS,
             "full_min_years": TIER_FULL_MIN_YEARS,
-            "full_min_birds": TIER_FULL_MIN_BIRDS,
             "rare_max_days": TIER_RARE_MAX_DAYS,
         },
         "timezone": TIMEZONE,

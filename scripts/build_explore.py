@@ -3,7 +3,8 @@
 
 Reads `data/count/dataset/` (copied by `python scripts/build_counts.py --dataset <dir>`) and writes
 `data/explore/`: `manifest.json`, `taxa.json`, `effort.json`, `reports.json` and
-`species/<taxon_id>.json`. `src/data/explore.py` documents each file; every value is an
+`species/<taxon_id>.json`, with French names from the eBird taxonomy (downloaded once, no key).
+`src/data/explore.py` documents each file; every value is an
 aggregation of the release, with no model processing. Copy the folder to defileViz's
 `public/data/explore/` to publish it.
 
@@ -16,7 +17,9 @@ import argparse
 import os
 import shutil
 import subprocess
+import urllib.request
 
+import pandas as pd
 import rootutils
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -36,13 +39,22 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--data-dir", default=os.path.join(ROOT, "data"))
     ap.add_argument("--out", default=os.path.join(ROOT, "data", "explore"))
+    ap.add_argument(
+        "--refresh-names", action="store_true", help="download the eBird taxonomy again"
+    )
     args = ap.parse_args(argv)
+
+    names_path = os.path.join(args.data_dir, E.EBIRD_TAXONOMY_FILE)
+    if args.refresh_names or not os.path.exists(names_path):
+        urllib.request.urlretrieve(E.EBIRD_TAXONOMY_URL, names_path)
+        print(f"Downloaded the eBird taxonomy (French names) to {names_path}")
+    ebird = pd.read_csv(names_path)
 
     surveys, counts, taxonomy, reports, metadata = E.read_release(args.data_dir)
     effort = E.build_effort(surveys)
     days = E.daily_counts(counts)
     hourly = E.hourly_counts(counts)
-    taxa = E.build_taxa(taxonomy, days)
+    taxa = E.build_taxa(taxonomy, days, ebird)
     git_sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT
     ).stdout.strip()
@@ -86,6 +98,9 @@ def main(argv=None) -> int:
     for name, n in sizes.items():
         print(f"  {name:28s} {n / 1e3:9.1f} kB")
     print("  tiers:", taxa["tier"].value_counts().to_dict())
+    missing = taxa.loc[taxa["french_name"].isna(), "english_name"].tolist()
+    if missing:
+        print(f"  no French name ({len(missing)}): {', '.join(missing)}")
     return 0
 
 
