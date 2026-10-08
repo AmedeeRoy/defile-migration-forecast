@@ -48,6 +48,8 @@ src/
   data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform, model processing of the counts (counts.py)
   models/                          LightningModule, criterion (Tweedie loss, etc.), components/ (unet/transformer/convnet)
   phenology.py                    Phenology baseline + the 24h shape prior fed to the UNet
+  explore/                        defileViz's Explore page: raw export + effort adjustment. Contained:
+                                  nothing outside it imports it (see its __init__)
   plots/                           per-species PDF test report, prediction plots, count QA report
   utils/                           logging, instantiators, misc helpers
 ```
@@ -266,7 +268,9 @@ rather than editing `configs/data/defile.yaml` directly.
   defile-dataset's README has the history, essential before choosing which years to use.
 - Explore export: `python scripts/build_explore.py` turns the same release tables (plus
   `report_text.csv`) into `data/explore/`, the JSON files defileViz's Explore page reads
-  (`src/data/explore.py` documents each one). Unlike the model's counts, it is a plain aggregation
+  (`src/explore/` documents each one). **Keep it contained**: forecast code never imports
+  `src.explore` (a test enforces it); if an Explore result such as a population trend becomes a
+  forecast input, it goes through a named file the forecast reads, with a DECISIONS.md entry. Unlike the model's counts, it is a plain aggregation
   with no processing: raw daily totals must reconcile with `count.csv` (`tests/test_explore.py`).
   Its effort-adjusted values use a time-of-day profile fitted by the same GAM as the model's
   phenology (`src.phenology.fit_ratio_surface`); `DECISIONS.md` -> Explore has why.

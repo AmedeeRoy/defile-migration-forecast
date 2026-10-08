@@ -88,7 +88,7 @@ in sync by hand.
 
 ## Explore
 
-**The Explore export is a separate, raw aggregation of the release** (`src/data/explore.py`,
+**The Explore export is a separate, raw aggregation of the release** (`src/explore/`,
 #55), not the model's counts: no count is moved, dropped or imputed, and daily totals reconcile
 with `count.csv` and the dataset's own daily totals (`tests/test_explore.py`). Effort is the union
 of `complete` survey intervals per local day. `species_doy_statistics.json` stays the model's
@@ -118,6 +118,22 @@ the step at 1993 survives the adjustment (Kestrel x14, Honey Buzzard x5; Common 
 x1.45), so effort is not what separates those years. They stay visible, unadjusted, and out of
 reference bands. Taxa not counted systematically in some years (passerines before ~2007) are a
 protocol matter no effort metric fixes; the dataset README has that history.
+
+**Explore lives in this repo, contained in `src/explore/`.** It shares the forecast's release
+reader and time-of-day GAM, and a population trend fitted for Explore may later help the
+forecast (Red Kite's under-prediction of recent years is a missing trend). But the forecast never
+imports it (`tests/test_explore.py` enforces the direction); a result crosses over only as a named
+file the forecast reads, as `species_doy_statistics.json` does, decided here first. The GAM
+profile is variant A of the Explore baseline, provisional until compared with a hierarchical
+Gaussian process on a chronological holdout.
+
+**Each taxon has a start year, 1993 or 2007**: its counts are compared from then on, and nothing
+is adjusted before it (earlier years stay in the export, raw). Daily systematic counting began in
+1993 and always targeted raptors, herons and egrets, storks, pigeons and corvids, which start in
+1993 even if rare then (Peregrine recovered). Passerines were hardly recorded before 2007, when
+their taxa double and their birds rise 15-fold (defile-dataset `docs/sampling-history.md`): any
+other taxon starts in 1993 only if recorded in at least 0.75 times as large a share of the
+1993-2006 years as of the later ones. Full tier: 45 from 1993, 39 from 2007.
 
 **Tiers count days with migrating birds**, not birds: `full` from 50 days over 5 years, `rare`
 at 10 days or fewer (84 / 45 / 142). Provisional, to tune once the page exists. French names come

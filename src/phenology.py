@@ -78,7 +78,7 @@ def fit_ratio_surface(
 
     The one fit of the time-of-day shape, shared by the model's phenology baseline
     (`scripts/build_phenology_stats.py`, UTC hours of the model's periods) and the Explore export
-    (`src/data/explore.py`, local clock hours). `interaction` fits `te(doy, hour)`, else `s(doy) +
+    (`src/explore/`, local clock hours). `interaction` fits `te(doy, hour)`, else `s(doy) +
     s(hour)`, a doy-invariant shape once normalised (see `PhenologyBuilder.fit_hourly_ratio`). If
     PIRLS diverges, the fit is retried with progressively stronger regularization from `lam_ladder`
     (see `GAM_LAM_LADDER`), and so is one whose prediction overflows.

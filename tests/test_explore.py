@@ -1,16 +1,18 @@
-"""Tests for the Explore export (src/data/explore.py), on small synthetic release tables, and on
-the real release when it is present in `data/count/dataset/`: the export must reconcile with
-`count.csv`, and with the dataset's own daily totals when its interim build sits next to this
-repo."""
+"""Tests for the Explore export (src/explore/), on small synthetic release tables, and on the real
+release when it is present in `data/count/dataset/`: the export must reconcile with `count.csv`,
+and with the dataset's own daily totals when its interim build sits next to this repo."""
 
+import ast
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from src.data import counts as C
-from src.data import explore as E
+from src.explore import export as E
+from src.explore import profile as P
 
 DAY = "2023-08-01"
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -260,15 +262,15 @@ def test_profile_samples_are_hour_rates_over_the_day_rate_with_zero_hours():
             "count": [10, 20],
         }
     )
-    s = E.profile_samples(days, hourly, effort)
+    s = P.profile_samples(days, hourly, effort)
     # hour 11 is counted for less than PROFILE_MIN_HOUR_EFFORT: not a sample
     assert dict(zip(s["hour"], s["ratio"])) == pytest.approx({8: 1, 9: 0, 10: 2})
-    assert (s["weight"] == 30**E.RATIO_WEIGHT_POWER).all()
-    assert E.profile_samples(days.assign(timed=0.5), hourly, effort).empty
+    assert (s["weight"] == 30**P.RATIO_WEIGHT_POWER).all()
+    assert P.profile_samples(days.assign(timed=0.5), hourly, effort).empty
 
 
 def test_coverage_index_and_adjusted_days():
-    n = E.PROFILE_DOY[1] - E.PROFILE_DOY[0] + 1
+    n = P.PROFILE_DOY[1] - P.PROFILE_DOY[0] + 1
     profile = np.zeros((n, E.HOURS))
     profile[:, [10, 11]] = 0.5
     effort = _effort(
@@ -280,7 +282,7 @@ def test_coverage_index_and_adjusted_days():
             ("1980-08-01", {10: 0.4}),  # c = 0.2
         ]
     )
-    c = E.coverage(effort, profile)
+    c = P.coverage(effort, profile)
     assert c.tolist() == pytest.approx([1, 0.5, 0, 1, 0.2])
     days = pd.DataFrame(
         {
@@ -288,16 +290,69 @@ def test_coverage_index_and_adjusted_days():
             "count": [40.0, 5.0, 9.0, 10.0],
         }
     )
-    a = E.annual_index(days, effort, c).set_index("year")
+    a = P.annual_index(days, effort, c).set_index("year")
     assert a.loc[2020, "birds"] == 45 and a.loc[2020, "days"] == 3
     assert a.loc[2020, "index"] == pytest.approx(45 / 1.5)
     assert np.isnan(a.loc[1980, "index"])  # mean c below COVERAGE_MIN
-    d = E.adjust_days(days, effort, c).set_index("date")["adjusted"]
+    d = P.adjust_days(days, effort, c).set_index("date")["adjusted"]
     assert d["2020-08-01"] == 40 and np.isnan(d["2020-08-03"]) and np.isnan(d["2020-08-04"])
 
 
 def test_profile_table_steps_through_the_season():
-    n = E.PROFILE_DOY[1] - E.PROFILE_DOY[0] + 1
-    t = E.profile_table(np.full((n, E.HOURS), 1 / E.HOURS))
-    assert t["doy"][0] == E.PROFILE_DOY[0] and t["doy"][1] - t["doy"][0] == E.PROFILE_EXPORT_STEP
+    n = P.PROFILE_DOY[1] - P.PROFILE_DOY[0] + 1
+    t = P.profile_table(np.full((n, E.HOURS), 1 / E.HOURS))
+    assert t["doy"][0] == P.PROFILE_DOY[0] and t["doy"][1] - t["doy"][0] == P.PROFILE_EXPORT_STEP
     assert len(t["p"][0]) == E.HOURS
+
+
+def test_start_year_targets_from_1993_others_when_recorded_systematically():
+    every = set(range(1993, 2026))
+    late = set(range(E.ALL_GROUPS_FROM, 2026))
+    assert E.start_year("Falconiformes", "Falconidae", late, 2025) == E.SYSTEMATIC_FROM
+    assert E.start_year("Passeriformes", "Corvidae", late, 2025) == E.SYSTEMATIC_FROM
+    assert E.start_year("Passeriformes", "Fringillidae", late, 2025) == E.ALL_GROUPS_FROM
+    assert E.start_year("Passeriformes", "Alaudidae", every, 2025) == E.SYSTEMATIC_FROM
+    assert E.start_year("Gruiformes", "Gruidae", set(), 2025) == E.ALL_GROUPS_FROM
+
+
+def test_nothing_adjusted_before_start_year():
+    n = P.PROFILE_DOY[1] - P.PROFILE_DOY[0] + 1
+    profile = np.full((n, E.HOURS), 1 / E.HOURS)
+    effort = _effort(
+        [
+            ("2000-08-01", {h: 1 for h in range(24)}),
+            ("2010-08-01", {12: 1} | {h: 1 for h in range(24)}),
+        ]
+    )
+    days = pd.DataFrame(
+        {"date": pd.to_datetime(["2000-08-01", "2010-08-01"]), "count": [5.0, 7.0]}
+    )
+    c = P.coverage(effort, profile)
+    assert P.adjust_days(days, effort, c, 2007)["adjusted"].isna().tolist() == [True, False]
+    a = P.annual_index(days, effort, c, 2007).set_index("year")["index"]
+    assert np.isnan(a[2000]) and a[2010] == 7
+
+
+ROOT = Path(__file__).resolve().parents[1]
+EXPLORE_USERS = {"scripts/build_explore.py", "scripts/analyse_explore_effort.py"}
+
+
+def test_forecast_code_does_not_import_explore():
+    """The boundary in `src/explore/__init__.py`: only the explore scripts (and this test) import
+    `src.explore`; the forecast reaches its results through files, never imports."""
+    offenders = []
+    for path in [*ROOT.glob("src/**/*.py"), *ROOT.glob("scripts/**/*.py")]:
+        rel = path.relative_to(ROOT).as_posix()
+        if rel.startswith("src/explore/") or rel in EXPLORE_USERS:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = (
+                [a.name for a in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+                if isinstance(node, ast.ImportFrom)
+                else []
+            )
+            if any(n == "src.explore" or n.startswith("src.explore.") for n in names):
+                offenders.append(rel)
+    assert not offenders, f"forecast code importing src.explore: {offenders}"

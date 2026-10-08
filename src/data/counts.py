@@ -34,7 +34,7 @@ TIMEZONE = "Europe/Paris"
 
 DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
 # Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
-# `report_text.csv` is read only by the Explore export (`src/data/explore.py`).
+# `report_text.csv` is read only by the Explore export (`src/explore/`).
 REPORT_FILE = "report_text.csv"
 DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", REPORT_FILE, "datapackage.json")
 METADATA_FILE = "metadata.json"

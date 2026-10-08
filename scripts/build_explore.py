@@ -4,7 +4,7 @@
 Reads `data/count/dataset/` (copied by `python scripts/build_counts.py --dataset <dir>`) and writes
 `data/explore/`: `manifest.json`, `taxa.json`, `effort.json`, `reports.json` and
 `species/<taxon_id>.json`, with French names from the eBird taxonomy (downloaded once, no key).
-`src/data/explore.py` documents each file; every value is an
+`src/explore/` documents each file; every value is an
 aggregation of the release, with no model processing. Copy the folder to defileViz's
 `public/data/explore/` to publish it.
 
@@ -24,7 +24,8 @@ import rootutils
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.data import explore as E  # noqa: E402
+from src.explore import export as E  # noqa: E402
+from src.explore import profile as P  # noqa: E402
 
 ROOT = rootutils.find_root(__file__, indicator=".project-root")
 
@@ -55,7 +56,7 @@ def main(argv=None) -> int:
     days = E.daily_counts(counts)
     hourly = E.hourly_counts(counts)
     taxa = E.build_taxa(taxonomy, days, ebird)
-    profiles, source = E.build_profiles(taxa, days, hourly, effort)
+    profiles, source = P.build_profiles(taxa, days, hourly, effort)
     taxa["profile"] = taxa["taxon_id"].map(source)
     git_sha = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT
@@ -80,12 +81,14 @@ def main(argv=None) -> int:
     }
     species_bytes = 0
     texts = reports[reports["category"] == E.REPORT_SPECIES]
+    starts = taxa.set_index("taxon_id")["start_year"]
     for taxon_id, d in days.groupby("taxon_id"):
         profile = profiles[taxon_id if source[taxon_id] == "own" else source[taxon_id]]
-        c = E.coverage(effort, profile)
-        d = E.adjust_days(d.drop(columns="taxon_id"), effort, c)
+        c = P.coverage(effort, profile)
+        start = starts[taxon_id]
+        d = P.adjust_days(d.drop(columns="taxon_id"), effort, c, start)
         a = E.annual(d).merge(
-            E.annual_index(d, effort, c)[["year", "c_mean", "index"]], on="year", how="left"
+            P.annual_index(d, effort, c, start)[["year", "c_mean", "index"]], on="year", how="left"
         )
         h = hourly[hourly["taxon_id"] == taxon_id].drop(columns="taxon_id")
         t = texts[texts["key"] == taxon_id][["year", "text"]]
@@ -96,7 +99,7 @@ def main(argv=None) -> int:
                 "days": E.columns(d),
                 "hourly": E.columns(h),
                 "annual": E.records(a),
-                "profile": {"source": source[taxon_id], **E.profile_table(profile)},
+                "profile": {"source": source[taxon_id], **P.profile_table(profile)},
                 "reports": E.records(t),
             },
         )
@@ -107,6 +110,8 @@ def main(argv=None) -> int:
         print(f"  {name:28s} {n / 1e3:9.1f} kB")
     print("  tiers:", taxa["tier"].value_counts().to_dict())
     print("  profiles:", taxa["profile"].value_counts().to_dict())
+    full = taxa[taxa["tier"] == "full"]
+    print("  start years (full tier):", full["start_year"].value_counts().to_dict())
     missing = taxa.loc[taxa["french_name"].isna(), "english_name"].tolist()
     if missing:
         print(f"  no French name ({len(missing)}): {', '.join(missing)}")

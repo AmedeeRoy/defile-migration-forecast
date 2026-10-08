@@ -24,7 +24,8 @@ import rootutils  # noqa: E402
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 
-from src.data import explore as E  # noqa: E402
+from src.explore import export as E  # noqa: E402
+from src.explore import profile as P  # noqa: E402
 from src.metrics import ERA_EDGES  # noqa: E402
 
 ROOT = rootutils.find_root(__file__, indicator=".project-root")
@@ -57,10 +58,10 @@ def main(argv=None) -> int:
     hourly = E.hourly_counts(counts)
     ids = taxonomy.set_index("english_name")["taxon_id"]
     taxa = taxonomy[taxonomy["english_name"].isin(SPECIES)]
-    profiles, source = E.build_profiles(taxa, days, hourly, effort)
-    doy_grid = np.arange(E.PROFILE_DOY[0], E.PROFILE_DOY[1] + 1)
-    light = E.daylight(doy_grid)
-    c_uniform = E.coverage(effort, profiles["uniform"])
+    profiles, source = P.build_profiles(taxa, days, hourly, effort)
+    doy_grid = np.arange(P.PROFILE_DOY[0], P.PROFILE_DOY[1] + 1)
+    light = P.daylight(doy_grid)
+    c_uniform = P.coverage(effort, profiles["uniform"])
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     fig, axes = plt.subplots(len(SPECIES), 3, figsize=(16, 3.2 * len(SPECIES)))
@@ -72,7 +73,7 @@ def main(argv=None) -> int:
 
         # profile at three dates
         for md, color in zip(PROFILE_DATES, ("C0", "C1", "C2")):
-            i = pd.Timestamp(f"2025-{md}").dayofyear - E.PROFILE_DOY[0]
+            i = pd.Timestamp(f"2025-{md}").dayofyear - P.PROFILE_DOY[0]
             row[0].plot(np.arange(24), p[i], color=color, label=md)
             row[0].plot(np.arange(24), profiles["uniform"][i], color=color, ls=":", lw=0.8)
         row[0].set(title=f"{name}: profile ({source[tid]}), dotted uniform", xlim=(4, 22))
@@ -83,10 +84,10 @@ def main(argv=None) -> int:
         for (y0, y1), ls in zip(STABILITY_PERIODS, ("-", "--")):
             sel = d["date"].dt.year.between(y0, y1)
             selh = h["date"].dt.year.between(y0, y1)
-            samples = E.profile_samples(d[sel], h[selh], effort)
-            pp = E.fit_profile(samples, doy_grid, light, label=f"{name} {y0}-{y1}")
+            samples = P.profile_samples(d[sel], h[selh], effort)
+            pp = P.fit_profile(samples, doy_grid, light, label=f"{name} {y0}-{y1}")
             stab.append(pp)
-            i = pd.Timestamp(f"2025-{PROFILE_DATES[1]}").dayofyear - E.PROFILE_DOY[0]
+            i = pd.Timestamp(f"2025-{PROFILE_DATES[1]}").dayofyear - P.PROFILE_DOY[0]
             row[1].plot(np.arange(24), pp[i], ls=ls, color="k", label=f"{y0}-{y1}")
         tv = 0.5 * np.abs(stab[0] - stab[1]).sum(axis=1)  # total variation per day
         row[1].set(
@@ -95,8 +96,8 @@ def main(argv=None) -> int:
         row[1].legend(fontsize=7)
 
         # annual series
-        a = E.annual_index(d, effort, E.coverage(effort, p)).set_index("year")
-        u = E.annual_index(d, effort, c_uniform).set_index("year")
+        a = P.annual_index(d, effort, P.coverage(effort, p)).set_index("year")
+        u = P.annual_index(d, effort, c_uniform).set_index("year")
         s = pd.DataFrame(
             {
                 "raw": a["birds"],
@@ -110,7 +111,7 @@ def main(argv=None) -> int:
         for col, style in zip(SERIES, ("C7", "C3", "C0", "k")):
             row[2].plot(scaled.index, scaled[col], color=style, lw=1.6 if col == "profile" else 1)
         ax2 = row[2].twinx()
-        cov = (E.coverage(effort, p).groupby(effort["date"].dt.year).mean()).reindex(a.index)
+        cov = (P.coverage(effort, p).groupby(effort["date"].dt.year).mean()).reindex(a.index)
         ax2.bar(a.index, cov, color="C2", alpha=0.15)
         ax2.set(ylim=(0, 1), ylabel="mean c per day")
         row[2].axvline(ERA_EDGES[0] - 0.5, color="grey", lw=0.5)
