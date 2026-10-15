@@ -254,7 +254,7 @@ rather than editing `configs/data/defile.yaml` directly.
   1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
   in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
   locally), whose release is `count.csv`, `survey.csv` and `taxonomy.csv` (Avibase taxon ids,
-  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_coverage`) and an
+  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_complete` and `weather_stop`) and an
   audit of Trektellen entry errors.
   `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
   `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: the

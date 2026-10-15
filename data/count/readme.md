@@ -43,14 +43,10 @@ survey's interval.
 
 ### Both sources, first
 
-- **Coverage.** Only `complete` surveys are used. `none` surveys (rain, low cloud, closures) have
-  no counts and are not effort. `partial` and `unknown` surveys are dropped with their birds: with
-  unknown gap times, neither their rate over the interval nor their empty hours can be trusted.
+- **Completeness.** Complete surveys (`survey_complete`) supply effort. Incomplete surveys are dropped with their birds. Complete weather stops (`weather_stop`) supply zero passage, following the release's explicit assumption and Explore's processing. Unmonitored absences have no survey row.
 - **Presence only** (`count_estimation = x`, no number) is dropped: never turned into a count.
-- **Timed outside its survey.** The release keeps such an entry at day level, like an untimed
-  one; its `remark_processing` ("Entry time outside the native survey") tells them apart. Its
-  recorded time comes back from `entry_times.csv` (extracted by `build_counts.py` from the
-  dataset's internal observation table); without it, the entry is dropped.
+- **Count intervals.** As in defile-explore, an own interval up to one hour is timed at its midpoint; longer intervals stay at day level. UTC times determine the Europe/Paris date.
+- **Timed outside its survey.** Day-level entries marked outside their survey cannot be placed in model periods and are dropped. Only released tables are read; original entry times are no longer recovered from the dataset's internal tables.
 
 ### Historical (1966-2021)
 
@@ -86,7 +82,7 @@ hour in the dataset. Hours of the declared day window with no record are empty s
 
 - **Empty surveys.** A `complete` survey of at least 10 min that no record overlaps gets a
   `No species` row with count 0: a period counted with nothing seen (explicit "no species"
-  entries included). Days without counting are `none` in the dataset, so they never get here.
+  entries included), including weather stops with assumed zero passage. Unmonitored absences have no survey row.
 
 ## Checks
 
