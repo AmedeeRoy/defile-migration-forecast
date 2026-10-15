@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from src.data.defile_datamodule import (
+    DefileDataModule,
     DefileDataset,
     ForecastDataset,
     _prior_shape_lookup,
@@ -92,3 +93,43 @@ class _FakeXr:
     @property
     def values(self):
         return np.zeros(3)
+
+
+def test_count_masks_preserve_full_days_and_midnight_crossings(tmp_path):
+    from types import SimpleNamespace
+
+    folder = tmp_path / "count"
+    folder.mkdir()
+    frame = pd.DataFrame(
+        {
+            "species": ["Red Kite"] * 3,
+            "date": ["2025-10-01", "2025-10-02", "2025-10-03"],
+            "count": [0, 0, 3],
+            "start": ["2025-09-30T22:00:00Z", "2025-10-02T23:30:00Z", "2025-10-03T06:15:00Z"],
+            "end": ["2025-10-01T22:00:00Z", "2025-10-03T00:30:00Z", "2025-10-03T07:45:00Z"],
+        }
+    )
+    frame.to_csv(folder / "all_count_processed.csv", index=False)
+    pd.DataFrame(columns=["species", "date"]).to_csv(
+        folder / "unknown_species_dates.csv", index=False
+    )
+    dm = SimpleNamespace(
+        data_dir=str(tmp_path),
+        years=[2025],
+        doy=[196, 335],
+        species="Red Kite",
+        year_used="constant",
+    )
+    out = DefileDataModule.read_counts(dm)
+    np.testing.assert_allclose(dm.mask.sum(axis=0), out.duration)
+    np.testing.assert_array_equal(dm.mask[:, 0], np.ones(24))
+    assert dm.mask[23, 1] == dm.mask[0, 1] == 0.5
+    assert dm.mask[6, 2] == dm.mask[7, 2] == 0.75
+    assert np.isfinite(out["count"]).all()
+
+    pd.DataFrame(
+        {"species": ["Red Kite", "Other species"], "date": ["2025-10-02", "2025-10-03"]}
+    ).to_csv(folder / "unknown_species_dates.csv", index=False)
+    out = DefileDataModule.read_counts(dm)
+    assert out.date.dt.strftime("%Y-%m-%d").tolist() == ["2025-10-01", "2025-10-03"]
+    np.testing.assert_allclose(dm.mask.sum(axis=0), [24, 1.5])

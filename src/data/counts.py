@@ -36,6 +36,7 @@ DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
 # Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
 DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", "datapackage.json")
 METADATA_FILE = "metadata.json"
+UNKNOWN_DATES_FILE = "unknown_species_dates.csv"
 # Effort placeholder for a period surveyed with no bird recorded.
 NO_SPECIES = "No species"
 
@@ -184,6 +185,11 @@ def read_model_counts(data_dir: str) -> pd.DataFrame:
     return counts
 
 
+def read_unknown_dates(data_dir: str) -> pd.DataFrame:
+    """Species-days whose counts cannot supply a numeric model target."""
+    return pd.read_csv(os.path.join(data_dir, "count", UNKNOWN_DATES_FILE), parse_dates=["date"])
+
+
 def trektellen_species_ids(taxonomy: pd.DataFrame) -> dict[str, int]:
     """English name -> Trektellen species id, from the dataset's taxonomy.
 
@@ -239,6 +245,7 @@ class ProcessingLog:
 class ModelCounts:
     counts: pd.DataFrame  # OUTPUT_COLUMNS, the content of all_count_processed.csv
     log: ProcessingLog
+    unknown_dates: pd.DataFrame  # species, date: never zero-filled in training or phenology
     # Trektellen survey windows split into clock hours: columns date, start, end (UTC).
     split_windows: pd.DataFrame
     # Main-direction birds in the dataset (before any step), by year, per source.
@@ -568,7 +575,26 @@ def build_model_counts(surveys: pd.DataFrame, counts: pd.DataFrame) -> ModelCoun
         .reset_index(drop=True)
     )
     out["count"] = out["count"].astype(int)
-    return ModelCounts(counts=out, log=log, split_windows=windows, raw_birds=raw)
+    unknown = pd.concat(
+        [
+            step.rows
+            for step in log.steps
+            if step.action == "removed"
+            and step.name
+            in (
+                "Presence only",
+                "Timed outside its survey, time unknown",
+                "Timed outside its survey",
+                "Untimed sighting in split period",
+            )
+        ],
+        ignore_index=True,
+    )
+    unknown = unknown[unknown["count"].gt(0) | unknown["count_estimation"].eq(PRESENCE_ONLY)]
+    unknown = unknown[["species", "date"]].drop_duplicates().sort_values(["species", "date"])
+    return ModelCounts(
+        counts=out, unknown_dates=unknown, log=log, split_windows=windows, raw_birds=raw
+    )
 
 
 # ---------------------------------------------------------------------------------------

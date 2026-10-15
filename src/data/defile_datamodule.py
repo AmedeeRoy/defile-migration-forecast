@@ -8,7 +8,7 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from src.data.counts import read_model_counts
+from src.data.counts import read_model_counts, read_unknown_dates
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
 from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
@@ -426,6 +426,9 @@ class DefileDataModule(LightningDataModule):
         # Replace NA (no match in data_count) with 0
         count["count"] = count["count"].fillna(0)
 
+        unknown = read_unknown_dates(self.data_dir)
+        count = count[~count["date"].isin(unknown.loc[unknown.species.eq(self.species), "date"])]
+
         # counvert to hourly count
         count["duration"] = (count["end"] - count["start"]).dt.total_seconds() / 3600
         count["count_raw"] = count["count"]
@@ -443,14 +446,14 @@ class DefileDataModule(LightningDataModule):
             np.where(self.year_used == "period", count["year_period"], count["year"]),
         )
 
-        # Create mask
-        # Corresponding to the fraction of each hour of the day during which the count in question has been happening
-        hours_mat = np.repeat(np.arange(24), len(count)).reshape(24, len(count))
-        startHour = count["start"].dt.hour.values + count["start"].dt.minute.values / 60
-        endHour = count["end"].dt.hour.values + count["end"].dt.minute.values / 60
-        tmp1 = np.maximum(np.minimum(hours_mat - startHour + 1, 1), 0)
-        tmp2 = np.maximum(np.minimum(endHour - hours_mat, 1), 0)
-        self.mask = np.minimum(tmp1, tmp2)
+        # Hourly exposure wraps across UTC midnight, including full-day weather stops.
+        hours = np.arange(24)[:, None]
+        start = (
+            count["start"] - count["start"].dt.normalize()
+        ).dt.total_seconds().to_numpy() / 3600
+        end = start + count["duration"].to_numpy()
+        self.mask = np.clip(np.minimum(hours + 1, end) - np.maximum(hours, start), 0, 1)
+        self.mask += np.clip(np.minimum(hours + 25, end) - np.maximum(hours + 24, start), 0, 1)
 
         return count
 

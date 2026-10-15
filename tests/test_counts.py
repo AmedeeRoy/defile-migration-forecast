@@ -299,11 +299,17 @@ def test_build_keeps_the_main_direction_only_and_checks_pass():
             ("T10", "06:30", "Red Kite", 40, "reverse"),
             ("T10", "06:30", "Red Kite", 7, "local"),
             ("T10", "08:30", "Red Kite", 1),
+            ("T10", None, "Red Kite", 7),
+            ("T10", None, "Kite", None, "normal", C.PRESENCE_ONLY),
         ],
         ts,
     )
     mc = C.build_model_counts(pd.concat([hs, ts]), pd.concat([hc, tc]))
     assert mc.counts["count"].sum() == 3 + 1 + 5 + 1
+    assert set(mc.unknown_dates.itertuples(index=False, name=None)) == {
+        ("Red Kite", pd.Timestamp(DAY)),
+        ("Kite", pd.Timestamp(DAY)),
+    }
     status = {c.name: c.status for c in C.check_model_counts(mc)}
     assert status["Birds accounted for"] == "pass"
     assert status["No overlapping periods"] == "pass"
@@ -374,6 +380,7 @@ def test_model_loading_and_phenology_need_only_prepared_counts_and_taxonomy(tmp_
     )
     path = folder / "all_count_processed.csv"
     frame.to_csv(path, index=False)
+    pd.DataFrame(columns=["species", "date"]).to_csv(folder / C.UNKNOWN_DATES_FILE, index=False)
     pd.DataFrame({"english_name": ["Red Kite"], "trektellen_species_id": [101]}).to_csv(
         release / "taxonomy.csv", index=False
     )
@@ -384,3 +391,27 @@ def test_model_loading_and_phenology_need_only_prepared_counts_and_taxonomy(tmp_
     assert builder.all_count["count"].sum() == 4
     assert builder.all_periods["duration"].sum() == 2
     assert builder._count_species("Red Kite")["count"].tolist() == [4, 0]
+
+
+def test_phenology_keeps_unknown_species_days_missing(tmp_path):
+    from scripts.build_phenology_stats import PhenologyBuilder
+
+    folder = tmp_path / "count"
+    (folder / "dataset").mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "species": ["Red Kite", C.NO_SPECIES],
+            "date": [DAY, DAY],
+            "count": [3, 0],
+            "start": [utc(f"{DAY} 06:00"), utc(f"{DAY} 07:00")],
+            "end": [utc(f"{DAY} 07:00"), utc(f"{DAY} 08:00")],
+        }
+    ).to_csv(folder / "all_count_processed.csv", index=False)
+    pd.DataFrame({"english_name": ["Red Kite"], "trektellen_species_id": [101]}).to_csv(
+        folder / "dataset/taxonomy.csv", index=False
+    )
+    pd.DataFrame({"species": ["Red Kite"], "date": [DAY]}).to_csv(
+        folder / C.UNKNOWN_DATES_FILE, index=False
+    )
+    builder = PhenologyBuilder(str(tmp_path), [2023], [196, 335])
+    assert builder._count_species("Red Kite").empty
