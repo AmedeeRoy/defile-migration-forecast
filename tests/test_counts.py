@@ -27,24 +27,25 @@ def iso(t: pd.Timestamp) -> str:
 
 
 def _surveys(rows: list[tuple], era: str = "trektellen", day: str = DAY) -> pd.DataFrame:
-    """Rows: (survey id, local start, local end[, coverage])."""
+    """Rows: (survey id, local start, local end[, complete, weather_stop])."""
     out = []
     for r in rows:
-        sid, a, b, coverage = (*r, "complete")[:4]
+        sid, a, b = r[:3]
+        complete = r[3] if len(r) > 3 else True
+        weather = r[4] if len(r) > 4 else False
         out.append(
             {
                 "survey_id": sid,
                 "datetime": f"{iso(utc(f'{day} {a}'))}/{iso(utc(f'{day} {b}'))}",
                 "recording_era": era,
-                "survey_coverage": coverage,
+                "survey_complete": complete,
+                "weather_stop": weather,
             }
         )
     return C.parse_surveys(pd.DataFrame(out))
 
 
-def _counts(
-    rows: list[tuple], surveys: pd.DataFrame, day: str = DAY, entry_times=None
-) -> pd.DataFrame:
+def _counts(rows: list[tuple], surveys: pd.DataFrame, day: str = DAY) -> pd.DataFrame:
     """Rows: (survey id, local time / "date" / None, species, count[, category, estimation,
     remark_processing]).
 
@@ -57,7 +58,6 @@ def _counts(
         out.append(
             {
                 "count_id": f"c{i}",
-                "source_count_id": f"c{i}",
                 "survey_id": sid,
                 "taxon_id": f"avibase-{species}",
                 "datetime": dt,
@@ -70,7 +70,7 @@ def _counts(
     count = pd.DataFrame(out)
     names = sorted({r[2] for r in rows})
     taxonomy = pd.DataFrame({"taxon_id": [f"avibase-{n}" for n in names], "english_name": names})
-    return C.parse_counts(count, surveys, taxonomy, entry_times)
+    return C.parse_counts(count, surveys, taxonomy)
 
 
 def test_hourly_slots_keeps_partial_first_and_last_hours():
@@ -116,19 +116,26 @@ def test_parse_counts_timing_kinds():
     assert (c["source"] == "trektellen").all()
 
 
-def test_parse_counts_refuses_a_count_interval():
-    surveys = _surveys([("T10", "06:00", "09:00")])
+@pytest.mark.parametrize(
+    "interval, expected",
+    [
+        ("2023-08-01T05:00:00Z/2023-08-01T06:00:00Z", "2023-08-01T05:30:00Z"),
+        ("2023-08-01T05:00:00Z/2023-08-01T08:00:00Z", None),
+    ],
+)
+def test_parse_count_intervals_like_explore(interval, expected):
+    surveys = _surveys([("T10", "06:00", "12:00")])
     count = pd.DataFrame(
-        {
-            "count_id": ["c0"],
-            "survey_id": ["T10"],
-            "taxon_id": ["avibase-x"],
-            "datetime": ["2023-08-01T05:00:00Z/2023-08-01T06:00:00Z"],
-            "count": [1],
-        }
+        {"survey_id": ["T10"], "taxon_id": ["avibase-x"], "datetime": [interval], "count": [4]}
     )
-    with pytest.raises(ValueError, match="own interval"):
-        C.parse_counts(count, surveys, pd.DataFrame({"taxon_id": [], "english_name": []}))
+    taxonomy = pd.DataFrame({"taxon_id": ["avibase-x"], "english_name": ["Red Kite"]})
+    out = C.parse_counts(count, surveys, taxonomy)
+    if expected is None:
+        assert out.datetime.isna().all()
+    else:
+        assert out.datetime.iloc[0] == pd.Timestamp(expected)
+    assert out.date.iloc[0] == pd.Timestamp(DAY)
+    assert out["count"].sum() == 4
 
 
 def test_trektellen_split_into_hours_zero_fill_and_rules():
@@ -183,7 +190,8 @@ def test_count_left_open_overnight_ends_at_dusk():
             "survey_id": ["T10"],
             "datetime": [f"{iso(utc(f'{DAY} 06:00'))}/{iso(utc('2023-08-02 03:00'))}"],
             "recording_era": ["trektellen"],
-            "survey_coverage": ["complete"],
+            "survey_complete": [True],
+            "weather_stop": [False],
         }
     )
     surveys = C.parse_surveys(s)
@@ -227,21 +235,6 @@ def test_entries_just_outside_their_survey_move_in_further_ones_are_dropped():
     assert sorted(removed.rows["count"]) == [4, 5]
 
 
-def test_recorded_time_of_a_day_level_entry_comes_back_from_entry_times():
-    surveys = _surveys([("T10", "06:00", "09:00")])
-    remark = C.OUTSIDE_SURVEY_REMARK + "; retained at day level pending correction."
-    rows = [("T10", "date", "Red Kite", 3, "normal", None, remark)]
-    times = pd.DataFrame({"source_count_id": ["c0"], "datetime": [iso(utc(f"{DAY} 09:04"))]})
-    counts = _counts(rows, surveys, entry_times=times)
-    assert counts["datetime"].iloc[0] == utc(f"{DAY} 09:04")
-    kept = C.fit_times_to_survey(counts, surveys, "trektellen", C.ProcessingLog())
-    assert kept["datetime"].iloc[0] == utc(f"{DAY} 08:59")
-    # Without the recorded time it cannot be placed: dropped.
-    log = C.ProcessingLog()
-    kept, _ = C.usable_surveys(_counts(rows, surveys), surveys, "trektellen", log)
-    assert kept.empty
-
-
 def test_historical_sums_subgroups_and_zero_fills_empty_surveys():
     surveys = _surveys(
         [("H8", "08:00", "09:00"), ("H9", "09:00", "10:00"), ("H10", "10:00", "11:00")],
@@ -264,12 +257,12 @@ def test_historical_sums_subgroups_and_zero_fills_empty_surveys():
     assert by_hour.loc[10, "count"] == 1
 
 
-def test_coverage_none_partial_and_presence_only():
+def test_incomplete_surveys_weather_stops_and_presence_only():
     surveys = _surveys(
         [
             ("T10", "06:00", "07:00"),
-            ("T11", "07:00", "08:00", "partial"),
-            ("T12", "08:00", "09:00", "none"),
+            ("T11", "07:00", "08:00", False),
+            ("T12", "08:00", "09:00", True, True),
         ]
     )
     counts = _counts(
@@ -282,12 +275,17 @@ def test_coverage_none_partial_and_presence_only():
     )
     log = C.ProcessingLog()
     counts, kept = C.usable_surveys(counts, surveys, "trektellen", log)
-    assert kept["survey_id"].tolist() == ["T10"]
+    assert kept["survey_id"].tolist() == ["T10", "T12"]
     assert counts["count"].tolist() == [5]
     steps = {s.name: (s.n_rows, s.birds) for s in log.steps}
-    assert steps["Survey not counted"][0] == 1
-    assert steps["Survey coverage partial"] == (1, 9)
+    assert steps["Weather stop"][0] == 1
+    assert steps["Incomplete survey"] == (1, 9)
     assert steps["Presence only"][0] == 1
+    out, _ = C.trektellen_model_counts(counts, kept, log)
+    out = C.zero_fill_empty_surveys(out, kept, "trektellen", log)
+    stop = out[out.start.eq(utc(f"{DAY} 08:00"))]
+    assert stop.species.tolist() == [C.NO_SPECIES]
+    assert stop["count"].tolist() == [0]
 
 
 def test_build_keeps_the_main_direction_only_and_checks_pass():
@@ -337,3 +335,52 @@ def test_real_release_reconciles():
     assert mc.counts["count"].sum() + removed == raw
     failed = [c.name for c in C.check_model_counts(mc) if c.status == "fail"]
     assert not failed
+
+
+def test_survey_boolean_defaults_match_explore():
+    surveys = _surveys(
+        [
+            ("T10", "06:00", "07:00", "", ""),
+            ("T11", "07:00", "08:00", "false", "false"),
+            ("T12", "08:00", "09:00", "true", "true"),
+        ]
+    )
+    assert surveys.survey_complete.tolist() == [True, False, True]
+    assert surveys.weather_stop.tolist() == [False, False, True]
+
+
+def test_model_loading_and_phenology_need_only_prepared_counts_and_taxonomy(tmp_path):
+    from scripts.build_phenology_stats import PhenologyBuilder
+
+    folder = tmp_path / "count"
+    release = folder / "dataset"
+    release.mkdir(parents=True)
+    frame = pd.DataFrame(
+        {
+            "species": ["Red Kite", C.NO_SPECIES, "Red Kite"],
+            "date": ["2025-10-26", "2025-10-26", "2026-08-01"],
+            "count": [4, 0, 7],
+            "start": [
+                "2025-10-26 06:00:00+00:00",
+                "2025-10-26 07:00:00+00:00",
+                "2026-08-01 06:00:00+00:00",
+            ],
+            "end": [
+                "2025-10-26 07:00:00+00:00",
+                "2025-10-26 08:00:00+00:00",
+                "2026-08-01 07:00:00+00:00",
+            ],
+        }
+    )
+    path = folder / "all_count_processed.csv"
+    frame.to_csv(path, index=False)
+    pd.DataFrame({"english_name": ["Red Kite"], "trektellen_species_id": [101]}).to_csv(
+        release / "taxonomy.csv", index=False
+    )
+    expected = pd.read_csv(path, parse_dates=["date", "start", "end"])
+    pd.testing.assert_frame_equal(C.read_model_counts(str(tmp_path)), expected)
+    builder = PhenologyBuilder(str(tmp_path), [2025], [196, 335])
+    assert builder.trektellen_id == {"Red Kite": 101}
+    assert builder.all_count["count"].sum() == 4
+    assert builder.all_periods["duration"].sum() == 2
+    assert builder._count_species("Red Kite")["count"].tolist() == [4, 0]

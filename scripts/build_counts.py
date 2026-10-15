@@ -4,9 +4,9 @@
 The counts are built and documented in the separate defile-dataset repo, whose release holds
 `dataset/{count,survey,taxonomy}.csv` with `dataset/datapackage.json`, and the build's
 `metadata.json`. `--dataset <dir>` copies those files from a defile-dataset build (its `output/`
-folder, or an unpacked release) into `data/count/dataset/`, with the recorded times of the entries
-the release keeps at day level, from the build's `interim/processed/observations.csv`
-(`entry_times.csv`); without it, the copy already there is used. This script then applies the model's processing (`src/data/counts.py`: the surveys and counts
+folder, or an unpacked release) into `data/count/dataset/`; without `--dataset`, the copy already
+there is used. Only release tables are read, following defile-explore's completeness and weather
+stop rules. This script then applies the model's processing (`src/data/counts.py`: the surveys and counts
 the model cannot use, hourly splitting, zero-fill) and writes the model's count file, read by
 `DefileDataModule.read_counts` and `scripts/build_phenology_stats.py`. Rebuild the phenology
 statistics and retrain after it changes.
@@ -27,7 +27,6 @@ import os
 import shutil
 import sys
 
-import pandas as pd
 import rootutils
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
@@ -58,19 +57,6 @@ def main(argv=None) -> int:
             os.path.join(dataset_dir, C.METADATA_FILE),
         )
         print(f"Copied {', '.join(C.DATASET_FILES)} and {C.METADATA_FILE} from {args.dataset}")
-        # Recorded times of the entries the release keeps at day level (timed outside their
-        # survey), so the model's 10-min tolerance can be applied to them.
-        interim = os.path.join(args.dataset, "..", "interim", "processed", "observations.csv")
-        times_path = os.path.join(dataset_dir, C.ENTRY_TIMES_FILE)
-        if os.path.exists(interim):
-            obs = pd.read_csv(interim, usecols=["observation_id", "datetime_original"])
-            count = pd.read_csv(os.path.join(dataset_dir, "count.csv"), low_memory=False)
-            times = C.entry_times(obs, count)
-            times.to_csv(times_path, index=False)
-            print(f"Wrote {C.ENTRY_TIMES_FILE}: {len(times)} recorded times from {interim}")
-        elif os.path.exists(times_path):
-            os.remove(times_path)  # stale: from another dataset build
-            print(f"No {interim}: entries timed outside their survey will be dropped.")
     out_path = os.path.join(args.data_dir, "count", "all_count_processed.csv")
 
     surveys, counts, _, metadata = C.read_dataset(args.data_dir)
@@ -84,7 +70,10 @@ def main(argv=None) -> int:
     for c in checks:
         print(f"  [{c.status:4s}] {c.name}: {c.detail}")
 
-    if args.dry_run:
+    failed = any(c.status == "fail" for c in checks)
+    if failed:
+        print("Failed checks: model counts were not written.")
+    elif args.dry_run:
         print(f"--dry-run: {len(mc.counts)} rows, not written.")
     else:
         tmp = out_path + ".tmp"
@@ -105,7 +94,7 @@ def main(argv=None) -> int:
         with open(args.report, "w") as f:
             f.write(render(mc, checks, counts, species, inputs))
         print(f"Wrote report {args.report}")
-    return 0
+    return int(failed)
 
 
 if __name__ == "__main__":

@@ -68,7 +68,11 @@ from scripts._species_stats_common import (  # noqa: E402
     species_from_experiments,
     write_json_atomic,
 )
-from src.data.counts import read_dataset, trektellen_species_ids  # noqa: E402
+from src.data.counts import (  # noqa: E402
+    DATASET_DIR,
+    read_model_counts,
+    trektellen_species_ids,
+)
 from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
 
 # Percentiles baked into the currently-committed file (`quantile_levels`); kept as the
@@ -112,10 +116,7 @@ class PhenologyBuilder:
         self.data_dir = data_dir
         self.doy = list(doy)
 
-        all_count = pd.read_csv(
-            os.path.join(data_dir, "count", "all_count_processed.csv"),
-            parse_dates=["date", "start", "end"],
-        )
+        all_count = read_model_counts(data_dir)
         all_count["doy"] = all_count["date"].dt.day_of_year
         all_count["year"] = all_count["date"].dt.year
         all_count = all_count[
@@ -134,14 +135,11 @@ class PhenologyBuilder:
             self.all_periods["end"] - self.all_periods["start"]
         ).dt.total_seconds() / 3600
 
-        self.trektellen_id = self._load_trektellen_ids(data_dir)
-
-    @staticmethod
-    def _load_trektellen_ids(data_dir: str) -> dict:
-        """Species name -> Trektellen species id, from the defile-dataset taxonomy (in
-        data/count/dataset/, copied by scripts/build_counts.py)."""
-        _, _, taxonomy, _ = read_dataset(data_dir)
-        return trektellen_species_ids(taxonomy)
+        taxonomy = pd.read_csv(
+            os.path.join(data_dir, DATASET_DIR, "taxonomy.csv"),
+            usecols=["english_name", "trektellen_species_id"],
+        )
+        self.trektellen_id = trektellen_species_ids(taxonomy)
 
     def _count_species(self, species: str) -> pd.DataFrame:
         """Every observation period, zero-filled for periods with no record of `species`."""

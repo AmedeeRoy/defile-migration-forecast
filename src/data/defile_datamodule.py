@@ -8,6 +8,7 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
+from src.data.counts import read_model_counts
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
 from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
@@ -397,10 +398,7 @@ class DefileDataModule(LightningDataModule):
             self.batch_size_per_device = self.hparams.batch_size // self.trainer.world_size
 
     def read_counts(self):
-        all_count = pd.read_csv(
-            self.data_dir + "/count/all_count_processed.csv",
-            parse_dates=["date", "start", "end"],
-        )
+        all_count = read_model_counts(self.data_dir)
 
         # Filter data by years and day of year
         all_count = all_count[

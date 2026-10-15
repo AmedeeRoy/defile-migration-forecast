@@ -36,11 +36,6 @@ DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
 # Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
 DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", "datapackage.json")
 METADATA_FILE = "metadata.json"
-# Recorded times of the entries the release keeps at day level because they fall outside their
-# survey (`entry_times`): extracted by `scripts/build_counts.py` from the dataset's internal
-# observation table, which `source_count_id` joins. Optional: without it those entries are dropped.
-ENTRY_TIMES_FILE = "entry_times.csv"
-
 # Effort placeholder for a period surveyed with no bird recorded.
 NO_SPECIES = "No species"
 
@@ -53,14 +48,8 @@ PRESENCE_ONLY = "x"
 # `remark_processing` tells the two apart.
 OUTSIDE_SURVEY_REMARK = "Entry time outside the native survey"
 
-# Survey coverage (`survey.csv` `survey_coverage`) the model cannot use. Only `complete` surveys
-# give a rate over their interval.
-EXCLUDED_COVERAGE = {
-    "none": "Survey with no counting (rain, low cloud, a closure): not effort. It has no counts.",
-    "partial": "Survey counted over only part of its interval, with unknown gap times: neither "
-    "its rate over the interval nor its empty hours can be trusted. Dropped with its birds.",
-    "unknown": "Survey whose coverage cannot be established: dropped with its birds.",
-}
+# Count intervals up to one hour use their midpoint, as in defile-explore.
+MAX_COUNT_INTERVAL = pd.Timedelta(hours=1)
 
 # A period is split into clock hours only if it is longer than this ...
 SPLIT_MIN_DURATION = pd.Timedelta(hours=2)
@@ -120,32 +109,28 @@ def parse_surveys(survey: pd.DataFrame) -> pd.DataFrame:
     s["end"] = pd.to_datetime(bounds[1], utc=True)
     s["date"] = local_date(s["start"])
     s["source"] = np.where(s["recording_era"] == "trektellen", "trektellen", "historical")
+    for column, default in (("survey_complete", True), ("weather_stop", False)):
+        s[column] = s[column].map(
+            lambda value: default
+            if pd.isna(value) or value == ""
+            else str(value).lower() == "true"
+        )
     return s
 
 
-def parse_counts(
-    count: pd.DataFrame,
-    surveys: pd.DataFrame,
-    taxonomy: pd.DataFrame,
-    entry_times: pd.DataFrame | None = None,
-):
-    """`count.csv` plus the model's `species`, the `source` and `date` of its survey, and its own
-    timestamp `datetime` (UTC; NaT when untimed).
+def parse_counts(count: pd.DataFrame, surveys: pd.DataFrame, taxonomy: pd.DataFrame):
+    """`count.csv` plus `species`, the `source` and `date` of its survey, and its own timestamp
+    `datetime` (UTC; NaT when untimed).
 
     A count's `datetime` is either empty (it inherits its survey's interval), a local date (untimed,
-    or timed outside its survey: the dataset keeps it at day level), or a UTC time. The dataset also
-    allows a UTC interval, which no release has used; it is refused rather than guessed at.
-    `entry_times` (`source_count_id`, `datetime`) gives back the recorded time of entries timed
-    outside their survey, so `fit_times_to_survey` can apply the model's tolerance to them.
+    or timed outside its survey: the dataset keeps it at day level), a UTC time, or a UTC interval
+    of its own (Trektellen's hourly entries since 2025): timed at its midpoint when it lasts up to
+    `MAX_COUNT_INTERVAL`, kept at day level when longer.
     """
     c = count.copy()
     raw = c["datetime"].fillna("")
-    interval = raw.str.contains("/")
-    if interval.any():
-        raise ValueError(
-            f"{interval.sum()} count(s) with their own interval (e.g. "
-            f"{c.loc[interval, 'count_id'].iloc[0]}): not handled by the model's processing."
-        )
+    own = raw.str.contains("/")
+    raw[own] = raw[own].map(_interval_time)
     date_only = raw.str.len() == 10
     timed = raw.str.contains("T")
     c["datetime"] = pd.to_datetime(raw.where(timed), utc=True, format="ISO8601")
@@ -153,31 +138,24 @@ def parse_counts(
     assert c["source"].notna().all(), "count without a released survey"
     c.loc[timed.values, "date"] = local_date(c.loc[timed.values, "datetime"])
     c.loc[date_only.values, "date"] = pd.to_datetime(raw[date_only]).values
-    if entry_times is not None and len(entry_times):
-        recorded = c["source_count_id"].map(
-            entry_times.set_index("source_count_id")["datetime"].pipe(pd.to_datetime, utc=True)
-        )
-        back = outside_survey(c) & recorded.notna()
-        c.loc[back, "datetime"] = recorded[back]
     c["count"] = c["count"].astype(float)  # presence-only counts are empty
     names = taxonomy.set_index("taxon_id")["english_name"]
     c["species"] = c["taxon_id"].map(names)
     return c
 
 
+def _interval_time(interval: str) -> str:
+    """A count's own interval as a UTC time (its midpoint) or, longer than `MAX_COUNT_INTERVAL`,
+    the local date of its start."""
+    start, end = (pd.Timestamp(t) for t in interval.split("/"))
+    if end - start <= MAX_COUNT_INTERVAL:
+        return (start + (end - start) / 2).isoformat()
+    return str(local_date(pd.Series([start])).iloc[0].date())
+
+
 def outside_survey(counts: pd.DataFrame) -> pd.Series:
     """Entries the dataset marks as timed outside their survey."""
     return counts["remark_processing"].fillna("").str.startswith(OUTSIDE_SURVEY_REMARK)
-
-
-def entry_times(observations: pd.DataFrame, count: pd.DataFrame) -> pd.DataFrame:
-    """Recorded time (UTC) of each entry timed outside its survey, from the dataset's internal
-    observation table (`observation_id`, `datetime_original`), joined on `source_count_id`."""
-    ids = count.loc[outside_survey(count), "source_count_id"].unique()
-    o = observations[observations["observation_id"].isin(ids)]
-    return pd.DataFrame(
-        {"source_count_id": o["observation_id"], "datetime": o["datetime_original"]}
-    ).dropna()
 
 
 def read_dataset(data_dir: str):
@@ -189,12 +167,21 @@ def read_dataset(data_dir: str):
     surveys = parse_surveys(pd.read_csv(os.path.join(folder, "survey.csv"), low_memory=False))
     taxonomy = pd.read_csv(os.path.join(folder, "taxonomy.csv"))
     count = pd.read_csv(os.path.join(folder, "count.csv"), low_memory=False)
-    path = os.path.join(folder, ENTRY_TIMES_FILE)
-    times = pd.read_csv(path) if os.path.exists(path) else None
-    counts = parse_counts(count, surveys, taxonomy, times)
+    counts = parse_counts(count, surveys, taxonomy)
     path = os.path.join(folder, METADATA_FILE)
     metadata = json.load(open(path)) if os.path.exists(path) else {}
     return surveys, counts, taxonomy, metadata
+
+
+def read_model_counts(data_dir: str) -> pd.DataFrame:
+    """Prepared model periods with vectorized ISO dates and UTC bounds."""
+    counts = pd.read_csv(
+        os.path.join(data_dir, "count", "all_count_processed.csv"), usecols=OUTPUT_COLUMNS
+    )
+    counts["date"] = pd.to_datetime(counts["date"], format="ISO8601")
+    counts["start"] = pd.to_datetime(counts["start"], format="ISO8601", utc=True)
+    counts["end"] = pd.to_datetime(counts["end"], format="ISO8601", utc=True)
+    return counts
 
 
 def trektellen_species_ids(taxonomy: pd.DataFrame) -> dict[str, int]:
@@ -218,7 +205,7 @@ class Step:
 
     source: str
     name: str
-    action: str  # "removed" | "modified" | "added" | "merged" | "not used"
+    action: str  # "removed" | "modified" | "added" | "merged" | "retained"
     rule: str
     rows: pd.DataFrame
 
@@ -379,22 +366,28 @@ def _with_survey(counts: pd.DataFrame, surveys: pd.DataFrame) -> pd.DataFrame:
 
 
 def usable_surveys(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: ProcessingLog):
-    """Drop the surveys the model cannot use (`EXCLUDED_COVERAGE`), with their counts, then the
-    presence-only counts and those timed outside their survey.
+    """Keep complete surveys, including weather stops as zero passage, and numeric counts.
 
-    Returns (counts, surveys).
+    Incomplete surveys cannot provide a rate or zero-filled effort. Returns (counts, surveys).
     """
-    for coverage, rule in EXCLUDED_COVERAGE.items():
-        hit = surveys["survey_coverage"] == coverage
-        in_hit = counts["survey_id"].isin(surveys.loc[hit, "survey_id"])
-        if coverage == "none":
-            # No counts by construction; the surveys themselves are what is not used.
-            assert not in_hit.any(), "counts in a survey with coverage 'none'"
-            rows = surveys.loc[hit, ["survey_id", "date", "start", "end", "survey_coverage"]]
-            log.record(src, "Survey not counted", "not used", rule, rows)
-        else:
-            log.record(src, f"Survey coverage {coverage}", "removed", rule, counts[in_hit])
-        surveys, counts = surveys[~hit], counts[~in_hit]
+    incomplete = ~surveys["survey_complete"]
+    in_hit = counts["survey_id"].isin(surveys.loc[incomplete, "survey_id"])
+    log.record(
+        src,
+        "Incomplete survey",
+        "removed",
+        "Birds passed uncounted: neither the rate nor empty hours are usable.",
+        counts[in_hit],
+    )
+    surveys, counts = surveys[~incomplete], counts[~in_hit]
+    weather = surveys["weather_stop"]
+    log.record(
+        src,
+        "Weather stop",
+        "retained",
+        "Counting impossible; the release assumes zero passage. Retained as complete coverage with zero birds.",
+        surveys.loc[weather, ["survey_id", "date", "start", "end", "weather_stop"]],
+    )
     presence = counts["count_estimation"] == PRESENCE_ONLY
     log.record(
         src,
@@ -409,9 +402,7 @@ def usable_surveys(counts: pd.DataFrame, surveys: pd.DataFrame, src: str, log: P
         src,
         "Timed outside its survey, time unknown",
         "removed",
-        "An entry the dataset marks as timed outside its survey, whose recorded time is not in "
-        f"`{ENTRY_TIMES_FILE}`: the tolerance cannot be applied, and it belongs to no counted "
-        "period.",
+        "A day-level entry marked outside its survey cannot be placed in a model period.",
         counts[outside],
     )
     return counts[~outside], surveys
@@ -538,9 +529,8 @@ def zero_fill_empty_surveys(
 ) -> pd.DataFrame:
     """A counted survey with no record at all is a period counted with nothing seen.
 
-    Only `complete` surveys reach this point (`usable_surveys`): days without counting are `none`
-    in the dataset, so an empty survey here is a real zero, even alone on its day (an explicit 'no
-    species' entry).
+    Only complete surveys reach this point (`usable_surveys`), including weather stops whose zero
+    passage is assumed by the release. Unmonitored absences have no survey row.
     """
     long_enough = (surveys["end"] - surveys["start"]) >= MIN_PERIOD_DURATION
     empty = surveys[long_enough]
@@ -722,14 +712,18 @@ def check_model_counts(mc: ModelCounts) -> list[Check]:
         [s.rows for s in mc.log.steps if s.name == "Zero-fill empty surveys"], ignore_index=True
     )
     birds_days = c.loc[c["species"] != NO_SPECIES, "date"]
-    alone = zeros[~zeros["date"].isin(birds_days)]
+    weather = pd.concat([s.rows for s in mc.log.steps if s.name == "Weather stop"])
+    stop_periods = pd.MultiIndex.from_frame(weather[["start", "end"]])
+    alone = zeros[
+        ~zeros["date"].isin(birds_days)
+        & ~pd.MultiIndex.from_frame(zeros[["start", "end"]]).isin(stop_periods)
+    ]
     checks.append(
         Check(
             "Empty surveys alone on their day",
             "pass" if alone.empty else "warn",
             f"{len(alone)} empty survey(s), zero-filled as counted, on a day with no bird record: "
-            "real zeros only if the day was counted (an explicit 'no species' entry), else "
-            "the dataset should mark them coverage 'none'.",
+            "documented weather stops excluded. Review the release evidence for these zeros.",
             alone,
         )
     )
