@@ -120,7 +120,7 @@ installed locally: run `pre-commit install` once per clone.
 
 ## Model architecture
 
-On the draft #47 branch, daily blocks use Conv → BatchNorm → ReLU with matching freshly retrained candidate checkpoints. Review `docs/pr47-retraining.md` before merging: technical checks pass, but several species regress against production. Follow issue #18 for evaluation and further comparisons.
+Draft #47 changes daily blocks to Conv → BatchNorm → ReLU. Data correctness fixes are separate in #59. Production artifacts are unchanged; the layer-order change needs matching reviewed checkpoints before it can merge. Combined old-production/new-data/new-order scores cannot establish the architecture effect.
 
 `UNetplus` (`src/models/components/unet.py`) has two branches, wrapped by
 `DefileLitModule` (`src/models/defile_module.py`):

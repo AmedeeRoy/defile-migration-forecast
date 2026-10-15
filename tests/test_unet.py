@@ -131,3 +131,20 @@ def test_forward_runs_with_multi_sample_batch():
     net = _make_net()
     out = net(**_random_inputs(batch_size=4))
     assert out.shape == (4, 1, 24)
+
+
+def test_daily_batchnorm_sees_variation_in_negative_pre_activations():
+    torch.manual_seed(0)
+    net = _make_net()
+    conv = next(m for m in net.layers_d if isinstance(m, torch.nn.Conv1d))
+    batchnorm = next(m for m in net.layers_d if isinstance(m, torch.nn.BatchNorm1d))
+    with torch.no_grad():
+        conv.weight.fill_(1)
+        conv.bias.fill_(-1000)
+    batchnorm.momentum = 1
+    inputs = torch.randn(8, net.nb_input_features_daily, net.nb_lag_day)
+    assert (conv(inputs) < 0).all()
+    net.layers_d(inputs)
+    assert (batchnorm.running_var > 0).all()
+    net.eval()
+    assert torch.isfinite(net.layers_d(inputs)).all()

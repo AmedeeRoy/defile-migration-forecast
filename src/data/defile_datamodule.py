@@ -8,7 +8,7 @@ import torch
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from src.data.counts import read_model_counts
+from src.data.counts import read_model_counts, read_unknown_dates
 from src.data.data_transformer import DataTransformer
 from src.data.weather import CACHE_SUBDIR, get_weather
 from src.metrics import PERIOD_YEARS, era_of, year_period, year_used_trans
@@ -425,6 +425,9 @@ class DefileDataModule(LightningDataModule):
 
         # Replace NA (no match in data_count) with 0
         count["count"] = count["count"].fillna(0)
+
+        unknown = read_unknown_dates(self.data_dir)
+        count = count[~count["date"].isin(unknown.loc[unknown.species.eq(self.species), "date"])]
 
         # counvert to hourly count
         count["duration"] = (count["end"] - count["start"]).dt.total_seconds() / 3600

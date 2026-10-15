@@ -186,7 +186,7 @@ with a narrower spread. Rejected without retraining: input clipping (above), bou
 daily logit (any useful bound also caps Black Kite's real `out_d` ≈ 1 peak days), and weight
 decay (already on, and it does not touch BN's running variance).
 
-**Fresh candidates, deployment pending (#47).** All 11 species have been retrained with matching phenology and normalization. The historical results above describe the earlier experiment, not this new candidate set. Current comparisons and provenance are in `docs/pr47-retraining.md`: technical validation passes, but mean skill declines and Hobby falls below phenology. Keep the PR in draft for review under roadmap #18; no deployment or automatic merge is justified by these results.
+**Separate data correctness from architecture (#59 and #47).** Data readers, unknown-target handling and survey exposure belong in #59. #47 contains only the daily layer-order fix and its regression test; production artifacts are unchanged. The earlier fresh candidates changed data, prior and architecture together, so their mean skill difference (0.229 to 0.170) cannot be attributed to either change. Those runs are archived in Git history and local reports, not proposed for deployment. Matched retraining is deferred; data correctness is validated without fitting a model.
 
 ## Evaluation
 

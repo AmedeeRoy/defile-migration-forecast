@@ -34,7 +34,7 @@ Phase 1, and it is the gate for trusting any model-quality number.
 
 ## Plan
 
-[Issue #18](https://github.com/AmedeeRoy/defile-migration-forecast/issues/18) defines the agreed work order: evaluation split (#51), dev baseline (#52), training-only phenology, then paired modelling comparisons. [PR #47](https://github.com/AmedeeRoy/defile-migration-forecast/pull/47) contains the daily BatchNorm fix but remains a draft: its old checkpoint promotion was replaced by fresh matching candidates. Technical checks pass, but several species regress against production; review `docs/pr47-retraining.md` before merging. The historical plan below does not supersede #18.
+[Issue #18](https://github.com/AmedeeRoy/defile-migration-forecast/issues/18) defines the agreed work order. Data correctness follow-up #59 is independent of the daily BatchNorm fix in draft #47, which is stacked on it. Do not use the confounded fresh-checkpoint skill comparison to judge either change. Validate data directly first; matched model comparisons and reviewed checkpoint promotion can follow. No additional retraining is part of the current data audit.
 
 **Phase 1 — retrain all 11 species, and fix what "model quality" means while doing it.**
 Nothing should be judged on accuracy before this, including whether the `ecmwf_ifs025` pin
