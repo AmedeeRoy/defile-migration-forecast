@@ -38,14 +38,15 @@ scripts/
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
-tests/                            pytest suite (weather, predict guards, unet prior, phenology, datamodule)
+  build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
+tests/                            pytest suite (weather, counts, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
   metrics.py                      row/day/shape/season metrics + the phenology baseline
-  data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform
+  data/                            DefileDataModule, ERA5/Open-Meteo fetch + transform, model processing of the counts (counts.py)
   models/                          LightningModule, criterion (Tweedie loss, etc.), components/ (unet/transformer/convnet)
   phenology.py                    Phenology baseline + the 24h shape prior fed to the UNet
-  plots/                           per-species PDF test report + prediction plots
+  plots/                           per-species PDF test report, prediction plots, count QA report
   utils/                           logging, instantiators, misc helpers
 ```
 
@@ -119,6 +120,8 @@ installed locally: run `pre-commit install` once per clone.
 
 ## Model architecture
 
+On the draft #47 branch, daily blocks use Conv → BatchNorm → ReLU. Existing production checkpoints require the previous order; retraining and review must precede merging this branch. Follow issue #18 for the evaluation and retraining order.
+
 `UNetplus` (`src/models/components/unet.py`) has two branches, wrapped by
 `DefileLitModule` (`src/models/defile_module.py`):
 
@@ -128,9 +131,7 @@ installed locally: run `pre-commit install` once per clone.
   Learns the *shape* of the day, as a deviation from a climatological `prior_shape`
   (phenology-derived, passed through the datamodule) that anchors its default output.
 - **Daily branch** — a 1-D conv stack over the lag axis (`lag_day` days of history) on the
-  daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*. Each block is
-  Conv → BatchNorm → ReLU; don't put BatchNorm after the ReLU (it saturated `out_d`, see
-  `DECISIONS.md` → Model architecture).
+  daily ERA5 stack at 7 regional locations. Learns the daily *magnitude*.
 - Combined multiplicatively: `out = 8 * out_h * out_d`, both sigmoid-bounded, so output is
   in `log1p(birds/hour)` capped at 8 (≈2 979 birds/h). Night is defined once, by the sun
   (below −6°, `night_mask_by_doy_hour`): `prior_shape` is zero exactly then, and `forward`
@@ -141,7 +142,7 @@ installed locally: run `pre-commit install` once per clone.
 Targets are hourly rates (`count / survey duration`), with a 24-element `mask` giving the
 fraction of each hour covered by the survey. Loss is `TweedieLoss` alone
 (`src/models/criterion.py`; `ProbaRMSE` still exists but is off by default), with `p` tuned
-per species in `configs/experiment/*.yaml`. Training is deterministic for a given seed and CPU thread count.
+per species in `configs/experiment/*.yaml`. Training is deterministic for a given seed.
 
 Feature-count expressions in `configs/model/unet.yaml` are derived from the data config via
 Hydra resolvers (`${len:...}`, `${eval:...}`) — if you change the variable/location lists
@@ -224,9 +225,8 @@ Concretely:
   add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
 **Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
-checkpoints in `prod/models/` are retrained on the current architecture, but the values in
-`configs/experiment/*.yaml` were tuned on an older one, and single-seed skill moves by ±0.1
-from seed alone.
+checkpoints in `prod/models/` and the values in `configs/experiment/*.yaml` predate several
+fixes and the weather migration, and should be considered void until retrained.
 
 The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
 25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and
@@ -234,7 +234,8 @@ serving products there (~0.93 over flat terrain), even with the forecast pinned 
 `ecmwf_ifs025`. It is a real train/serve distribution shift and plausibly the biggest
 remaining limit on forecast skill (`DECISIONS.md` → Weather).
 
-Tests live in `tests/`: the weather layer (`test_weather.py`), the datamodule's `prior_shape`
+Tests live in `tests/`: the weather layer (`test_weather.py`), the count processing
+(`test_counts.py`), the datamodule's `prior_shape`
 plumbing, `UNetplus`'s shape-prior anchoring, the phenology baseline, and the predict-time
 season guard. Metrics, plots and the rest of the training loop have none;
 `debug=default` is the smoke test for those.
@@ -252,9 +253,17 @@ rather than editing `configs/data/defile.yaml` directly.
 ## Data pipeline notes
 
 - Counts: `data/count/all_count_processed.csv`, one row per species per survey period,
-  1966–2025, `start`/`end` in UTC. Survey protocol and recording granularity changed
-  repeatedly over that span — `data/count/readme.md` documents the history and is
-  essential reading before making modelling decisions about which years to use.
+  1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
+  in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
+  locally), whose release is `count.csv`, `survey.csv` and `taxonomy.csv` (Avibase taxon ids,
+  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_complete` and `weather_stop`) and an
+  audit of Trektellen entry errors.
+  `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
+  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: the
+  surveys and counts the model cannot use, hour splitting, zero-fill); its HTML report in
+  `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
+  choices here. Survey protocol and recording granularity changed repeatedly over the years:
+  defile-dataset's README has the history, essential before choosing which years to use.
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field

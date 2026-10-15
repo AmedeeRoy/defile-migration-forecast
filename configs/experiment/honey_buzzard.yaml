@@ -7,7 +7,7 @@ defaults:
   - override /model: unet
 
 data:
-  species: "European Honey-buzzard"
+  species: "European Honey Buzzard"
   # Bondrée apivore
 
 model:

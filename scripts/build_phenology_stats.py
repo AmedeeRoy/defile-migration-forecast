@@ -50,7 +50,6 @@ pre-smoothing ratio samples), use this module's `PhenologyBuilder` directly.
 """
 
 import argparse
-import math
 import os
 import sys
 
@@ -68,6 +67,11 @@ from scripts._species_stats_common import (  # noqa: E402
     default_doy_range,
     species_from_experiments,
     write_json_atomic,
+)
+from src.data.counts import (  # noqa: E402
+    DATASET_DIR,
+    read_model_counts,
+    trektellen_species_ids,
 )
 from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
 
@@ -87,7 +91,7 @@ HOUR_SPLINES = 12
 # ratios in the 10-40 range), and PoissonGAM's PIRLS diverges outright for some species at
 # the historical (100, 10) strength -- Hen Harrier and Merlin, tried while writing this
 # script, neither of which appears in `notebooks/phenology_baseline.ipynb`'s exploratory cells
-# (only Osprey and European Honey-buzzard were ever fitted there). Trying progressively
+# (only Osprey and European Honey Buzzard were ever fitted there). Trying progressively
 # stronger regularization and keeping the first one that converges reproduces the
 # historical fit exactly for species that were already well-behaved, and still produces a
 # usable (slightly smoother) surface for the ones that were not, rather than crashing an
@@ -112,10 +116,7 @@ class PhenologyBuilder:
         self.data_dir = data_dir
         self.doy = list(doy)
 
-        all_count = pd.read_csv(
-            os.path.join(data_dir, "count", "all_count_processed.csv"),
-            parse_dates=["date", "start", "end"],
-        )
+        all_count = read_model_counts(data_dir)
         all_count["doy"] = all_count["date"].dt.day_of_year
         all_count["year"] = all_count["date"].dt.year
         all_count = all_count[
@@ -134,21 +135,11 @@ class PhenologyBuilder:
             self.all_periods["end"] - self.all_periods["start"]
         ).dt.total_seconds() / 3600
 
-        self.trektellen_id = self._load_trektellen_ids(data_dir)
-
-    @staticmethod
-    def _load_trektellen_ids(data_dir: str) -> dict:
-        taxonomy = pd.read_csv(os.path.join(data_dir, "taxonomy.csv"))
-        taxonomy["trektellen_species_id"] = pd.to_numeric(
-            taxonomy["trektellen_species_id"], errors="coerce"
+        taxonomy = pd.read_csv(
+            os.path.join(data_dir, DATASET_DIR, "taxonomy.csv"),
+            usecols=["english_name", "trektellen_species_id"],
         )
-        return {
-            name: int(tid)
-            for name, tid in taxonomy[["English name", "trektellen_species_id"]].itertuples(
-                index=False
-            )
-            if not (isinstance(tid, float) and math.isnan(tid))
-        }
+        self.trektellen_id = trektellen_species_ids(taxonomy)
 
     def _count_species(self, species: str) -> pd.DataFrame:
         """Every observation period, zero-filled for periods with no record of `species`."""

@@ -7,7 +7,7 @@ defaults:
   - override /model: unet
 
 data:
-  species: "Eurasian Kestrel"
+  species: "Common Kestrel"
   # Faucon crécerelle
 
 model:

@@ -18,6 +18,14 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 > metrics and the tuned hyperparameters in `configs/experiment/` should not be trusted until
 > the checkpoints are retrained against the fixes that have already landed.
 
+## Data preparation
+
+[defile-dataset](https://github.com/Rafnuss/defile-dataset) owns source corrections and the consolidated release. This repository prepares those tables for the forecast model, then builds its phenology baseline. [defile-explore](https://github.com/Rafnuss/defile-explore) independently prepares the Explore export for defileViz; its generated data and build scripts belong there.
+
+The forecast preparation commands are `uv run python scripts/build_counts.py --dataset ../defile-dataset/output` followed by `uv run python scripts/build_phenology_stats.py`. The count builder copies the input into `data/count/dataset/`, writes `data/count/all_count_processed.csv`, and records its processing in `logs/qa/counts/count_processing_report.html`. Running without `--dataset` reuses the copied input rather than reading the latest sibling build. After changing the prepared counts, rebuild phenology and retrain before promoting models.
+
+Release parsing follows defile-explore: UTC intervals and local dates, short count intervals timed at their midpoint, complete surveys retained, and weather stops included as zero passage. Incomplete surveys cannot supply model rates. Forecast-specific hour splitting and QA remain here; no internal dataset tables or Explore export are required.
+
 ## Project Structure
 
 ```
@@ -181,7 +189,7 @@ Everything the model reads or writes is in **UTC**, end to end:
   offset zero, unaffected by daylight saving), so both the hourly `time` coordinate
   (0–23) and the `date` coordinate are UTC.
 - **Counts** are recorded in the field in local time (Europe/Paris, CET/CEST) and
-  converted once, in `notebooks/processing_count_data.ipynb`, via
+  converted once, in the defile-dataset repo (`read.py`), via
   `tz_localize("Europe/Paris", ambiguous="NaT")` followed by `tz_convert("UTC")`. The
   resulting `all_count_processed.csv` stores `start`/`end` as UTC timestamps; the hourly
   coverage `mask` built from them in `DefileDataModule.read_counts` (`src/data/defile_datamodule.py`)

@@ -7,10 +7,10 @@
 nohup python src/train.py task_name=optim data.species="Common Buzzard" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Red Kite" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Black Kite" hparams_search=unet trainer=gpu  &
-nohup python src/train.py task_name=optim data.species="European Honey-buzzard" hparams_search=unet trainer=gpu  &
+nohup python src/train.py task_name=optim data.species="European Honey Buzzard" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Western Marsh Harrier" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Eurasian Sparrowhawk" hparams_search=unet trainer=gpu  &
-nohup python src/train.py task_name=optim data.species="Eurasian Kestrel" hparams_search=unet trainer=gpu  &
+nohup python src/train.py task_name=optim data.species="Common Kestrel" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Osprey" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Hen Harrier" hparams_search=unet trainer=gpu  &
 nohup python src/train.py task_name=optim data.species="Merlin" hparams_search=unet trainer=gpu  &

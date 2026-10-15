@@ -352,11 +352,11 @@ def night_mask_by_doy_hour(threshold_deg=-6.0, location="Defile", reference_year
     """`(366, 24)` bool array: True where the sun stays below `threshold_deg` altitude (civil
     twilight by default) for the *whole* UTC hour `[h, h+1)` of that day-of-year, else False.
 
-    Whole hour, not the hour's start: `UNetplus` forbids any prediction in a night hour, so an
-    hour that is only partly dark must stay predictable. Sampling at `h:00` alone called 05 UTC
-    night in October although the sun clears -6 deg by ~05:20, and dawn surveys there count Red
-    Kites leaving the roost (482 birds in <=1 h periods, 2015-2025). Altitude is monotonic within
-    an hour away from solar noon/midnight, so checking both ends of the hour is enough.
+    Whole hour, not the hour's start: `UNetplus` forbids any prediction in a night hour, so an hour
+    that is only partly dark must stay predictable. Sampling at `h:00` alone called 05 UTC night in
+    October although the sun clears -6 deg by ~05:20, and dawn surveys there count Red Kites
+    leaving the roost (482 birds in <=1 h periods, 2015-2025). Altitude is monotonic within an hour
+    away from solar noon/midnight, so checking both ends of the hour is enough.
 
     Deterministic and astronomically exact -- needs no observed data, unlike a statistical fit over
     hours with very little of it. Used to zero out `Phenology.hourly_shape`'s deep-night hours
