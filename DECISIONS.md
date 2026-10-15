@@ -186,7 +186,7 @@ with a narrower spread. Rejected without retraining: input clipping (above), bou
 daily logit (any useful bound also caps Black Kite's real `out_d` ≈ 1 peak days), and weight
 decay (already on, and it does not touch BN's running variance).
 
-**Promotion pending (#47).** The layer-order fix is prepared on the PR branch; production checkpoints are unchanged. The historical results above come from the earlier experiment, before the current release preparation. The revised layer order cannot load the existing checkpoints. Keep this PR in draft until retraining and review under roadmap #18 provide matching checkpoints; do not merge the architecture change alone.
+**Fresh candidates, deployment pending (#47).** All 11 species have been retrained with matching phenology and normalization. The historical results above describe the earlier experiment, not this new candidate set. Current comparisons and provenance are in `docs/pr47-retraining.md`: technical validation passes, but mean skill declines and Hobby falls below phenology. Keep the PR in draft for review under roadmap #18; no deployment or automatic merge is justified by these results.
 
 ## Evaluation
 
