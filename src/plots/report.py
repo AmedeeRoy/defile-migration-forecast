@@ -78,6 +78,7 @@ DIAGNOSTIC_COLUMNS = [
     ("mae_persistence", "MAE\npers"),
     ("shape_n_days", "shape\ndays"),
     ("shape_peak_hour_within_1h", "peak\n±1h"),
+    ("season_total_ratio_phen", "total\nratio phen"),
 ]
 
 # Per-year season table. The p10 passage dates are computed and kept in the metrics JSON
