@@ -187,10 +187,13 @@ score one rank's shard while every rank raced to write the same outputs.
 
 ## Training reproducibility
 
-**Training is now fully deterministic.** The same seed and config used to sometimes
-produce different outcomes across runs (notably on `trainer=mps`), which made it hard to
-tell whether a change actually mattered or was just noise. Verified directly: repeated runs
-with the same seed now produce identical results.
+**Training is deterministic for a given seed, config and thread count.** The same seed and
+config used to sometimes produce different outcomes across runs (notably on `trainer=mps`);
+repeated runs with the same seed now produce identical results. Changing the number of CPU
+threads still changes the model (Hen Harrier seed 0: skill −1.34 with default threads, −0.27
+with 2), so the thread count is pinned in `configs/train.yaml` (`num_threads: 2`, what the
+promoted checkpoints were trained with), rather than left to `OMP_NUM_THREADS` and the
+machine. `trainer=mps` gives NaN gradients in deterministic mode; use `trainer=cpu`.
 
 ## Production safety
 
