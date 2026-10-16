@@ -120,6 +120,8 @@ installed locally: run `pre-commit install` once per clone.
 
 ## Model architecture
 
+Draft #47 changes daily blocks to Conv → BatchNorm → ReLU. Data correctness fixes are separate in #59. Production artifacts are unchanged; the layer-order change needs matching reviewed checkpoints before it can merge. Combined old-production/new-data/new-order scores cannot establish the architecture effect.
+
 `UNetplus` (`src/models/components/unet.py`) has two branches, wrapped by
 `DefileLitModule` (`src/models/defile_module.py`):
 
