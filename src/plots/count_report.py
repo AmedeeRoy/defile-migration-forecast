@@ -192,8 +192,8 @@ def _section_balance(mc: ModelCounts) -> str:
     df = df[["source", "year", "read", "removed", "removed %", "output"]]
     return (
         "<h2>Birds read vs. output, per year</h2>"
-        '<p class="muted">All species. Trektellen birds are <code>direction1</code> '
-        "(main migration direction) only, as in the dataset's <code>count</code>.</p>"
+        '<p class="muted">All species. Only <code>count_category = normal</code> '
+        "(main migration direction) is read; reverse and local birds never enter these columns.</p>"
         + _table(df.astype({"read": int, "removed": int, "output": int}), max_rows=100)
     )
 

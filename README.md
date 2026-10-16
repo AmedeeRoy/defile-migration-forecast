@@ -14,9 +14,10 @@ days, and the results are displayed by the companion
 This work is based on the [lightning-hydra-template](https://github.com/ashleve/lightning-hydra-template/).
 
 > **Project status:** [DEVELOPMENT.md](./DEVELOPMENT.md) lists what is still open (the phased
-> plan), and [DECISIONS.md](./DECISIONS.md) records what has been settled and why. Model
-> metrics and the tuned hyperparameters in `configs/experiment/` should not be trusted until
-> the checkpoints are retrained against the fixes that have already landed.
+> plan), and [DECISIONS.md](./DECISIONS.md) records what has been settled and why. The
+> order of work is tracked in [issue #18](https://github.com/AmedeeRoy/defile-migration-forecast/issues/18).
+> Model metrics and the tuned hyperparameters in `configs/experiment/` should not be trusted
+> until the checkpoints are retrained on the current counts.
 
 ## Data preparation
 
