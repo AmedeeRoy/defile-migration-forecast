@@ -217,14 +217,16 @@ Concretely:
 
 ## Roadmap and decisions — read before making changes
 
-- `DEVELOPMENT.md` is the live roadmap: only what is still open, in phases.
+- `DEVELOPMENT.md` is the live roadmap: only what is still open, in phases, with the detail.
+  The order of work, one line per topic, is issue #18 on GitHub.
 - `DECISIONS.md` is the log of settled calls and what was tried and rejected (weather path,
   architecture, loss, evaluation, production guards). Check it before re-proposing something;
   add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
 **Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
-checkpoints in `prod/models/` and the values in `configs/experiment/*.yaml` predate several
-fixes and the weather migration, and should be considered void until retrained.
+checkpoints in `prod/models/` were trained before the count transition to the defile-dataset
+release, and the values in `configs/experiment/*.yaml` predate several fixes and the weather
+migration; treat both as provisional until the next full retrain.
 
 The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
 25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and

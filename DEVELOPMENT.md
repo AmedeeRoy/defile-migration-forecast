@@ -1,7 +1,10 @@
 # Défilé migration forecast — development roadmap
 
-This tracks what's actually left to do. Resolved items move to `DECISIONS.md` (a running
-log of settled calls and what was tried) rather than being archived here. If something
+This tracks what's actually left to do, with the detail behind each item. The **order** of
+work, one line per topic with links to PRs and issues, is
+[issue #18](https://github.com/AmedeeRoy/defile-migration-forecast/issues/18). Resolved
+items move to `DECISIONS.md` (a running log of settled calls and what was tried) rather than
+being archived here. If something
 below looks wrong or already done, say so before it gets deleted rather than after.
 
 ## What we are building
@@ -26,15 +29,28 @@ Open-Meteo path for training and serving. What was settled and why lives in `DEC
 (weather, architecture, loss, evaluation, production guards); this file only lists what is
 left.
 
-**Nothing in `prod/models/` has been retrained against any current fix** — the committed
-checkpoints date from 2025-09, before the mask removal, the phenology shape prior, the
-Tweedie-only loss and the weather migration. The hyperparameters in `configs/experiment/*.yaml`
-were tuned before all of these and should be treated as void until retrained. That is
-Phase 1, and it is the gate for trusting any model-quality number.
+**The checkpoints in `prod/models/` predate the count transition.** They were retrained on
+2026-10-01 (#46: Open-Meteo weather, the sun-defined night, the phenology shape prior,
+Tweedie-only loss), but on the count tables from before the defile-dataset release. The
+counts now come from the release (#56, #58) with the data-correctness fixes of #59
+(full-day exposure, unknown species-days excluded), and neither the committed
+`species_doy_statistics.json` (last rebuilt 2026-10-08, before #58/#59) nor the checkpoints
+reflect that yet. The hyperparameters in `configs/experiment/*.yaml` were tuned before all of
+these and should be treated as void until re-tuned.
+
+**Finishing the count transition**, in order:
+
+1. Rebuild `species_doy_statistics.json` from the final counts
+   (`scripts/build_counts.py`, then `scripts/build_phenology_stats.py`), in its own PR: it
+   changes the live forecasts' prior and the defileViz band.
+2. Decide the daily-branch BatchNorm order (#47) with a paired comparison on the same new
+   data (the 4-species dev baseline, #52), so that one retrain covers both changes.
+3. Retrain all 11 species once with the result, and promote checkpoints, phenology and
+   `data/transform_data.pickle` together.
 
 ## Plan
 
-**Phase 1 — retrain all 11 species, and fix what "model quality" means while doing it.**
+**Phase 1 — finish the count transition, and fix what "model quality" means while doing it.**
 Nothing should be judged on accuracy before this, including whether the `ecmwf_ifs025` pin
 actually helps forecast skill or only feature correlation (the residual wind gap at Défilé,
 ~0.55 vs ~0.93 over flat terrain, is in `DECISIONS.md`). The data is highly skewed (61–95%
@@ -117,10 +133,6 @@ Also in scope for this phase:
   follow-up: predict the *share* of the season's total per day/hour and forecast the
   annual total separately, removing most year-to-year variance from the hard part of the
   problem.
-- **Count data changed (2026-10), retrain on it.** The Trektellen zero-fill now runs (929 empty
-  survey hours added, 2022 on), mis-entered night periods are clipped and a double-counted
-  period dropped (`data/count/readme.md` → Rules, Trektellen). Rebuild
-  `species_doy_statistics.json` before retraining.
 - **GBIF export of the counts**, in defile-dataset (its README → Known limits): a
   sampling-event Darwin Core Archive from `surveys`/`observations`. Needs publisher, licence,
   data-owner agreement, a re-export of 2022-2023 from Trektellen (no data ids, so no stable
@@ -150,8 +162,9 @@ Also in scope for this phase:
   come from the model at all.
 
 **Phase 3 — Trektellen counts as model input.** Plumbing already exists: a working proxy at
-`https://defile.raphaelnussbaumer.com/trektellen/{siteId}/{yyyymmdd}` and a 47 MB NW-Europe
-export in `data/Trektellen_raptor_2015_2024/`. Three things matter more than the
+`https://defile.raphaelnussbaumer.com/trektellen/{siteId}/{yyyymmdd}`, a 47 MB NW-Europe
+export kept locally in `data/Trektellen_raptor_2015_2024/` (gitignored), and the own-site lag
+experiment on `feature/history-lag-features`. Three things matter more than the
 implementation: missing days must be represented with an observed-flag channel, not
 zero-filled (zero means "watched and saw nothing" — filling absence with it teaches exactly
 backwards, worst on bad-weather days when observers stay home); a lagged count's usefulness
