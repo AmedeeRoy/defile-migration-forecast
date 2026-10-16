@@ -60,6 +60,21 @@ matches the old day-window zero-fill to within a few hours a year, as fewer, lon
 differences are reviewed dataset decisions (2015-08-09 is now a documented rained-off day,
 2019-08-20 07:35-20:00 is kept as counted).
 
+**Phenology rebuilt on the release counts (2026-10-16).** `species_doy_statistics.json` was
+rebuilt after #58/#59, from a defile-dataset release built at its commit `ba896c9` with a clean
+working tree (450 142 counts, 13 784 surveys → 120 081 prepared rows, 184 unknown
+species-days), so the file can be rebuilt exactly. Season totals move by 0 to -3%; the large
+changes are at the season end, where few days are counted (6-11 per doy after doy 330): Red
+Kite -13%, Hen Harrier -13%, Sparrowhawk -11%, Common Buzzard -10% around doy 330-335. The
+daily shape barely moves (under 1.5% of the hourly mass, bird-weighted, for every species but
+Merlin at 2.7%). #59's unknown species-days account for under 3% anywhere. Retaining complete
+weather stops as zero passage accounts for about a third of the late-November drop (14 of ~290
+days in doy 320-335, against 1% earlier in the season); the rest comes from #58's release
+handling together with release corrections since 2026-10-08, which cannot be separated because
+the code of the previous build cannot read the current release. The production checkpoints
+were trained with the previous prior; the shape is close enough that they keep running on
+this one until the next retrain.
+
 **Species are named by the release's English name (AviList first).** Two modelled species
 change: Eurasian Kestrel -> Common Kestrel, European Honey-buzzard -> European Honey Buzzard.
 Their configs, checkpoint folders, forecast file names and `species_doy_statistics.json` keys
