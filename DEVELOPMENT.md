@@ -40,9 +40,8 @@ these and should be treated as void until re-tuned.
 
 **Finishing the count transition**, in order:
 
-1. Rebuild `species_doy_statistics.json` from the final counts
-   (`scripts/build_counts.py`, then `scripts/build_phenology_stats.py`), in its own PR: it
-   changes the live forecasts' prior and the defileViz band.
+1. ~~Rebuild `species_doy_statistics.json` from the final counts~~ — done in #61, from
+   defile-dataset `ba896c9` (`DECISIONS.md` → Counts).
 2. Decide the daily-branch BatchNorm order (#47) with a paired comparison on the same new
    data (the 4-species dev baseline, #52), so that one retrain covers both changes.
 3. Retrain all 11 species once with the result, and promote checkpoints, phenology and
