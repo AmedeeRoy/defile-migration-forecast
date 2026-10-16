@@ -79,6 +79,9 @@ def main(argv=None) -> int:
         tmp = out_path + ".tmp"
         mc.counts.to_csv(tmp, index=False)
         os.replace(tmp, out_path)
+        unknown_path = os.path.join(args.data_dir, "count", C.UNKNOWN_DATES_FILE)
+        mc.unknown_dates.to_csv(unknown_path, index=False)
+        print(f"Wrote {unknown_path} ({len(mc.unknown_dates)} unknown species-days).")
         print(f"Wrote {out_path} ({len(mc.counts)} rows).")
 
     if args.report:

@@ -71,6 +71,7 @@ from scripts._species_stats_common import (  # noqa: E402
 from src.data.counts import (  # noqa: E402
     DATASET_DIR,
     read_model_counts,
+    read_unknown_dates,
     trektellen_species_ids,
 )
 from src.phenology import PHENOLOGY_FILE, RATIO_HOURS, Phenology  # noqa: E402
@@ -124,6 +125,7 @@ class PhenologyBuilder:
             & all_count["date"].dt.day_of_year.between(self.doy[0], self.doy[1])
         ]
         self.all_count = all_count
+        self.unknown_dates = read_unknown_dates(data_dir)
 
         # Every observation period regardless of species, deduplicated -- the frame every
         # species' zero-filled count is built against (a period with no record of a given
@@ -153,6 +155,11 @@ class PhenologyBuilder:
 
         count = self.all_periods.merge(observed, how="left")
         count["count"] = count["count"].fillna(0)
+        count = count[
+            ~count["date"].isin(
+                self.unknown_dates.loc[self.unknown_dates.species.eq(species), "date"]
+            )
+        ]
         count["count_rate"] = count["count"] / count["duration"]
         return count.dropna(subset=["count_rate"])
 

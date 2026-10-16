@@ -102,3 +102,7 @@ to 2022-2026 and removed 258 birds counted twice. The historical data is unchang
 In 2026-10 the input moved from the dataset's interim two-table layout (`surveys.csv`,
 `observations.csv`, with flags) to its release tables. Historical birds are unchanged; see
 `DECISIONS.md` (Counts) for what changed in effort and Trektellen birds, and why.
+
+## Unknown species-days
+
+`unknown_species_dates.csv` accompanies the prepared counts. A presence-only record, unresolved outside-survey timing, or positive untimed count removed from a split survey makes that species-day unknown for model targets. Training and phenology exclude it rather than zero-fill it; other species retain their valid targets. Rebuild both files with `scripts/build_counts.py`. This conservative day-level exclusion follows Explore's distinction between unknown counts and observed zero.
