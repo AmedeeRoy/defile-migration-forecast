@@ -4,8 +4,14 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+  # The main runs are dispatched by the GCE host's cron at 04:30 and 09:00 UTC
+  # (scripts/gce_trigger_forecast.sh), because GitHub starts scheduled runs 5-7 h late.
+  # These crons are only a fallback if the VM is down: set that much earlier, they should
+  # still land near the same times. Off the top of the hour, where GitHub's load peaks.
+  # Not before 00:00 UTC: forecast files are named by run date.
   schedule:
-    - cron: "0 3 * * *" # daily at 3 AM
+    - cron: "17 0 * * *" # fallback for the 04:30 morning run
+    - cron: "17 3 * * *" # fallback for the 09:00 update on the 00z ECMWF run
 
 permissions:
   contents: read
