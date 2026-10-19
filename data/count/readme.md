@@ -1,25 +1,29 @@
 # Count data
 
-The counts come from the **defile-dataset** repo (`Rafnuss/defile-dataset`, private), which
-holds the raw files, the protocol history (essential before choosing which years to use), the
-data corrections and the documentation of every column (its `output/dataset/README.md`). Its
-audit lists the Trektellen entries to correct. This folder only holds what the forecast builds
-from it.
+The counts come from [defile-dataset](https://github.com/Rafnuss/defile-dataset), which
+publishes the consolidated count, survey and taxonomy tables of the Défilé de l'Écluse raptor
+counts as [GitHub releases](https://github.com/Rafnuss/defile-dataset/releases). Its release
+notes and data dictionary document the source data, its corrections and every column; none of
+that is repeated here. This folder only holds what the forecast model builds from it.
 
 ```bash
-# in defile-dataset
-uv run python scripts/build_dataset.py
-# here: copy its release tables into data/count/dataset/ and build the model's counts
-python scripts/build_counts.py --dataset ../defile-dataset/output
+python scripts/build_counts.py        # download the pinned release and build the model's counts
 ```
 
-`data/count/dataset/` then holds the release tables `count.csv`, `survey.csv`, `taxonomy.csv`
-and `datapackage.json`, and the build's `metadata.json` (which dataset build, from which commit
-and inputs). `all_count_processed.csv` is the model's input, read by
-`DefileDataModule.read_counts` and `scripts/build_phenology_stats.py`; after it changes, rebuild
-`species_doy_statistics.json` and retrain. The report,
-`logs/qa/counts/count_processing_report.html`, shows every check and, for every rule below, the
-rows and birds it touched.
+The script downloads the release assets into `data/count/dataset/` (checking them against the
+release's `SHA256SUMS`), applies the processing rules below, and writes:
+
+- `all_count_processed.csv`, the model's input (read by `DefileDataModule.read_counts` and
+  `scripts/build_phenology_stats.py`);
+- `unknown_species_dates.csv`, the species-days excluded from training (see the last section);
+- `logs/qa/counts/count_processing_report.html`, which shows every check and, for each rule
+  below, the rows and birds it touched.
+
+The release used is pinned by `DATASET_RELEASE` in `src/data/counts.py`; pass
+`--release <tag>` to use another. After the counts change, rebuild
+`species_doy_statistics.json` (`scripts/build_phenology_stats.py`) and retrain. To test an
+unpublished dataset build, `--dataset <path to its output/ folder>` copies it instead of
+downloading.
 
 ## What the model needs
 
@@ -43,10 +47,10 @@ survey's interval.
 
 ### Both sources, first
 
-- **Completeness.** Complete surveys (`survey_complete`) supply effort. Incomplete surveys are dropped with their birds. Complete weather stops (`weather_stop`) supply zero passage, following the release's explicit assumption and Explore's processing. Unmonitored absences have no survey row.
+- **Completeness.** Complete surveys (`survey_complete`) supply effort. Incomplete surveys are dropped with their birds. Complete weather stops (`weather_stop`) supply zero passage, following the release's documented assumption. Unmonitored absences have no survey row.
 - **Presence only** (`count_estimation = x`, no number) is dropped: never turned into a count.
-- **Count intervals.** As in defile-explore, an own interval up to one hour is timed at its midpoint; longer intervals stay at day level. UTC times determine the Europe/Paris date.
-- **Timed outside its survey.** Day-level entries marked outside their survey cannot be placed in model periods and are dropped. Only released tables are read; original entry times are no longer recovered from the dataset's internal tables.
+- **Count intervals.** An own interval up to one hour is timed at its midpoint; longer intervals stay at day level. UTC times determine the Europe/Paris date.
+- **Timed outside its survey.** Day-level entries marked outside their survey cannot be placed in model periods and are dropped. Only the released tables are read.
 
 ### Historical (1966-2021)
 
@@ -92,17 +96,6 @@ length; periods under 15 min or windows over 16 h are flagged; one row per speci
 every species has an English name; every clock hour of a split window exists as a
 period; empty surveys alone on their day are flagged (real zeros only if the day was counted).
 
-## History
-
-Until 2026-10 the Trektellen zero-fill (rule 4) never ran: the notebook this replaced tested each
-empty hour against its whole count period, which it always overlaps. Fixing it, with the
-dataset's night and overlap corrections, added 929 survey periods (812 h) with their zero counts
-to 2022-2026 and removed 258 birds counted twice. The historical data is unchanged.
-
-In 2026-10 the input moved from the dataset's interim two-table layout (`surveys.csv`,
-`observations.csv`, with flags) to its release tables. Historical birds are unchanged; see
-`DECISIONS.md` (Counts) for what changed in effort and Trektellen birds, and why.
-
 ## Unknown species-days
 
-`unknown_species_dates.csv` accompanies the prepared counts. A presence-only record, unresolved outside-survey timing, or positive untimed count removed from a split survey makes that species-day unknown for model targets. Training and phenology exclude it rather than zero-fill it; other species retain their valid targets. Rebuild both files with `scripts/build_counts.py`. This conservative day-level exclusion follows Explore's distinction between unknown counts and observed zero.
+`unknown_species_dates.csv` accompanies the prepared counts. A presence-only record, unresolved outside-survey timing, or positive untimed count removed from a split survey makes that species-day unknown for model targets. Training and phenology exclude it rather than zero-fill it; other species retain their valid targets. Rebuild both files with `scripts/build_counts.py`.

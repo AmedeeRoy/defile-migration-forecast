@@ -60,6 +60,8 @@ matches the old day-window zero-fill to within a few hours a year, as fewer, lon
 differences are reviewed dataset decisions (2015-08-09 is now a documented rained-off day,
 2019-08-20 07:35-20:00 is kept as counted).
 
+**Counts come from a tagged defile-dataset release (2026-10-19).** `scripts/build_counts.py --release <tag>` downloads the release assets (`count.csv`, `survey.csv`, `taxonomy.csv`, `datapackage.json`, `metadata.json`) from GitHub, verifies `SHA256SUMS` and installs them in `data/count/dataset/`; the pinned default is `DATASET_RELEASE` in `src/data/counts.py`, currently `v1.0.0-beta.1` (defile-dataset commit `1b461c0`, 13 787 surveys, 452 200 counts, only the main tables, no report/paper text). This makes the pipeline reproducible without a sibling checkout, and each retrain should name its release tag. `--dataset` stays for local development builds. Moving to a newer release means bumping the constant, rebuilding phenology and retraining together. Note `species_doy_statistics.json` was built from `ba896c9`, so it needs a rebuild on this release before the next retrain.
+
 **Phenology rebuilt on the release counts (2026-10-16).** `species_doy_statistics.json` was
 rebuilt after #58/#59, from a defile-dataset release built at its commit `ba896c9` with a clean
 working tree (450 142 counts, 13 784 surveys → 120 081 prepared rows, 184 unknown
