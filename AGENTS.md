@@ -121,7 +121,7 @@ installed locally: run `pre-commit install` once per clone.
 
 ## Model architecture
 
-Draft #47 changes daily blocks to Conv → BatchNorm → ReLU. Data correctness fixes are separate in #59. Production artifacts are unchanged; the layer-order change needs matching reviewed checkpoints before it can merge. Combined old-production/new-data/new-order scores cannot establish the architecture effect.
+The daily blocks are Conv → BatchNorm → ReLU (#47): with ReLU first, a channel that is zero on almost every day gets a running variance near 0, and in eval mode BatchNorm then blows up the rare day it fires (a logit of 550 and a saturated `out_d`). Checkpoints trained with the old order do not load into this architecture.
 
 `UNetplus` (`src/models/components/unet.py`) has two branches, wrapped by
 `DefileLitModule` (`src/models/defile_module.py`):
@@ -227,9 +227,9 @@ Concretely:
   add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
 **Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
-checkpoints in `prod/models/` were trained before the count transition to the defile-dataset
-release, and the values in `configs/experiment/*.yaml` predate several fixes and the weather
-migration; treat both as provisional until the next full retrain.
+checkpoints in `prod/models/` were retrained on 2026-10-19 on the current counts, but the values in
+`configs/experiment/*.yaml` predate several fixes and the weather migration; treat them as
+provisional until they are re-tuned.
 
 The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
 25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and

@@ -205,7 +205,9 @@ with a narrower spread. Rejected without retraining: input clipping (above), bou
 daily logit (any useful bound also caps Black Kite's real `out_d` ≈ 1 peak days), and weight
 decay (already on, and it does not touch BN's running variance).
 
-**Separate data correctness from architecture (#59 and #47).** Data readers, unknown-target handling and survey exposure belong in #59. #47 contains only the daily layer-order fix and its regression test; production artifacts are unchanged. The earlier fresh candidates changed data, prior and architecture together, so their mean skill difference (0.229 to 0.170) cannot be attributed to either change. Those runs are archived in Git history and local reports, not proposed for deployment. Matched retraining is deferred; data correctness is validated without fitting a model.
+**Separate data correctness from architecture (#59 and #47).** Data readers, unknown-target handling and survey exposure belong in #59; #47 contains only the daily layer-order fix and its regression test. The earlier fresh candidates changed data, prior and architecture together, so their mean skill difference (0.229 to 0.170) cannot be attributed to either change; those runs are archived in Git history and local reports. #47 was adopted on its mechanism, not on a skill comparison, and no old-order control on the new data was run.
+
+**Retrain on the release counts (2026-10-19).** All 11 species were retrained once on defile-dataset release `v1.0.0-beta.1`, the rebuilt phenology, the #47 layer order, torch 2.14.1 and `trainer=mps`, with the old hyperparameters, and promoted together with `data/transform_data.pickle`. Test skill (MAE) against phenology: Common Buzzard 0.43, Honey Buzzard 0.41, Sparrowhawk 0.29, Hen Harrier 0.26, Marsh Harrier 0.21, Osprey 0.18, Red Kite 0.17, Merlin 0.15, Black Kite -0.02, Hobby -0.06, Kestrel -0.19 (mean about 0.17). The saturation the order fix targets is gone: Hen Harrier on 2019-07-27 is now predicted at 0.0002 birds/h, where the old order gave about 25 for an absent species. The three species below the baseline are a tuning question (`DEVELOPMENT.md`), not a reason to revert.
 
 ## Evaluation
 

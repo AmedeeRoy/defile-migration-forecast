@@ -1,9 +1,13 @@
-# BatchNorm ordering: scope of #47
+# BatchNorm ordering in the daily branch
 
-Data processing is separate: #58 is merged, and #59 fixes full-day exposure and unresolved species-day targets. This PR is stacked on #59 and changes only the daily network's layer order, its regression test and documentation. It does not change datasets, priors, normalization or production checkpoints.
+The daily network's blocks are Conv → BatchNorm → ReLU. With the earlier Conv → ReLU → BatchNorm,
+a channel whose pre-activation is negative on almost every day has a running variance near zero
+(down to 1e-11 measured), because ReLU removes the variation before BatchNorm sees it. In eval
+mode BatchNorm then scales that channel by up to about 400x, so on the rare day it fires the logit
+reaches hundreds and the daily output saturates, predicting a large count for an absent species.
+Training mode uses batch statistics, so the loss never showed it. Putting BatchNorm before the
+ReLU keeps the variance. `tests/test_unet.py` checks this mechanism directly, without training.
 
-Conv → ReLU → BatchNorm can give a channel with varying negative pre-activations a running variance of zero because ReLU removes that variation before BatchNorm sees it. Conv → BatchNorm → ReLU preserves that variance. The regression test exercises this mechanism directly without training a model.
-
-The previous comparison changed the data, prior and architecture together. Mean skill of 0.229 versus 0.170 is a combined deployment result, not evidence that either the data refresh or BatchNorm ordering caused a regression. Existing experiment artifacts are preserved in prior commits and local reports; they are not candidates in this PR's final diff.
-
-Data correctness does not require retraining. To estimate the BatchNorm effect later, compare fresh old-order and new-order runs using identical prepared counts, prior, normalization, split, seed, hyperparameters and CPU thread count. That missing control has not been run. Production compatibility still requires matching reviewed checkpoints before merging this architecture change; keep #47 in draft meanwhile.
+Checkpoints trained with the old order do not load into the new layers, so the change landed
+together with a retrain of all species (`DECISIONS.md` → Retrain on the release counts). The effect
+of the order on forecast skill, apart from the data and prior changes, was not measured.
