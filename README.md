@@ -21,11 +21,29 @@ This work is based on the [lightning-hydra-template](https://github.com/ashleve/
 
 ## Data preparation
 
-[defile-dataset](https://github.com/Rafnuss/defile-dataset) owns source corrections and the consolidated release. This repository prepares those tables for the forecast model, then builds its phenology baseline. [defile-explore](https://github.com/Rafnuss/defile-explore) independently prepares the Explore export for defileViz; its generated data and build scripts belong there.
+The model learns from two data sources, both fetched or built by a script and kept out of git:
 
-The forecast preparation commands are `uv run python scripts/build_counts.py --dataset ../defile-dataset/output` followed by `uv run python scripts/build_phenology_stats.py`. The count builder copies the input into `data/count/dataset/`, writes `data/count/all_count_processed.csv`, and records its processing in `logs/qa/counts/count_processing_report.html`. Running without `--dataset` reuses the copied input rather than reading the latest sibling build. After changing the prepared counts, rebuild phenology and retrain before promoting models.
+- **Bird counts**, published as releases of [defile-dataset](https://github.com/Rafnuss/defile-dataset)
+  (`count.csv`, `survey.csv`, `taxonomy.csv`). `scripts/build_counts.py` downloads the pinned
+  release, verifies its checksums and applies the model's processing, giving
+  `data/count/all_count_processed.csv`. The processing rules and the QA report are described in
+  [data/count/readme.md](data/count/readme.md); the source data itself is documented in
+  defile-dataset, not here.
+- **Weather**, from Open-Meteo, cached locally by `scripts/build_weather_cache.py`
+  (see [Weather data](#weather-data)).
 
-Release parsing follows defile-explore: UTC intervals and local dates, short count intervals timed at their midpoint, complete surveys retained, and weather stops included as zero passage. Incomplete surveys cannot supply model rates. Forecast-specific hour splitting and QA remain here; no internal dataset tables or Explore export are required.
+Then `scripts/build_phenology_stats.py` builds the day-of-year baseline from the counts
+(see [Phenology baseline](#phenology-baseline)). In order, after `uv sync`:
+
+```bash
+uv run python scripts/build_counts.py                          # counts from the pinned release
+uv run python scripts/build_weather_cache.py --start 2008-01-01  # weather (a few days for full history)
+uv run python scripts/build_phenology_stats.py                 # phenology baseline
+```
+
+The pinned release is `DATASET_RELEASE` in `src/data/counts.py`. Changing it (or any count
+processing) means rebuilding the phenology baseline and retraining. To work against a local,
+unpublished dataset build instead, use `--dataset <path to its output/ folder>`.
 
 ## Project Structure
 
@@ -114,7 +132,8 @@ python src/train.py
 ```
 
 Training reads a local weather cache that must be built first (see [Weather data](#weather-data);
-a full backfill takes a few days, a `--start 2008-01-01` cache fits in one).
+a full backfill takes a few days, a `--start 2008-01-01` cache fits in one). Counts and the phenology baseline are described under
+[Data preparation](#data-preparation).
 
 Adding, removing or upgrading a dependency: edit `pyproject.toml`'s `dependencies` (or use
 `uv add <package>` / `uv remove <package>`), then `uv lock` to update `uv.lock` and `uv sync`
@@ -160,13 +179,9 @@ read it:
 - **defileViz's uncertainty bands** -- the model's own uncertainty channel was dropped as
   untrained, so the frontend shows this file's quantile spread instead.
 
-Built by `scripts/build_phenology_stats.py`, which replaced a notebook
-(`notebooks/phenology_baseline.ipynb`) that had drifted out of sync with its own output --
-`pygam` wasn't a pinned dependency, the notebook's statistics list didn't match the
-committed file's actual schema, and the hour-of-day grid had a one-day off-by-one against
-the rest of the file. The species list comes from `configs/experiment/*.yaml` and the
-day-of-year range from `configs/data/defile.yaml`, so both stay in sync with what the model
-is actually trained on rather than living as a second copy in this script:
+Built by `scripts/build_phenology_stats.py`. The species list comes from
+`configs/experiment/*.yaml` and the day-of-year range from `configs/data/defile.yaml`, so
+both follow what the model is actually trained on:
 
 ```bash
 # rebuild for all 11 modelled species (a couple of minutes; one GAM fit per species)
@@ -179,8 +194,7 @@ python scripts/build_phenology_stats.py --dry-run
 python scripts/build_phenology_stats.py --species "Osprey"
 ```
 
-The notebook still exists for exploration (GAM diagnostic plots, spline-count search) but
-no longer writes the production file.
+`notebooks/phenology_baseline.ipynb` is for exploration only (GAM diagnostics).
 
 ### Time conventions
 
@@ -189,13 +203,11 @@ Everything the model reads or writes is in **UTC**, end to end:
 - **Weather** (`src/data/weather.py`) requests Open-Meteo with `timezone: "GMT"` (fixed
   offset zero, unaffected by daylight saving), so both the hourly `time` coordinate
   (0–23) and the `date` coordinate are UTC.
-- **Counts** are recorded in the field in local time (Europe/Paris, CET/CEST) and
-  converted once, in the defile-dataset repo (`read.py`), via
-  `tz_localize("Europe/Paris", ambiguous="NaT")` followed by `tz_convert("UTC")`. The
-  resulting `all_count_processed.csv` stores `start`/`end` as UTC timestamps; the hourly
-  coverage `mask` built from them in `DefileDataModule.read_counts` (`src/data/defile_datamodule.py`)
-  is therefore UTC-hour indexed too, and lines up position-for-position with the weather's
-  `time` axis without any extra conversion.
+- **Counts**: the dataset release stores survey intervals in UTC (the field records are
+  local Europe/Paris time, converted by defile-dataset). `all_count_processed.csv` keeps
+  `start`/`end` in UTC, so the hourly coverage `mask` built from them in
+  `DefileDataModule.read_counts` (`src/data/defile_datamodule.py`) lines up
+  position-for-position with the weather's `time` axis without any extra conversion.
 - The one field that stays in **local** terms is `count["date"]`: the calendar date of
   the survey day, taken directly from the source data and never timezone-converted. This
   is joined against weather's (UTC) `date` coordinate. The two coincide because Défilé

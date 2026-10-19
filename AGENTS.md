@@ -38,7 +38,7 @@ scripts/
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
-  build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
+  build_counts.py                defile-dataset release -> data/count/all_count_processed.csv + QA report
 tests/                            pytest suite (weather, counts, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
@@ -253,17 +253,19 @@ rather than editing `configs/data/defile.yaml` directly.
 ## Data pipeline notes
 
 - Counts: `data/count/all_count_processed.csv`, one row per species per survey period,
-  1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
-  in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
-  locally), whose release is `count.csv`, `survey.csv` and `taxonomy.csv` (Avibase taxon ids,
-  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_complete` and `weather_stop`) and an
-  audit of Trektellen entry errors.
-  `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
-  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: the
-  surveys and counts the model cannot use, hour splitting, zero-fill); its HTML report in
-  `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
-  choices here. Survey protocol and recording granularity changed repeatedly over the years:
-  defile-dataset's README has the history, essential before choosing which years to use.
+  1966 on, `start`/`end` in UTC. The source data, its corrections and documentation live in the
+  separate public **defile-dataset** repo (`Rafnuss/defile-dataset`), which publishes
+  `count.csv`, `survey.csv` and `taxonomy.csv` (plus `datapackage.json`, `metadata.json`,
+  `SHA256SUMS`) as GitHub release assets. `python scripts/build_counts.py` downloads the release
+  pinned by `DATASET_RELEASE` (`src/data/counts.py`), verifies it, and applies only the model's
+  processing (`src/data/counts.py`: the surveys and counts the model cannot use, hour splitting,
+  zero-fill; rules in `data/count/readme.md`); its HTML report in `logs/qa/counts/` shows what
+  each step did. `--dataset ../defile-dataset/output` instead copies a local, unreleased build
+  (development only). Data corrections go in defile-dataset, model choices here; don't document
+  the raw data in this repo. Survey protocol and recording granularity changed repeatedly over
+  the years: defile-dataset's documentation has the history, essential before choosing which
+  years to use. A new release is adopted by bumping `DATASET_RELEASE`, rebuilding phenology and
+  retraining together.
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field
