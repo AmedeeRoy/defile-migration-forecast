@@ -36,6 +36,11 @@ DATASET_DIR = os.path.join("count", "dataset")  # under the data dir
 # Release tables, in the release's `dataset/` folder; `metadata.json` sits one level up.
 DATASET_FILES = ("count.csv", "survey.csv", "taxonomy.csv", "datapackage.json")
 METADATA_FILE = "metadata.json"
+# The defile-dataset release the model counts are built from by default (scripts/build_counts.py).
+DATASET_REPO = "Rafnuss/defile-dataset"
+DATASET_RELEASE = "v1.0.0-beta.1"
+DATASET_CHECKSUMS_FILE = "SHA256SUMS"
+DATASET_RELEASE_MARKER = "RELEASE"  # records which release data/count/dataset/ was fetched from
 UNKNOWN_DATES_FILE = "unknown_species_dates.csv"
 # Effort placeholder for a period surveyed with no bird recorded.
 NO_SPECIES = "No species"

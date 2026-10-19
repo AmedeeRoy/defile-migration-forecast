@@ -60,6 +60,25 @@ matches the old day-window zero-fill to within a few hours a year, as fewer, lon
 differences are reviewed dataset decisions (2015-08-09 is now a documented rained-off day,
 2019-08-20 07:35-20:00 is kept as counted).
 
+**Counts come from a tagged defile-dataset release (2026-10-19).** `scripts/build_counts.py --release <tag>` downloads the release assets (`count.csv`, `survey.csv`, `taxonomy.csv`, `datapackage.json`, `metadata.json`) from GitHub, verifies `SHA256SUMS` and installs them in `data/count/dataset/`; the pinned default is `DATASET_RELEASE` in `src/data/counts.py`, currently `v1.0.0-beta.1` (defile-dataset commit `1b461c0`, 13 787 surveys, 452 200 counts, only the main tables, no report/paper text). This makes the pipeline reproducible without a sibling checkout, and each retrain should name its release tag. `--dataset` stays for local development builds. Moving to a newer release means bumping the constant, rebuilding phenology and retraining together. Note `species_doy_statistics.json` was built from `ba896c9`, so it needs a rebuild on this release before the next retrain.
+
+**Phenology rebuilt on release v1.0.0-beta.1 (2026-10-19).** `species_doy_statistics.json` was rebuilt from the pinned release (defile-dataset commit `1b461c0`, 452 200 counts, 13 787 surveys → 120 347 prepared rows, 181 unknown species-days), so it now matches what `build_counts.py` produces for anyone. Against the 2026-10-16 file (from `ba896c9`) the mean daily rates move by under 1% for every species (Merlin -0.7%, the largest), so the analysis below still holds.
+
+**Phenology rebuilt on the release counts (2026-10-16).** `species_doy_statistics.json` was
+rebuilt after #58/#59, from a defile-dataset release built at its commit `ba896c9` with a clean
+working tree (450 142 counts, 13 784 surveys → 120 081 prepared rows, 184 unknown
+species-days), so the file can be rebuilt exactly. Season totals move by 0 to -3%; the large
+changes are at the season end, where few days are counted (6-11 per doy after doy 330): Red
+Kite -13%, Hen Harrier -13%, Sparrowhawk -11%, Common Buzzard -10% around doy 330-335. The
+daily shape barely moves (under 1.5% of the hourly mass, bird-weighted, for every species but
+Merlin at 2.7%). #59's unknown species-days account for under 3% anywhere. Retaining complete
+weather stops as zero passage accounts for about a third of the late-November drop (14 of ~290
+days in doy 320-335, against 1% earlier in the season); the rest comes from #58's release
+handling together with release corrections since 2026-10-08, which cannot be separated because
+the code of the previous build cannot read the current release. The production checkpoints
+were trained with the previous prior; the shape is close enough that they keep running on
+this one until the next retrain.
+
 **Species are named by the release's English name (AviList first).** Two modelled species
 change: Eurasian Kestrel -> Common Kestrel, European Honey-buzzard -> European Honey Buzzard.
 Their configs, checkpoint folders, forecast file names and `species_doy_statistics.json` keys
@@ -205,12 +224,55 @@ had a one-day off-by-one.
 coordinating rank only.** Otherwise `trainer=ddp` (selectable, unused today) would silently
 score one rank's shard while every rank raced to write the same outputs.
 
+**The season total ratio is pooled over years, not a mean of yearly ratios (2026-10).** The
+"season over-prediction" of Hobby, Kestrel, Sparrowhawk, Osprey and Red Kite was mostly the
+metric. All species share 8 test years (1967, 1981, 1990, 2001, 2005, 2008, 2019, 2023), and the
+three pre-1993 ones have 14–50 survey days and a handful of birds: Red Kite 1967 is 1.5 birds
+observed, 81 predicted, ratio 52. Averaging ratios let those years dominate. Pooled
+(Σ predicted / Σ observed), seed 0, BN-fixed checkpoints:
+
+| species        | mean of years | pooled | phenology pooled |
+| -------------- | ------------- | ------ | ---------------- |
+| Red Kite       | 13.6          | 1.44   | 0.97             |
+| Sparrowhawk    | 2.78          | 1.51   | 1.11             |
+| Hobby          | 2.13          | 1.29   | 1.21             |
+| Kestrel        | 1.81          | 1.28   | 1.25             |
+| Osprey         | 1.52          | 1.11   | 1.09             |
+| Common Buzzard | 1.46          | 1.23   | 1.05             |
+| Merlin         | 0.68          | 0.47   | 0.92             |
+
+The phenology baseline's own pooled ratio is reported next to it (`season_total_ratio_phen`).
+Where the two are close (Hobby, Kestrel, Osprey), the test years were below climatology, not
+something the weather model added. What is left is not concentrated on a few spike days (the
+top 5% of days hold 24–76% of the excess, 34% for Red Kite and Sparrowhawk). It is an era
+pattern: Red Kite is 2.0–3.3× over in 2001/2005/2008 and 0.5–0.7× under in 2019/2023, and
+Kestrel is 1.9–2.9× over and 0.66× under. Phenology has the same pattern, weaker (Red Kite
+1.05–1.81 and 0.53–0.62), so the model amplifies a population trend it cannot see under
+`year_used: "constant"`. A warm-season explanation was checked and rejected: across the 8
+years, the correlation between seasonal temperature anomaly and log(pred/phenology) changes
+sign from species to species.
+
 ## Training reproducibility
 
-**Training is now fully deterministic.** The same seed and config used to sometimes
-produce different outcomes across runs (notably on `trainer=mps`), which made it hard to
-tell whether a change actually mattered or was just noise. Verified directly: repeated runs
-with the same seed now produce identical results.
+**Training is deterministic for a given seed, config and thread count.** The same seed and
+config used to sometimes produce different outcomes across runs (notably on `trainer=mps`);
+repeated runs with the same seed now produce identical results. Changing the number of CPU
+threads still changes the model (Hen Harrier seed 0: skill −1.34 with default threads, −0.27
+with 2), so the thread count is pinned in `configs/train.yaml` (`num_threads: 2`, what the
+promoted checkpoints were trained with), rather than left to `OMP_NUM_THREADS` and the
+machine.
+
+**Training runs on Apple MPS (2026-10-19).** `trainer=mps` was avoided because torch 2.5.1 returned
+NaN gradients for the first hourly BatchNorm in deterministic mode, silently killing the hourly
+branch. That is fixed in the pinned torch (2.14.1; also checked on 2.9.1), `trainer=mps` is now
+deterministic like the others, and `tests/test_unet.py` guards it. On Common Buzzard an epoch takes
+about 1.3 s on MPS against 18 s on CPU (about 14×), and a checkpoint trained on MPS evaluates
+identically on CPU and MPS (relative metric difference 1.6e-6), so production inference stays on
+CPU. Checkpoints trained on different devices or thread counts are not bit-identical to each
+other. The prod checkpoints from before the upgrade still load. The other pins were reviewed and
+left alone: `numpy`/`pandas`/`xarray`/`pyarrow` have newer majors that change behaviour the weather
+and datamodule code depends on, `requests` is held for the openmeteo stack (see `pyproject.toml`),
+and `lightning` 2.5.5 works with this torch. Moving any of them is its own change, with a test run.
 
 ## Production safety
 

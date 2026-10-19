@@ -32,3 +32,8 @@ ckpt_path: null
 
 # seed for random number generators in pytorch, numpy and python.random
 seed: 0
+
+# CPU threads used by torch. Part of reproducibility, like the seed: the same seed with a
+# different thread count trains a different model (DECISIONS.md -> Training reproducibility).
+# null leaves torch's default (all cores), which is not comparable across machines.
+num_threads: 2

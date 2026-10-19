@@ -38,7 +38,7 @@ scripts/
   move_checkpoints_to_prod.py    promotes the latest training run's best.ckpt to prod/
   build_weather_cache.py         builds the local ERA5 Parquet cache training reads
   build_phenology_stats.py       builds data/count/species_doy_statistics.json
-  build_counts.py                defile-dataset tables -> data/count/all_count_processed.csv + QA report
+  build_counts.py                defile-dataset release -> data/count/all_count_processed.csv + QA report
 tests/                            pytest suite (weather, counts, predict guards, unet prior, phenology, datamodule)
 src/
   train.py, eval.py, predict.py   entry points (Hydra @hydra.main)
@@ -55,7 +55,7 @@ src/
 Managed with [uv](https://docs.astral.sh/uv/), Python 3.11 (`.python-version`; uv provisions
 this itself, no separate Python install needed). Exact versions pinned in `pyproject.toml`
 and locked in `uv.lock` -- deliberately pinned, not ranged, so `uv lock` alone can't silently
-drift to a newer release. Core deps: `torch==2.5.1`, `lightning==2.5.5`,
+drift to a newer release. Core deps: `torch==2.14.1`, `lightning==2.5.5`,
 `hydra-core==1.3.2`, `pandas==2.3.3`, `xarray==2023.6.0`, `rich`, `matplotlib`, `einops`,
 `cloudpickle`, `hydra-optuna-sweeper`, `hydra-colorlog`, `rootutils`, `suncalc`,
 `openmeteo-sdk`/`openmeteo-requests`, `requests-cache`, `retry-requests`,
@@ -104,9 +104,10 @@ python scripts/move_checkpoints_to_prod.py --dry-run   # check first
 python scripts/move_checkpoints_to_prod.py             # then actually move
 ```
 
-`trainer=gpu` is used for real training/hyperparameter search (see `configs/trainer/`
-for `cpu`/`gpu`/`mps`/`ddp` options) — default CPU is fine for the `debug=` smoke tests
-above.
+Use `trainer=mps` on an Apple-silicon Mac (about 14x faster than CPU here) or `trainer=gpu`
+on a CUDA machine for real training and hyperparameter search (see `configs/trainer/`); default
+CPU is fine for the `debug=` smoke tests above. Production prediction runs on CPU, and a
+checkpoint trained on any device gives the same forecast there.
 
 Pre-commit hooks (`.pre-commit-config.yaml`) — run `pre-commit run --all-files` before
 treating a change as done. Configured hooks: standard hygiene checks
@@ -219,14 +220,16 @@ Concretely:
 
 ## Roadmap and decisions — read before making changes
 
-- `DEVELOPMENT.md` is the live roadmap: only what is still open, in phases.
+- `DEVELOPMENT.md` is the live roadmap: only what is still open, in phases, with the detail.
+  The order of work, one line per topic, is issue #18 on GitHub.
 - `DECISIONS.md` is the log of settled calls and what was tried and rejected (weather path,
   architecture, loss, evaluation, production guards). Check it before re-proposing something;
   add to it when an item is resolved, rather than archiving it in `DEVELOPMENT.md`.
 
 **Read `DEVELOPMENT.md` before trusting any model metric or tuning hyperparameters** — the
-checkpoints in `prod/models/` and the values in `configs/experiment/*.yaml` predate several
-fixes and the weather migration, and should be considered void until retrained.
+checkpoints in `prod/models/` were trained before the count transition to the defile-dataset
+release, and the values in `configs/experiment/*.yaml` predate several fixes and the weather
+migration; treat both as provisional until the next full retrain.
 
 The one caveat worth knowing without opening either file: Défilé sits in a gorge that ERA5's
 25 km cell cannot resolve, so 10 m wind still correlates only ~0.55 between the training and
@@ -253,17 +256,19 @@ rather than editing `configs/data/defile.yaml` directly.
 ## Data pipeline notes
 
 - Counts: `data/count/all_count_processed.csv`, one row per species per survey period,
-  1966 on, `start`/`end` in UTC. The raw files, their corrections and their documentation live
-  in the separate **defile-dataset** repo (`Rafnuss/defile-dataset`, private, next to this one
-  locally), whose release is `count.csv`, `survey.csv` and `taxonomy.csv` (Avibase taxon ids,
-  UTC intervals, `count_category` normal/reverse/local, per-survey `survey_complete` and `weather_stop`) and an
-  audit of Trektellen entry errors.
-  `python scripts/build_counts.py --dataset ../defile-dataset/output` copies those tables into
-  `data/count/dataset/` and applies only the model's processing (`src/data/counts.py`: the
-  surveys and counts the model cannot use, hour splitting, zero-fill); its HTML report in
-  `logs/qa/counts/` shows what each step did. Data corrections go in defile-dataset, model
-  choices here. Survey protocol and recording granularity changed repeatedly over the years:
-  defile-dataset's README has the history, essential before choosing which years to use.
+  1966 on, `start`/`end` in UTC. The source data, its corrections and documentation live in the
+  separate public **defile-dataset** repo (`Rafnuss/defile-dataset`), which publishes
+  `count.csv`, `survey.csv` and `taxonomy.csv` (plus `datapackage.json`, `metadata.json`,
+  `SHA256SUMS`) as GitHub release assets. `python scripts/build_counts.py` downloads the release
+  pinned by `DATASET_RELEASE` (`src/data/counts.py`), verifies it, and applies only the model's
+  processing (`src/data/counts.py`: the surveys and counts the model cannot use, hour splitting,
+  zero-fill; rules in `data/count/readme.md`); its HTML report in `logs/qa/counts/` shows what
+  each step did. `--dataset ../defile-dataset/output` instead copies a local, unreleased build
+  (development only). Data corrections go in defile-dataset, model choices here; don't document
+  the raw data in this repo. Survey protocol and recording granularity changed repeatedly over
+  the years: defile-dataset's documentation has the history, essential before choosing which
+  years to use. A new release is adopted by bumping `DATASET_RELEASE`, rebuilding phenology and
+  retraining together.
 - Weather: `data/weather/` holds hourly ERA5 for all 13 locations in one Parquet store,
   partitioned by location, at ~3.5 MB per location per decade. Every location has the same
   columns and the same semantics — the old split between hourly CSVs and daily far-field
