@@ -33,15 +33,14 @@ left.
 2026-10-01 (#46: Open-Meteo weather, the sun-defined night, the phenology shape prior,
 Tweedie-only loss), but on the count tables from before the defile-dataset release. The
 counts now come from the release (#56, #58) with the data-correctness fixes of #59
-(full-day exposure, unknown species-days excluded), and neither the committed
-`species_doy_statistics.json` (last rebuilt 2026-10-08, before #58/#59) nor the checkpoints
-reflect that yet. The hyperparameters in `configs/experiment/*.yaml` were tuned before all of
+(full-day exposure, unknown species-days excluded); the committed
+`species_doy_statistics.json` reflects that, the checkpoints do not yet. The hyperparameters in `configs/experiment/*.yaml` were tuned before all of
 these and should be treated as void until re-tuned.
 
 **Finishing the count transition**, in order:
 
-1. ~~Rebuild `species_doy_statistics.json` from the final counts~~ — done in #61, from
-   defile-dataset `ba896c9` (`DECISIONS.md` → Counts).
+1. ~~Rebuild `species_doy_statistics.json` from the final counts~~ — done in #61 and redone on
+   defile-dataset release `v1.0.0-beta.1` (`DECISIONS.md` → Counts).
 2. Decide the daily-branch BatchNorm order (#47) with a paired comparison on the same new
    data (the 4-species dev baseline, #52), so that one retrain covers both changes.
 3. Retrain all 11 species once with the result, and promote checkpoints, phenology and
