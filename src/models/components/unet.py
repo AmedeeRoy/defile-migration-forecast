@@ -247,8 +247,14 @@ class UNetplus(nn.Module):
                         dilation=1,
                     )
                 )
-            layers_d.append(nn.ReLU())
+            # BatchNorm before the ReLU, not after. After a ReLU, a channel that is zero on
+            # almost every day has a running variance near 0 (down to 1e-11 measured), so in
+            # eval mode BN scales it by up to ~400x; on the rare day it fires the logit reached
+            # 550 and out_d saturated to 1 (Hen Harrier, 2019-07-27: 25 birds/h, absent
+            # species). Training mode uses batch statistics, so the loss never saw it. The
+            # pre-activation is linear in the inputs and has no such collapse.
             layers_d.append(nn.BatchNorm1d(num_features=nb_hidden_features_daily))
+            layers_d.append(nn.ReLU())
             if dropout:
                 layers_d.append(nn.Dropout(0.3))
 

@@ -187,6 +187,28 @@ Two follow-ups after checking the prior against the raw counts:
 Red Kite's remaining over-prediction is its pre-1993 test years (the species was rare then and
 `year_used: "constant"` hides the year), not night — see `DEVELOPMENT.md`.
 
+**In the daily branch, BatchNorm comes before the ReLU (2026-10).** Hen Harrier predicted
+25 birds/h on 2019-07-27, a day it was absent (max observed 4/h), with `out_d` at 1.000
+against a median of 0.008. Out-of-range weather was ruled out: clipping every input to the
+training range left the logit at 336 (from 550). The cause was Conv → ReLU → BN: a channel
+that is zero after the ReLU on almost every day has a running variance near 0 (down to
+1e-16), so in eval mode BN multiplies it by up to ~470×. On the rare day it fires, the daily
+output saturates. Training mode uses batch statistics, so the loss never sees it. 9 of 11
+species had 10–28 such channels out of 128. Conv → BN → ReLU has none, with gain ≤ 3.3, and
+no day in any species saturates.
+
+Skill vs phenology at seed 0, both arms in one sweep (`logs/bn_baseline*`, `logs/bn_fix*`):
+mean 0.155 → 0.202, median 0.198 → 0.168, 5 of 11 better. The changes outside Hen Harrier
+(−0.27 → 0.25) are within seed noise: 3 seeds give 0.25–0.45 for Common Buzzard alone. Over
+3 seeds × 3 species (Hen Harrier, Black Kite, Common Buzzard) mean skill is equal or better,
+with a narrower spread. Rejected without retraining: input clipping (above), bounding the
+daily logit (any useful bound also caps Black Kite's real `out_d` ≈ 1 peak days), and weight
+decay (already on, and it does not touch BN's running variance).
+
+**Separate data correctness from architecture (#59 and #47).** Data readers, unknown-target handling and survey exposure belong in #59; #47 contains only the daily layer-order fix and its regression test. The earlier fresh candidates changed data, prior and architecture together, so their mean skill difference (0.229 to 0.170) cannot be attributed to either change; those runs are archived in Git history and local reports. #47 was adopted on its mechanism, not on a skill comparison, and no old-order control on the new data was run.
+
+**Retrain on the release counts (2026-10-19).** All 11 species were retrained once on defile-dataset release `v1.0.0-beta.1`, the rebuilt phenology, the #47 layer order, torch 2.14.1 and `trainer=mps`, with the old hyperparameters, and promoted together with `data/transform_data.pickle`. Test skill (MAE) against phenology: Common Buzzard 0.43, Honey Buzzard 0.41, Sparrowhawk 0.29, Hen Harrier 0.26, Marsh Harrier 0.21, Osprey 0.18, Red Kite 0.17, Merlin 0.15, Black Kite -0.02, Hobby -0.06, Kestrel -0.19 (mean about 0.17). The saturation the order fix targets is gone: Hen Harrier on 2019-07-27 is now predicted at 0.0002 birds/h, where the old order gave about 25 for an absent species. The three species below the baseline are a tuning question (`DEVELOPMENT.md`), not a reason to revert.
+
 ## Evaluation
 
 **Skill is judged against day-of-year phenology and persistence, per species and per era,

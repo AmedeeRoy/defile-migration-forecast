@@ -29,22 +29,24 @@ Open-Meteo path for training and serving. What was settled and why lives in `DEC
 (weather, architecture, loss, evaluation, production guards); this file only lists what is
 left.
 
-**The checkpoints in `prod/models/` predate the count transition.** They were retrained on
-2026-10-01 (#46: Open-Meteo weather, the sun-defined night, the phenology shape prior,
-Tweedie-only loss), but on the count tables from before the defile-dataset release. The
-counts now come from the release (#56, #58) with the data-correctness fixes of #59
-(full-day exposure, unknown species-days excluded); the committed
-`species_doy_statistics.json` reflects that, the checkpoints do not yet. The hyperparameters in `configs/experiment/*.yaml` were tuned before all of
-these and should be treated as void until re-tuned.
+**The checkpoints in `prod/models/` were retrained on 2026-10-19** on defile-dataset release
+`v1.0.0-beta.1`, with the daily BatchNorm order of #47, on torch 2.14.1 / MPS (`DECISIONS.md` →
+Retrain on the release counts). The count transition is finished. The hyperparameters in
+`configs/experiment/*.yaml` are **still the old ones**, tuned before the new counts, prior,
+weather and architecture, so treat them as void until re-tuned. Three species score below the
+phenology baseline with them (Kestrel -0.19, Hobby -0.06, Black Kite -0.02, test set), and the
+mean skill over the 11 species is about 0.17.
 
-**Finishing the count transition**, in order:
+**Open from this retrain:**
 
-1. ~~Rebuild `species_doy_statistics.json` from the final counts~~ — done in #61 and redone on
-   defile-dataset release `v1.0.0-beta.1` (`DECISIONS.md` → Counts).
-2. Decide the daily-branch BatchNorm order (#47) with a paired comparison on the same new
-   data (the 4-species dev baseline, #52), so that one retrain covers both changes.
-3. Retrain all 11 species once with the result, and promote checkpoints, phenology and
-   `data/transform_data.pickle` together.
+1. Re-tune the per-species hyperparameters (learning rate, weight decay, Tweedie `p` and
+   `alpha`) with `configs/hparams_search/unet.yaml`, after settling what the search optimises: it
+   maximises validation R², while models are judged by test skill against phenology, and seed
+   noise is large. About 1.5 h of compute per species on MPS.
+2. Look at Hobby first: its best validation epoch was 2, which points at too few events, not at
+   tuning.
+3. The effect of the BatchNorm order alone has not been measured (no old-order run on the new
+   data). The ordering stays on mechanism, not on a skill difference.
 
 ## Plan
 

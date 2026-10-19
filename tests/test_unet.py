@@ -134,6 +134,23 @@ def test_forward_runs_with_multi_sample_batch():
     assert out.shape == (4, 1, 24)
 
 
+def test_daily_batchnorm_sees_variation_in_negative_pre_activations():
+    torch.manual_seed(0)
+    net = _make_net()
+    conv = next(m for m in net.layers_d if isinstance(m, torch.nn.Conv1d))
+    batchnorm = next(m for m in net.layers_d if isinstance(m, torch.nn.BatchNorm1d))
+    with torch.no_grad():
+        conv.weight.fill_(1)
+        conv.bias.fill_(-1000)
+    batchnorm.momentum = 1
+    inputs = torch.randn(8, net.nb_input_features_daily, net.nb_lag_day)
+    assert (conv(inputs) < 0).all()
+    net.layers_d(inputs)
+    assert (batchnorm.running_var > 0).all()
+    net.eval()
+    assert torch.isfinite(net.layers_d(inputs)).all()
+
+
 @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple MPS")
 def test_gradients_are_finite_on_mps_with_deterministic_algorithms():
     # torch 2.5.1 returned NaN gradients for the first hourly BatchNorm here, which silently
