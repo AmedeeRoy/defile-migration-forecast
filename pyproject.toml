@@ -7,12 +7,12 @@ requires-python = ">=3.11,<3.12"
 # Exact pins, matching what this project was actually installed and tested against on the
 # retired conda environment (see git history for environment.yaml). This is a tooling swap,
 # not a dependency upgrade: loose ranges here would let `uv lock` silently jump to whatever
-# is newest at lock time (it already tried to move torch 2.5.1 -> 2.13.0 and pyarrow
+# is newest at lock time (it once tried to move torch 2.5.1 -> 2.13.0 and pyarrow
 # 13.0.0 -> 25.0.0 the first time this was written with open ranges). Bump deliberately,
 # with `uv lock --upgrade-package <name>` and a test run, not as a side effect of this
 # migration.
 dependencies = [
-    "torch==2.5.1",
+    "torch==2.14.1",
     "lightning==2.5.5",
     "hydra-core==1.3.2",
     "rich==13.9.4",

@@ -12,6 +12,7 @@ pin that down, since the first attempt at this used a softmax and silently cost 
 that capacity (see `prior_shape_to_logit_bias`'s docstring).
 """
 
+import pytest
 import torch
 
 from src.models.components.unet import (
@@ -131,3 +132,20 @@ def test_forward_runs_with_multi_sample_batch():
     net = _make_net()
     out = net(**_random_inputs(batch_size=4))
     assert out.shape == (4, 1, 24)
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs Apple MPS")
+def test_gradients_are_finite_on_mps_with_deterministic_algorithms():
+    # torch 2.5.1 returned NaN gradients for the first hourly BatchNorm here, which silently
+    # killed the hourly branch while train/val/test metrics still looked normal.
+    previous = torch.are_deterministic_algorithms_enabled()
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    try:
+        torch.manual_seed(0)
+        net = _make_net().to("mps")
+        net.train()
+        inputs = {k: v.to("mps") for k, v in _random_inputs(batch_size=16).items()}
+        net(**inputs).mean().backward()
+        assert all(torch.isfinite(p.grad).all() for p in net.parameters() if p.grad is not None)
+    finally:
+        torch.use_deterministic_algorithms(previous)

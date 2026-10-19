@@ -55,7 +55,7 @@ src/
 Managed with [uv](https://docs.astral.sh/uv/), Python 3.11 (`.python-version`; uv provisions
 this itself, no separate Python install needed). Exact versions pinned in `pyproject.toml`
 and locked in `uv.lock` -- deliberately pinned, not ranged, so `uv lock` alone can't silently
-drift to a newer release. Core deps: `torch==2.5.1`, `lightning==2.5.5`,
+drift to a newer release. Core deps: `torch==2.14.1`, `lightning==2.5.5`,
 `hydra-core==1.3.2`, `pandas==2.3.3`, `xarray==2023.6.0`, `rich`, `matplotlib`, `einops`,
 `cloudpickle`, `hydra-optuna-sweeper`, `hydra-colorlog`, `rootutils`, `suncalc`,
 `openmeteo-sdk`/`openmeteo-requests`, `requests-cache`, `retry-requests`,
@@ -104,9 +104,10 @@ python scripts/move_checkpoints_to_prod.py --dry-run   # check first
 python scripts/move_checkpoints_to_prod.py             # then actually move
 ```
 
-`trainer=gpu` is used for real training/hyperparameter search (see `configs/trainer/`
-for `cpu`/`gpu`/`mps`/`ddp` options) — default CPU is fine for the `debug=` smoke tests
-above.
+Use `trainer=mps` on an Apple-silicon Mac (about 14x faster than CPU here) or `trainer=gpu`
+on a CUDA machine for real training and hyperparameter search (see `configs/trainer/`); default
+CPU is fine for the `debug=` smoke tests above. Production prediction runs on CPU, and a
+checkpoint trained on any device gives the same forecast there.
 
 Pre-commit hooks (`.pre-commit-config.yaml`) — run `pre-commit run --all-files` before
 treating a change as done. Configured hooks: standard hygiene checks

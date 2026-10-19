@@ -240,7 +240,19 @@ repeated runs with the same seed now produce identical results. Changing the num
 threads still changes the model (Hen Harrier seed 0: skill −1.34 with default threads, −0.27
 with 2), so the thread count is pinned in `configs/train.yaml` (`num_threads: 2`, what the
 promoted checkpoints were trained with), rather than left to `OMP_NUM_THREADS` and the
-machine. `trainer=mps` gives NaN gradients in deterministic mode; use `trainer=cpu`.
+machine.
+
+**Training runs on Apple MPS (2026-10-19).** `trainer=mps` was avoided because torch 2.5.1 returned
+NaN gradients for the first hourly BatchNorm in deterministic mode, silently killing the hourly
+branch. That is fixed in the pinned torch (2.14.1; also checked on 2.9.1), `trainer=mps` is now
+deterministic like the others, and `tests/test_unet.py` guards it. On Common Buzzard an epoch takes
+about 1.3 s on MPS against 18 s on CPU (about 14×), and a checkpoint trained on MPS evaluates
+identically on CPU and MPS (relative metric difference 1.6e-6), so production inference stays on
+CPU. Checkpoints trained on different devices or thread counts are not bit-identical to each
+other. The prod checkpoints from before the upgrade still load. The other pins were reviewed and
+left alone: `numpy`/`pandas`/`xarray`/`pyarrow` have newer majors that change behaviour the weather
+and datamodule code depends on, `requests` is held for the openmeteo stack (see `pyproject.toml`),
+and `lightning` 2.5.5 works with this torch. Moving any of them is its own change, with a test run.
 
 ## Production safety
 
